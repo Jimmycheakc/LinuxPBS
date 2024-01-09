@@ -89,7 +89,6 @@ void IniParser::FnReadIniFile()
     DIOPort4Switch_                 = pt.get<std::string>("setting.DIOPort4Switch", "");
     NexpaDBServer_                  = pt.get<std::string>("setting.NexpaDBServer", "");
     NexpaDBName_                    = pt.get<std::string>("setting.NexpaDBName", "");
-    WaitIUNoTime_                   = pt.get<std::string>("setting.WaitIUNoTime", "");
     HasPremiumParking_              = pt.get<std::string>("setting.HasPremiumParking", "");
     IntervalloopCIU_                = pt.get<std::string>("setting.IntervalloopCIU", "");
     TGDServer_                      = pt.get<std::string>("setting.TGDServer", "");
@@ -107,6 +106,10 @@ void IniParser::FnReadIniFile()
     BlockIUPrefix_                  = pt.get<std::string>("setting.BlockIUPrefix", "");
     Q584PrinterComPort_             = pt.get<std::string>("setting.Q584PrinterComPort", "");
     LPRIP4Container_                = pt.get<std::string>("setting.LPRIP4Container", "");
+
+    // Confirm
+    AntennaID_                      = pt.get<int>("setting.AntennaId");
+    WaitIUNoTime_                   = pt.get<int>("setting.WaitIUNoTime");
 }
 
 void IniParser::FnPrintIniFile()
@@ -446,7 +449,7 @@ std::string IniParser::FnGetNexpaDBName() const
     return NexpaDBName_;
 }
 
-std::string IniParser::FnGetWaitIUNoTime() const
+int IniParser::FnGetWaitIUNoTime() const
 {
     return WaitIUNoTime_;
 }
@@ -534,4 +537,9 @@ std::string IniParser::FnGetQ584PrinterComPort() const
 std::string IniParser::FnGetLPRIP4Container() const
 {
     return LPRIP4Container_;
+}
+
+int IniParser::FnGetAntennaId() const
+{
+    return AntennaID_;
 }

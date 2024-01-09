@@ -13,7 +13,9 @@
 #include "system_info.h"
 #include "test.h"
 #include "upt.h"
+#include "antenna.h"
 
+#include "boost/date_time/posix_time/posix_time.hpp"
 
 Test* Test::test_ = nullptr;
 
@@ -39,11 +41,12 @@ void Test::FnTest(char* argv)
     //crc_test();
     //dio_test();
     //upt_test();
-    lcd_test();
+    //lcd_test();
     //logger_test();
     //led614_test();
     //led216_test();
     //led226_test();
+    antenna_test();
 }
 
 void Test::common_test(char* argv)
@@ -597,6 +600,19 @@ void Test::led226_test()
         LEDManager::getInstance()->getLED("/dev/ttyCH9344USB1")->FnLEDSendLEDMsg(ledId, msg, LED::Alignment::LEFT);
         usleep(2000000);
     }
+
+    io_context.run();
+}
+
+void Test::antenna_test()
+{
+    boost::asio::io_context io_context;
+
+    IniParser::getInstance()->FnReadIniFile();
+    Antenna::getInstance()->FnAntennaInit(io_context, 19200, "/dev/ttyCH9344USB5");
+    Antenna::getInstance()->FnAntennaSendReadIUCmd();
+    Antenna::getInstance()->FnAntennaCheck();
+    Antenna::getInstance()->FnAntennaCmdResponseTimerStart();
 
     io_context.run();
 }

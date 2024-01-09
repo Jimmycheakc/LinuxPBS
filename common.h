@@ -15,6 +15,8 @@ public:
     std::string FnGetDateTime();
     std::string FnGetDateTimeSpace();
     std::string FnGetFileName(const std::string& str);
+    std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
+    std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
 
     /**
      * Singleton Common should not be cloneable.

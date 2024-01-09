@@ -75,7 +75,6 @@ public:
     std::string FnGetDIOPort4Switch() const;
     std::string FnGetNexpaDBServer() const;
     std::string FnGetNexpaDBName() const;
-    std::string FnGetWaitIUNoTime() const;
     std::string FnGetHasPremiumParking() const;
     std::string FnGetIntervalloopCIU() const;
     std::string FnGetTGDServer() const;
@@ -93,6 +92,10 @@ public:
     std::string FnGetBlockIUPrefix() const;
     std::string FnGetQ584PrinterComPort() const;
     std::string FnGetLPRIP4Container() const;
+
+    // Confirm
+    int FnGetAntennaId() const;
+    int FnGetWaitIUNoTime() const;
 
     /**
      * Singleton IniParser should not be cloneable.
@@ -171,7 +174,6 @@ private:
     std::string DIOPort4Switch_;
     std::string NexpaDBServer_;
     std::string NexpaDBName_;
-    std::string WaitIUNoTime_;
     std::string HasPremiumParking_;
     std::string IntervalloopCIU_;
     std::string TGDServer_;
@@ -189,4 +191,8 @@ private:
     std::string BlockIUPrefix_;
     std::string Q584PrinterComPort_;
     std::string LPRIP4Container_;
+
+    // Confirm
+    int AntennaID_;
+    int WaitIUNoTime_;
 };

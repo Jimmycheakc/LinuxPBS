@@ -59,3 +59,29 @@ std::string Common::FnGetFileName(const std::string& str)
     }
     return str;
 }
+
+std::string Common::FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size)
+{
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+
+    for (std::size_t i = pos + size - 1; i >= pos ; i--)
+    {
+        ss << std::setw(2) << static_cast<unsigned int>(array[i]);
+    }
+
+    return ss.str();
+}
+
+std::string Common::FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size)
+{
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+
+    for (std::size_t i = 0; i < size ; i++)
+    {
+        ss << std::setw(2) << static_cast<unsigned int>(array[i]);
+    }
+
+    return ss.str();
+}

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.12)
 project(LinuxPBS)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
 # Add include directories
 include_directories(/usr/local/include)
@@ -25,6 +25,7 @@ set(SOURCE_FILES
     upt.cpp
     lcd.cpp
     led.cpp
+    antenna.cpp
     main.cpp
 )
 
