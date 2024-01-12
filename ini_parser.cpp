@@ -110,6 +110,9 @@ void IniParser::FnReadIniFile()
     // Confirm
     AntennaID_                      = pt.get<int>("setting.AntennaId");
     WaitIUNoTime_                   = pt.get<int>("setting.WaitIUNoTime");
+    AntennaMaxRetry_                = pt.get<int>("setting.AntennaMaxRetry");
+    AntennaInqTO_                   = pt.get<int>("setting.AntennaInqTO");
+    AntennaMinOKtimes_              = pt.get<int>("setting.AntennaMinOKtimes");
 }
 
 void IniParser::FnPrintIniFile()
@@ -539,7 +542,24 @@ std::string IniParser::FnGetLPRIP4Container() const
     return LPRIP4Container_;
 }
 
+
+// Confirm
 int IniParser::FnGetAntennaId() const
 {
     return AntennaID_;
+}
+
+int IniParser::FnGetAntennaMaxRetry() const
+{
+    return AntennaMaxRetry_;
+}
+
+int IniParser::FnGetAntennaInqTO() const
+{
+    return AntennaInqTO_;
+}
+
+int IniParser::FnGetAntennaMinOKtimes() const
+{
+    return AntennaMinOKtimes_;
 }

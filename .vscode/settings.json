@@ -75,6 +75,8 @@
         "any": "cpp",
         "codecvt": "cpp",
         "coroutine": "cpp",
-        "future": "cpp"
+        "future": "cpp",
+        "strstream": "cpp",
+        "*.ipp": "cpp"
     }
 }

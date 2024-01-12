@@ -14,6 +14,8 @@
 #include "test.h"
 #include "upt.h"
 #include "antenna.h"
+#include "event_manager.h"
+#include "event_handler.h"
 
 #include "boost/date_time/posix_time/posix_time.hpp"
 
@@ -47,6 +49,7 @@ void Test::FnTest(char* argv)
     //led216_test();
     //led226_test();
     antenna_test();
+    //event_queue_test();
 }
 
 void Test::common_test(char* argv)
@@ -604,15 +607,33 @@ void Test::led226_test()
     io_context.run();
 }
 
+void print(const boost::system::error_code& /*e*/)
+{
+  Logger::getInstance()->FnLog("Hello World");
+}
+
 void Test::antenna_test()
 {
     boost::asio::io_context io_context;
 
     IniParser::getInstance()->FnReadIniFile();
-    Antenna::getInstance()->FnAntennaInit(io_context, 19200, "/dev/ttyCH9344USB5");
-    Antenna::getInstance()->FnAntennaSendReadIUCmd();
-    Antenna::getInstance()->FnAntennaCheck();
-    Antenna::getInstance()->FnAntennaCmdResponseTimerStart();
+    Antenna::getInstance()->FnAntennaInit(19200, "/dev/ttyCH9344USB5");
+    
+    std::cout << "start asynchronous operation." << std::endl;
+
+    boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(5));
+    t.async_wait(print);
 
     io_context.run();
+}
+
+void Test::event_queue_test()
+{
+    IniParser::getInstance()->FnReadIniFile();
+    EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
+    EventManager::getInstance()->FnStartEventThread();
+    EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 0);
+    EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    EventManager::getInstance()->FnStopEventThread();
 }

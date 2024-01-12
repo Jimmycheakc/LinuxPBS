@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <vector>
 #include "antenna.h"
 #include "common.h"
 #include "ini_parser.h"
@@ -9,7 +10,8 @@ Antenna* Antenna::antenna_ = nullptr;
 unsigned char Antenna::SEQUENCE_NO = 0;
 
 Antenna::Antenna()
-    : TxNum_(0),
+    : io_serial_context(),
+    TxNum_(0),
     RxNum_(0),
     rxState_(Antenna::RX_STATE::IGNORE),
     retryCount_(0),
@@ -20,6 +22,9 @@ Antenna::Antenna()
     memset(rxBuffData, 0, sizeof(rxBuffData));
     IUNumber_ = "";
     IUNumberPrev_ = "";
+    antennaCmdTimeoutInMillisec_ = IniParser::getInstance()->FnGetAntennaInqTO();
+    antennaCmdMaxRetry_ = IniParser::getInstance()->FnGetAntennaMaxRetry();
+    antennaIUCmdMinOKtimes_ = IniParser::getInstance()->FnGetAntennaMinOKtimes();
 }
 
 Antenna* Antenna::getInstance()
@@ -31,11 +36,10 @@ Antenna* Antenna::getInstance()
     return antenna_;
 }
 
-void Antenna::FnAntennaInit(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName)
+void Antenna::FnAntennaInit(unsigned int baudRate, const std::string& comPortName)
 {
-    pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_context);
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_context, comPortName);
-    pAntennaCmdResponseTimer_ = std::make_unique<boost::asio::steady_timer>(io_context);
+    pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
+    pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
     pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
     pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
@@ -53,6 +57,595 @@ void Antenna::FnAntennaInit(boost::asio::io_context& io_context, unsigned int ba
         ss << "Failed to open serial port for Antenna Communication: " << comPortName;
     }
     Logger::getInstance()->FnLog(ss.str());
+    
+    int result = antennaInit();
+}
+
+int Antenna::antennaInit()
+{
+    int ret;
+
+    ret = antennaCmd(AntCmdID::SET_ANTENNA_DATA_CMD);
+    if (ret != 1)
+    {
+        return ret;
+    }
+
+    ret = antennaCmd(AntCmdID::NO_USE_OF_ANTENNA_CMD);
+    if (ret != 1)
+    {
+        return ret;
+    }
+
+    ret = antennaCmd(AntCmdID::SET_ANTENNA_TIME_CMD);
+    if (ret != 1)
+    {
+        return ret;
+    }
+
+    ret = antennaCmd(AntCmdID::MACHINE_CHECK_CMD);
+    if (ret != 1)
+    {
+        return ret;
+    }
+
+    return ret;
+}
+
+std::string Antenna::antennaCmdIDToString(Antenna::AntCmdID cmd)
+{
+    switch (cmd)
+    {
+        case AntCmdID::NONE_CMD:
+            return "NONE_CMD";
+            break;
+        case AntCmdID::MANUAL_CMD:
+            return "MANUAL_CMD";
+            break;
+        case AntCmdID::FORCE_GET_IU_NO_CMD:
+            return "FORCE_GET_IU_NO_CMD";
+            break;
+        case AntCmdID::USE_OF_ANTENNA_CMD:
+            return "USE_OF_ANTENNA_CMD";
+            break;
+        case AntCmdID::NO_USE_OF_ANTENNA_CMD:
+            return "NO_USE_OF_ANTENNA_CMD";
+            break;
+        case AntCmdID::SET_ANTENNA_TIME_CMD:
+            return "SET_ANTENNA_TIME_CMD";
+            break;
+        case AntCmdID::MACHINE_CHECK_CMD:
+            return "MACHINE_CHECK_CMD";
+            break;
+        case AntCmdID::SET_ANTENNA_DATA_CMD:
+            return "SET_ANTENNA_DATA_CMD";
+            break;
+        case AntCmdID::GET_ANTENNA_DATA_CMD:
+            return "GET_ANTENNA_DATA_CMD";
+            break;
+        case AntCmdID::REQ_IO_STATUS_CMD:
+            return "REQ_IO_STATUS_CMD";
+            break;
+        case AntCmdID::SET_OUTPUT_CMD:
+            return "SET_OUTPUT_CMD";
+            break;
+        default:
+            return "UNKNOWN_CMD";
+    }
+}
+
+int Antenna::antennaCmd(AntCmdID cmdID)
+{
+    int ret;
+    std::stringstream ss;
+    ss << __func__ << " Command ID : " << antennaCmdIDToString(cmdID);
+    Logger::getInstance()->FnLog(ss.str());
+
+    if (!pSerialPort_->is_open())
+    {
+        return -1;
+    }
+
+    std::vector<unsigned char> dataBuffer;
+    unsigned char antennaID = IniParser::getInstance()->FnGetAntennaId();
+    unsigned char destID = 0xB0 + antennaID;
+    unsigned char sourceID = 0x00;
+
+    if ((++SEQUENCE_NO) == 0)
+    {
+        // For sequence number of 1 to 255
+        ++SEQUENCE_NO;
+    }
+
+    switch(cmdID)
+    {
+        case AntCmdID::MANUAL_CMD:
+        {
+            break;
+        }
+        case AntCmdID::SET_ANTENNA_DATA_CMD:
+        {
+            dataBuffer = loadSetAntennaData(destID, 
+                                        sourceID, 
+                                        SET_ANTENNA_DATA_CATEGORY, 
+                                        SET_ANTENNA_DATA_COMMAND_NO,
+                                        SEQUENCE_NO,
+                                        antennaID,
+                                        0x01,
+                                        0x01,
+                                        0x01,
+                                        0xE1,
+                                        0x12C,
+                                        0x3C);
+            break;
+        }
+        case AntCmdID::GET_ANTENNA_DATA_CMD:
+        {
+            dataBuffer = loadGetAntennaData(destID, sourceID, GET_ANTENNA_DATA_CATEGORY, GET_ANTENNA_DATA_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        case AntCmdID::NO_USE_OF_ANTENNA_CMD:
+        {
+            dataBuffer = loadNoUseOfAntenna(destID, sourceID, NO_USE_OF_ANTENNA_CATEGORY, NO_USE_OF_ANTENNA_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        case AntCmdID::USE_OF_ANTENNA_CMD:
+        {
+            dataBuffer = loadUseOfAntenna(destID, sourceID, USE_OF_ANTENNA_CATEGORY, USE_OF_ANTENNA_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        case AntCmdID::SET_ANTENNA_TIME_CMD:
+        {
+            dataBuffer = loadSetAntennaTime(destID, sourceID, SET_ANTENNA_TIME_CATEGORY, SET_ANTENNA_TIME_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        case AntCmdID::MACHINE_CHECK_CMD:
+        {
+            dataBuffer = loadMachineCheck(destID, sourceID, MACHINE_CHECK_CATEGORY, MACHINE_CHECK_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        case AntCmdID::REQ_IO_STATUS_CMD:
+        {
+            dataBuffer = loadReqIOStatus(destID, sourceID, REQ_IO_STATUS_CATEGORY, REQ_IO_STATUS_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        case AntCmdID::SET_OUTPUT_CMD:
+        {
+            dataBuffer = loadSetOutput(destID, sourceID, SET_OUTPUT_CATEGORY, SET_OUTPUT_COMMAND_NO, SEQUENCE_NO, 0x01, 0x01);
+            break;
+        }
+        case AntCmdID::FORCE_GET_IU_NO_CMD:
+        {
+            dataBuffer = loadForceGetUINo(destID, sourceID, FORCE_GET_IU_CATEGORY, FORCE_GET_IU_COMMAND_NO, SEQUENCE_NO);
+            break;
+        }
+        default:
+        {
+            std::stringstream ss;
+            ss << __func__ << " : Command not found.";
+            Logger::getInstance()->FnLog(ss.str());
+
+            return static_cast<int>(AntCmdRetCode::AntRecv_CmdNotFound);
+            break;
+        }
+    }
+
+    int retry = 0;
+    Antenna::ReadResult result;
+    AntCmdRetCode retCode = AntCmdRetCode::AntRecv_NoResp;
+
+    do
+    {
+        result.data = {};
+        result.success = false;
+
+        antennaCmdSend(dataBuffer);
+        result = antennaReadWithTimeout(antennaCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            retCode = antennaHandleCmdResponse(cmdID, result.data);
+            break;
+        }
+        else
+        {
+            retry++;
+            std::stringstream ss;
+            ss << "Retry send command, retry times : " << retry;
+            Logger::getInstance()->FnLog(ss.str());
+        }
+    } while(retry <= antennaCmdMaxRetry_);
+
+    return static_cast<int>(retCode);
+}
+
+Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
+{
+    Logger::getInstance()->FnLog(__func__);
+
+    std::vector<char> buffer(1024);
+    std::size_t bytes_transferred = 0;
+    bool success = false;
+
+    io_serial_context.reset();
+    boost::asio::deadline_timer timer(io_serial_context, boost::posix_time::milliseconds(milliseconds));
+
+    pSerialPort_->async_read_some(boost::asio::buffer(buffer),
+        [&](const boost::system::error_code& error, std::size_t transferred){
+            if (!error)
+            {
+                bytes_transferred = transferred;
+                success = true;
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << __func__ << " Async Read error : " << error.message();
+                Logger::getInstance()->FnLog(ss.str());
+                success = false;
+            }
+            timer.cancel();
+        });
+    
+    timer.async_wait([&](const boost::system::error_code& error){
+        if (!bytes_transferred && !error)
+        {
+            std::stringstream ss;
+            ss << __func__ << " Async Read Timeout Occurred.";
+            Logger::getInstance()->FnLog(ss.str());
+            pSerialPort_->cancel();
+            success = false;
+        }
+    });
+
+    io_serial_context.run();
+
+    io_serial_context.get_executor().context().stop();
+    pSerialPort_->cancel();
+
+    buffer.resize(bytes_transferred);
+    return {buffer, success};
+}
+
+Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std::vector<char>& dataBuff)
+{
+    int numBytes = 0;
+    AntCmdRetCode retCode = AntCmdRetCode::AntRecv_NoResp;
+
+    for (const auto &character : dataBuff)
+    {
+        numBytes = receiveRxDataByte(character);
+    }
+
+    if (numBytes == getRxNum() && numBytes >= 8)
+    {
+        std::stringstream receivedRespStream;
+        receivedRespStream << "Received Buffer Data : " << Common::getInstance()->FnGetVectorCharToHexString(dataBuff);
+        Logger::getInstance()->FnLog(receivedRespStream.str());
+        std::stringstream receivedRespNumBytesStream;
+        receivedRespNumBytesStream << "Received Buffer size : " << getRxNum();
+        Logger::getInstance()->FnLog(receivedRespNumBytesStream.str());
+
+        std::string cmdID = Common::getInstance()->FnGetUCharArrayToHexString(getRxBuf()+2, 2);
+
+        if (cmdID == "3281")
+        {
+            std::stringstream logMsg;
+
+            switch (cmd)
+            {
+                case AntCmdID::USE_OF_ANTENNA_CMD:
+                {
+                    logMsg << "USE_OF_ANTENNA_CMD response : OK !";
+                    break;
+                }
+                case AntCmdID::NO_USE_OF_ANTENNA_CMD:
+                {
+                    logMsg << "NO_USE_OF_ANTENNA_CMD response : OK !";
+                    break;
+                }
+                case AntCmdID::SET_ANTENNA_TIME_CMD:
+                {
+                    logMsg << "SET_ANTENNA_TIME_CMD response : OK !";
+                    break;
+                }
+                case AntCmdID::SET_ANTENNA_DATA_CMD:
+                {
+                    logMsg << "SET_ANTENNA_DATA_CMD response : OK !";
+                    break;
+                }
+                case AntCmdID::SET_OUTPUT_CMD:
+                {
+                    logMsg << "SET_OUTPUT_CMD response : OK !";
+                    break;
+                }
+            }
+
+            Logger::getInstance()->FnLog(logMsg.str());
+            retCode = AntCmdRetCode::AntRecv_ACK;
+        }
+        else if (cmdID == "32c1")
+        {
+            if (cmd == AntCmdID::GET_ANTENNA_DATA_CMD)
+            {
+                Logger::getInstance()->FnLog("GET_ANTENNA_DATA_CMD response : OK !");
+            }
+            retCode = AntCmdRetCode::AntRecv_ACK;
+        }
+        else if (cmdID == "3282")
+        {
+            std::stringstream logMsg;
+            switch (cmd)
+            {
+                case AntCmdID::USE_OF_ANTENNA_CMD:
+                {
+                    logMsg << "USE_OF_ANTENNA_CMD response : NACK response";
+                    break;
+                }
+                case AntCmdID::SET_ANTENNA_TIME_CMD:
+                {
+                    logMsg << "SET_ANTENNA_TIME_CMD response : NACK response";
+                    break;
+                }
+                case AntCmdID::SET_ANTENNA_DATA_CMD:
+                {
+                    logMsg << "SET_ANTENNA_DATA_CMD response : NACK response";
+                    break;
+                }
+                case AntCmdID::GET_ANTENNA_DATA_CMD:
+                {
+                    logMsg << "GET_ANTENNA_DATA_CMD response : NACK response";
+                    break;
+                }
+            }
+            Logger::getInstance()->FnLog(logMsg.str());
+            retCode = AntCmdRetCode::AntRecv_NAK;
+        }
+        else if (cmdID == "3283")
+        {
+            if (cmd == AntCmdID::SET_ANTENNA_DATA_CMD)
+            {
+                Logger::getInstance()->FnLog("SET_ANTENNA_DATA_CMD response : BUSY response");
+            }
+            retCode = AntCmdRetCode::AntRecv_NAK;
+        }
+        // Force Get IU Cmd Response
+        else if (cmdID == "3fb2")
+        {
+            std::vector<char> IUNumberCurrOri;
+            IUNumberCurrOri.assign(getRxBuf()+ 7, getRxBuf() + 11);
+            std::vector<char> IUNumberCurr(IUNumberCurrOri.rbegin(), IUNumberCurrOri.rend());
+
+            if (Common::getInstance()->FnIsNumeric(IUNumberCurr))
+            {
+                std::string IUNumberCurrStr = Common::getInstance()->FnGetVectorCharToHexString(IUNumberCurr);
+
+                if (IUNumberPrev_ != IUNumberCurrStr)
+                {
+                    IUNumberPrev_ = IUNumberCurrStr;
+                }
+                else if (IUNumberPrev_ == IUNumberCurrStr)
+                {
+                    successRecvIUCount_++;
+
+                    if (successRecvIUCount_ == antennaIUCmdMinOKtimes_)
+                    {
+                        successRecvIUCount_ = 0;
+                        IUNumber_ = IUNumberPrev_;
+                        IUNumberPrev_ = "";
+                        // Need to send IU event
+                    }
+                }
+                retCode = AntCmdRetCode::AntRecv_ACK;
+            }
+            else
+            {
+                std::string InvalidIUNumberCurrStr = Common::getInstance()->FnGetVectorCharToHexString(IUNumberCurr);
+
+                std::stringstream ss;
+                ss << "Unknow IU, IU No : " << InvalidIUNumberCurrStr << " IU No. is not numeric)";
+                Logger::getInstance()->FnLog(ss.str());
+
+                retCode = AntCmdRetCode::AntRecv_NAK;
+            }
+        }
+        else if (cmdID == "31b3")
+        {
+            if (cmd == AntCmdID::MACHINE_CHECK_CMD)
+            {
+                Logger::getInstance()->FnLog("MACHINE_CHECK_CMD response : OK !");
+            }
+            retCode = AntCmdRetCode::AntRecv_ACK;
+        }
+        else if (cmdID == "31b4")
+        {
+            if (cmd == AntCmdID::REQ_IO_STATUS_CMD)
+            {
+                Logger::getInstance()->FnLog("REQ_IO_STATUS_CMD response : OK !");
+            }
+            retCode = AntCmdRetCode::AntRecv_ACK;
+        }
+    }
+
+    std::stringstream retCodeStream;
+    retCodeStream << "Command Response Return Code : " << static_cast<int>(retCode);
+    Logger::getInstance()->FnLog(retCodeStream.str());
+
+    return retCode;
+}
+
+std::vector<unsigned char> Antenna::loadSetAntennaData(unsigned char destID, 
+                                                    unsigned char sourceID,
+                                                    unsigned char category,
+                                                    unsigned char command,
+                                                    unsigned char seqNo,
+                                                    unsigned char antennaID,
+                                                    int placeID,
+                                                    unsigned char parkingNo,
+                                                    unsigned char antennaMode,
+                                                    unsigned char enqTimer,
+                                                    int doubleCommTimer,
+                                                    int cmdWaitTimer)
+{
+    std::vector<unsigned char> dataBuf(18, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0x00;           // RFU = 0
+    dataBuf[6] = 0x0B;           // Len = 11
+    // Data Start
+    dataBuf[7] = antennaID;
+    dataBuf[8] = static_cast<unsigned char>(placeID & 0x00FF);
+    dataBuf[9] = static_cast<unsigned char>(placeID & 0xFF00);
+    dataBuf[10] = parkingNo;
+    dataBuf[11] = antennaMode;
+    dataBuf[12] = 0x00;
+    dataBuf[13] = enqTimer;
+    dataBuf[14] = static_cast<unsigned char>(doubleCommTimer & 0x00FF);
+    dataBuf[15] = static_cast<unsigned char>((doubleCommTimer & 0xFF00) / 256);
+    dataBuf[16] = static_cast<unsigned char>(cmdWaitTimer & 0x00FF);
+    dataBuf[17] = static_cast<unsigned char>((cmdWaitTimer & 0xFF00) / 256);
+    // Data End
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadGetAntennaData(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadNoUseOfAntenna(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadUseOfAntenna(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadSetAntennaTime(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(15, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 8;          // Len = 0
+    // Data Start
+    auto time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm* localTime = std::localtime(&time);
+
+    dataBuf[7] = localTime->tm_mday;
+    dataBuf[8] = localTime->tm_mon + 1;
+    dataBuf[9] = (localTime->tm_year + 1900) % 256;
+    dataBuf[10] = (localTime->tm_year + 1900) / 256;
+    dataBuf[11] = 0;    // RFU
+    dataBuf[12] = localTime->tm_sec;
+    dataBuf[13] = localTime->tm_min;
+    dataBuf[14] = localTime->tm_hour;
+    // Data End
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadMachineCheck(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadReqIOStatus(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadSetOutput(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo, unsigned char maskIO, unsigned char statusOfIO)
+{
+    std::vector<unsigned char> dataBuf(9, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+    dataBuf[7] = maskIO;
+    dataBuf[8] = statusOfIO;
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> Antenna::loadForceGetUINo(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo)
+{
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = destID;
+    dataBuf[1] = sourceID;
+    dataBuf[2] = category;
+    dataBuf[3] = command;
+    dataBuf[4] = seqNo;
+    dataBuf[5] = 0;          // RFU = 0
+    dataBuf[6] = 0;          // Len = 0
+
+    return dataBuf;
 }
 
 void Antenna::handleIgnoreState(char c)
@@ -174,111 +767,6 @@ int Antenna::receiveRxDataByte(char c)
     return ret;
 }
 
-void Antenna::handleOnReceive(const boost::system::error_code& ec, size_t bytes_transferred)
-{
-    Logger::getInstance()->FnLog(__func__);
-
-    if (!pSerialPort_->is_open())
-    {
-        return;
-    }
-
-    if (ec)
-    {
-        if (ec == boost::asio::error::operation_aborted)
-        {
-            // Handle cancellation, if needed
-            Logger::getInstance()->FnLog("Asynchronous read operation canceled.");
-        }
-        else
-        {
-            std::stringstream ss;
-            ss << __func__ << " Antenna receive IU error: " << ec.what();
-            Logger::getInstance()->FnLog(ss.str());
-        }
-        return;
-    }
-
-    for (unsigned int i = 0; i < bytes_transferred; i++)
-    {
-        char c = rxBuffData[i];
-        int len = receiveRxDataByte(c);
-
-        switch(len)
-        {
-            case 13:
-            {
-                std::stringstream ss;
-                ss << "Antenna Raw Data: " << Common::getInstance()->FnGetUCharArrayToHexString(getRxBuf(), 13);
-                Logger::getInstance()->FnLog(ss.str());
-                
-                if (successRecvIUCount_ < MIN_SUCCESS_TIME)
-                {
-                    std::string IUNumberCurr = Common::getInstance()->FnGetLittelEndianUCharArrayToHexString(getRxBuf(), 7, 5);
-
-                    if (IUNumberPrev_.empty())
-                    {
-                        IUNumberPrev_ = IUNumberCurr;
-                        successRecvIUCount_++;
-                    }
-                    else
-                    {
-                        if (IUNumberPrev_ == IUNumberCurr)
-                        {
-                            successRecvIUCount_++;
-                        }
-                    }
-                    FnAntennaCheck();
-                }
-                else
-                {
-                    IUNumber_ = IUNumberPrev_;
-                    std::stringstream ss;
-                    ss << "Antenna IU : " << IUNumber_;
-                    Logger::getInstance()->FnLog(ss.str());
-
-                    successRecvIUCount_ = 0;
-                    IUNumberPrev_ = "";
-                    FnAntennaCmdResponseTimerStop();
-                    FnAntennaStopAsyncRead();
-                }
-                break;
-            }
-            case 8:
-            {
-                unsigned char* tmpBuff = getRxBuf();
-
-                if (tmpBuff[3] == 0x82)
-                {
-                    Logger::getInstance()->FnLog("Antenna : NAK received");
-                }
-                FnAntennaCheck();
-                break;
-            }
-            default:
-                break;
-        }
-
-    }
-}
-
-void Antenna::FnAntennaCheck()
-{
-    Logger::getInstance()->FnLog(__func__);
-
-    if (!pSerialPort_->is_open())
-    {
-        return;
-    }
-
-    pSerialPort_->async_read_some(
-        boost::asio::buffer(rxBuffData, RX_BUF_SIZE),
-        boost::asio::bind_executor(*pStrand_,
-            [this](const boost::system::error_code& ec, size_t byte_transferred){
-                handleOnReceive(ec, byte_transferred);
-            }));
-}
-
 unsigned int Antenna::CRC16R_Calculate(unsigned char* s, unsigned char len, unsigned int crc)
 {
     // CRC order: 16
@@ -306,31 +794,29 @@ unsigned int Antenna::CRC16R_Calculate(unsigned char* s, unsigned char len, unsi
     return crc;
 }
 
-void Antenna::setTxAntennaData(unsigned char Aid, unsigned char Hid, unsigned char seqNo)
+void Antenna::antennaCmdSend(const std::vector<unsigned char>& dataBuff)
 {
+    Logger::getInstance()->FnLog(__func__);
+
+    if (!pSerialPort_->is_open())
+    {
+        return;
+    }
+
     unsigned int txCrc = 0xFFFF;
     unsigned char tempChar;
-    int i = 0, tempBuffSize = 8;
-    unsigned char tempBuff[tempBuffSize];
-    memset(tempBuff, 0, sizeof(tempBuff));
+    int i = 0;
     memset(txBuff, 0, sizeof(txBuff));
-
-    tempBuff[0] = Aid;
-    tempBuff[1] = Hid;
-    tempBuff[2] = 0x3F;
-    tempBuff[3] = 0x32;
-    tempBuff[4] = seqNo;
-    tempBuff[5] = 0x00;
-    tempBuff[6] = 0x00;
+    std::vector<unsigned char> tempBuffData(dataBuff.begin(), dataBuff.end());
 
     // Construct Tx Frame
     // Start of frame
     txBuff[i++] = Antenna::DLE;
     txBuff[i++] = Antenna::STX;
     // Data of frame, exclude ETX
-    for (int j = 0; j < (tempBuffSize - 1) ; j++)
+    for (int j = 0; j < tempBuffData.size() ; j++)
     {
-        tempChar = tempBuff[j];
+        tempChar = tempBuffData[j];
         if (tempChar == Antenna::DLE)
         {
             txBuff[i++] = Antenna::DLE;
@@ -342,11 +828,14 @@ void Antenna::setTxAntennaData(unsigned char Aid, unsigned char Hid, unsigned ch
     txBuff[i++] = Antenna::ETX;
     
     // Include ETX in CRC Calculation
-    tempBuff[7] = Antenna::ETX;
-    txCrc = CRC16R_Calculate(tempBuff, tempBuffSize, txCrc);
+    tempBuffData.push_back(static_cast<unsigned char>(Antenna::ETX));
+    txCrc = CRC16R_Calculate(tempBuffData.data(), tempBuffData.size(), txCrc);
     txBuff[i++] = txCrc & 0xFF;
     txBuff[i++] = (txCrc >> 8) & 0xFF;
     TxNum_ = i;
+
+    /* Send Tx Data buffer via serial */
+    boost::asio::write(*pSerialPort_, boost::asio::buffer(getTxBuf(), getTxNum()));
 }
 
 unsigned char* Antenna::getTxBuf()
@@ -373,100 +862,5 @@ void Antenna::FnAntennaSendReadIUCmd()
 {
     Logger::getInstance()->FnLog(__func__);
 
-    if (!pSerialPort_->is_open())
-    {
-        return;
-    }
-
-    unsigned char antennaID = 0xB0 + IniParser::getInstance()->FnGetAntennaId();
-    unsigned char hostID = 0x00;
-
-    if ((++SEQUENCE_NO) == 0)
-    {
-        // For sequence number of 1 to 255
-        ++SEQUENCE_NO;
-    }
-
-    /* Set Tx Data buffer */
-    setTxAntennaData(antennaID, hostID, SEQUENCE_NO);
-
-    /* Send Tx Data buffer via serial */
-    boost::asio::write(*pSerialPort_, boost::asio::buffer(getTxBuf(), getTxNum()));
-}
-
-void Antenna::FnAntennaStopAsyncRead()
-{
-    Logger::getInstance()->FnLog(__func__);
-
-    if (!pSerialPort_->is_open())
-    {
-        return;
-    }
-
-    // Stop any async serial operations within the strand
-    pStrand_->post([this]() {
-        pSerialPort_->cancel();
-    });
-}
-
-void Antenna::handleOnCmdResponseTimeout(const boost::system::error_code& ec)
-{
-    Logger::getInstance()->FnLog(__func__);
-
-    if (!pSerialPort_->is_open())
-    {
-        return;
-    }
-
-    if (ec)
-    {
-        if (ec == boost::asio::error::operation_aborted)
-        {
-            Logger::getInstance()->FnLog("Timer cancelled.");
-        }
-        else
-        {
-            std::stringstream ss;
-            ss << __func__ << " Antenna Response Timeout Error: " << ec.what();
-            Logger::getInstance()->FnLog(ss.str());
-        }
-        return;
-    }
-
-    // Repeat the timer every second
-    if (retryCount_ < MAX_RETRY_TIME)
-    {
-        retryCount_++;
-        FnAntennaSendReadIUCmd();
-        FnAntennaCmdResponseTimerStart();
-    }
-    else
-    {
-        retryCount_ = 0;
-        FnAntennaCmdResponseTimerStop();
-        FnAntennaStopAsyncRead();
-    }
-}
-
-void Antenna::FnAntennaCmdResponseTimerStart()
-{
-    Logger::getInstance()->FnLog(__func__);
-
-    // Start timer 1 second
-    pAntennaCmdResponseTimer_->expires_from_now(std::chrono::seconds(IniParser::getInstance()->FnGetWaitIUNoTime()));
-
-    pAntennaCmdResponseTimer_->async_wait(boost::asio::bind_executor(*pStrand_, 
-        [this](const boost::system::error_code& ec) {
-        handleOnCmdResponseTimeout(ec);
-    }));
-}
-
-void Antenna::FnAntennaCmdResponseTimerStop()
-{
-    Logger::getInstance()->FnLog(__func__);
-
-    // Stop any async timer operations within the strand
-    pStrand_->post([this]() {
-        pAntennaCmdResponseTimer_->cancel();
-    });
+    int ret = antennaCmd(AntCmdID::FORCE_GET_IU_NO_CMD);
 }

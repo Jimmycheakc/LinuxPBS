@@ -3,6 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 
 #define DATE_TIME_FORMAT_SPACE  32
@@ -17,6 +18,8 @@ public:
     std::string FnGetFileName(const std::string& str);
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
+    std::string FnGetVectorCharToHexString(const std::vector<char>& data);
+    bool FnIsNumeric(const std::vector<char>& data);
 
     /**
      * Singleton Common should not be cloneable.

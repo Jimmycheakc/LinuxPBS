@@ -26,6 +26,8 @@ set(SOURCE_FILES
     lcd.cpp
     led.cpp
     antenna.cpp
+    event_manager.cpp
+    event_handler.cpp
     main.cpp
 )
 

@@ -96,6 +96,9 @@ public:
     // Confirm
     int FnGetAntennaId() const;
     int FnGetWaitIUNoTime() const;
+    int FnGetAntennaMaxRetry() const;
+    int FnGetAntennaInqTO() const;
+    int FnGetAntennaMinOKtimes() const;
 
     /**
      * Singleton IniParser should not be cloneable.
@@ -195,4 +198,7 @@ private:
     // Confirm
     int AntennaID_;
     int WaitIUNoTime_;
+    int AntennaMaxRetry_;
+    int AntennaInqTO_;
+    int AntennaMinOKtimes_;
 };

@@ -37,4 +37,5 @@ private:
     void led216_test();
     void led226_test();
     void antenna_test();
+    void event_queue_test();
 };
