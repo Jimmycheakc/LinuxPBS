@@ -10,7 +10,8 @@ EventHandler* EventHandler::eventHandler_ = nullptr;
 std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap = 
 {
     {   "Evt_AntennaFail"      ,std::bind(&EventHandler::handleAntennaFail, eventHandler_, std::placeholders::_1)   },
-    {   "Evt_AntennaPower"     ,std::bind(&EventHandler::handleAntennaPower, eventHandler_, std::placeholders::_1)  }
+    {   "Evt_AntennaPower"     ,std::bind(&EventHandler::handleAntennaPower, eventHandler_, std::placeholders::_1)  },
+    {   "Evt_AntennaIUCome"    ,std::bind(&EventHandler::handleAntennaIUCome, eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -83,6 +84,32 @@ bool EventHandler::handleAntennaPower(const BaseEvent* event)
     if (boolEvent != nullptr)
     {
         bool value = boolEvent->data;
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << value;
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* boolEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        std::string value = boolEvent->data;
         // Temp: Add handling in future
 
         std::stringstream ss;

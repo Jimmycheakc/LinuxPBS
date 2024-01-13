@@ -452,11 +452,6 @@ std::string IniParser::FnGetNexpaDBName() const
     return NexpaDBName_;
 }
 
-int IniParser::FnGetWaitIUNoTime() const
-{
-    return WaitIUNoTime_;
-}
-
 std::string IniParser::FnGetHasPremiumParking() const
 {
     return HasPremiumParking_;
@@ -547,6 +542,11 @@ std::string IniParser::FnGetLPRIP4Container() const
 int IniParser::FnGetAntennaId() const
 {
     return AntennaID_;
+}
+
+int IniParser::FnGetWaitIUNoTime() const
+{
+    return WaitIUNoTime_;
 }
 
 int IniParser::FnGetAntennaMaxRetry() const

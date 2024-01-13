@@ -20,6 +20,7 @@ public:
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
     std::string FnGetVectorCharToHexString(const std::vector<char>& data);
     bool FnIsNumeric(const std::vector<char>& data);
+    bool FnIsStringNumeric(const std::string& str);
 
     /**
      * Singleton Common should not be cloneable.

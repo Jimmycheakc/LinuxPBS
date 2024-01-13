@@ -3,6 +3,8 @@
 #include <vector>
 #include "antenna.h"
 #include "common.h"
+#include "event_manager.h"
+#include "event_handler.h"
 #include "ini_parser.h"
 #include "log.h"
 
@@ -14,8 +16,8 @@ Antenna::Antenna()
     TxNum_(0),
     RxNum_(0),
     rxState_(Antenna::RX_STATE::IGNORE),
-    retryCount_(0),
-    successRecvIUCount_(0)
+    successRecvIUCount_(0),
+    successRecvIUFlag_(false)
 {
     memset(txBuff, 0 , sizeof(txBuff));
     memset(rxBuff, 0, sizeof(rxBuff));
@@ -59,6 +61,16 @@ void Antenna::FnAntennaInit(unsigned int baudRate, const std::string& comPortNam
     Logger::getInstance()->FnLog(ss.str());
     
     int result = antennaInit();
+    if (result)
+    {
+        // raise antenna power event success
+        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
+    }
+    else
+    {
+        // raise antenna power event failed
+        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
+    }
 }
 
 int Antenna::antennaInit()
@@ -146,6 +158,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
         return -1;
     }
 
+    int antennaCmdTimeoutInMs = 1000;
     std::vector<unsigned char> dataBuffer;
     unsigned char antennaID = IniParser::getInstance()->FnGetAntennaId();
     unsigned char destID = 0xB0 + antennaID;
@@ -165,6 +178,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
         }
         case AntCmdID::SET_ANTENNA_DATA_CMD:
         {
+            antennaCmdTimeoutInMs = 1000;
             dataBuffer = loadSetAntennaData(destID, 
                                         sourceID, 
                                         SET_ANTENNA_DATA_CATEGORY, 
@@ -216,6 +230,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
         }
         case AntCmdID::FORCE_GET_IU_NO_CMD:
         {
+            antennaCmdTimeoutInMs = antennaCmdTimeoutInMillisec_;
             dataBuffer = loadForceGetUINo(destID, sourceID, FORCE_GET_IU_CATEGORY, FORCE_GET_IU_COMMAND_NO, SEQUENCE_NO);
             break;
         }
@@ -240,7 +255,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
         result.success = false;
 
         antennaCmdSend(dataBuffer);
-        result = antennaReadWithTimeout(antennaCmdTimeoutInMillisec_);
+        result = antennaReadWithTimeout(antennaCmdTimeoutInMs);
 
         if (result.success)
         {
@@ -296,12 +311,17 @@ Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
             pSerialPort_->cancel();
             success = false;
         }
+        
+        io_serial_context.post([this]() {
+            io_serial_context.stop();
+        });
     });
 
     io_serial_context.run();
 
-    io_serial_context.get_executor().context().stop();
-    pSerialPort_->cancel();
+    io_serial_context.reset();
+    //io_serial_context.get_executor().context().stop();
+    //pSerialPort_->cancel();
 
     buffer.resize(bytes_transferred);
     return {buffer, success};
@@ -413,41 +433,51 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
         else if (cmdID == "3fb2")
         {
             std::vector<char> IUNumberCurrOri;
-            IUNumberCurrOri.assign(getRxBuf()+ 7, getRxBuf() + 11);
+            IUNumberCurrOri.assign(getRxBuf()+ 7, getRxBuf() + 12);
             std::vector<char> IUNumberCurr(IUNumberCurrOri.rbegin(), IUNumberCurrOri.rend());
+            std::string IUNumberStr = Common::getInstance()->FnGetVectorCharToHexString(IUNumberCurr);
 
-            if (Common::getInstance()->FnIsNumeric(IUNumberCurr))
+            if (Common::getInstance()->FnIsStringNumeric(IUNumberStr))
             {
-                std::string IUNumberCurrStr = Common::getInstance()->FnGetVectorCharToHexString(IUNumberCurr);
-
-                if (IUNumberPrev_ != IUNumberCurrStr)
+                if (IUNumberPrev_ != IUNumberStr)
                 {
-                    IUNumberPrev_ = IUNumberCurrStr;
+                    IUNumberPrev_ = IUNumberStr;
                 }
-                else if (IUNumberPrev_ == IUNumberCurrStr)
+                else if (IUNumberPrev_ == IUNumberStr)
                 {
                     successRecvIUCount_++;
 
                     if (successRecvIUCount_ == antennaIUCmdMinOKtimes_)
                     {
+                        successRecvIUFlag_ = true;
                         successRecvIUCount_ = 0;
                         IUNumber_ = IUNumberPrev_;
                         IUNumberPrev_ = "";
                         // Need to send IU event
+
+                        std::stringstream ss;
+                        ss << "IU No : " << IUNumber_;
+                        Logger::getInstance()->FnLog(ss.str());
                     }
                 }
                 retCode = AntCmdRetCode::AntRecv_ACK;
             }
             else
             {
-                std::string InvalidIUNumberCurrStr = Common::getInstance()->FnGetVectorCharToHexString(IUNumberCurr);
-
                 std::stringstream ss;
-                ss << "Unknow IU, IU No : " << InvalidIUNumberCurrStr << " IU No. is not numeric)";
+                ss << "Unknow IU, IU No : " << IUNumberStr << " IU No. is not numeric)";
                 Logger::getInstance()->FnLog(ss.str());
 
                 retCode = AntCmdRetCode::AntRecv_NAK;
             }
+        }
+        else if (cmdID == "3f82")
+        {
+            if (cmd == AntCmdID::FORCE_GET_IU_NO_CMD)
+            {
+                Logger::getInstance()->FnLog("FORCE_GET_IU_NO_CMD response : NACK response");
+            }
+            retCode = AntCmdRetCode::AntRecv_NAK;
         }
         else if (cmdID == "31b3")
         {
@@ -861,6 +891,27 @@ int Antenna::getRxNum()
 void Antenna::FnAntennaSendReadIUCmd()
 {
     Logger::getInstance()->FnLog(__func__);
+    int ret = 0;
 
-    int ret = antennaCmd(AntCmdID::FORCE_GET_IU_NO_CMD);
+    for (int i = 0; i < 10; i++)
+    {
+        ret = antennaCmd(AntCmdID::FORCE_GET_IU_NO_CMD);
+
+        if (successRecvIUFlag_)
+        {
+            break;
+        }
+    }
+    
+    if (successRecvIUFlag_)
+    {
+        successRecvIUFlag_ = false;
+        // raise iucome event
+        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaIUCome", IUNumber_);
+    }
+    else
+    {
+        // raise antenna fail
+        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 0);
+    }
 }

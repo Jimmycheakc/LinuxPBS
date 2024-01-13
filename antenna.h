@@ -127,8 +127,8 @@ private:
     unsigned char rxBuffData[RX_BUF_SIZE];
     std::string IUNumberPrev_;
     std::string IUNumber_;
-    int retryCount_;
     int successRecvIUCount_;
+    bool successRecvIUFlag_;
     Antenna();
     int antennaInit();
     int antennaCmd(AntCmdID cmdID);

@@ -32,4 +32,5 @@ private:
     EventHandler();
     bool handleAntennaFail(const BaseEvent* event);
     bool handleAntennaPower(const BaseEvent* event);
+    bool handleAntennaIUCome(const BaseEvent* event);
 };

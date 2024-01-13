@@ -103,6 +103,18 @@ bool Common::FnIsNumeric(const std::vector<char>& data)
 {
     for (char character : data)
     {
+        if (!std::isdigit(static_cast<unsigned char>(character)))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Common::FnIsStringNumeric(const std::string& str)
+{
+    for (char character :str)
+    {
         if (!std::isdigit(character))
         {
             return false;

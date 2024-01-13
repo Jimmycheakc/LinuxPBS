@@ -617,7 +617,10 @@ void Test::antenna_test()
     boost::asio::io_context io_context;
 
     IniParser::getInstance()->FnReadIniFile();
+    EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
+    EventManager::getInstance()->FnStartEventThread();
     Antenna::getInstance()->FnAntennaInit(19200, "/dev/ttyCH9344USB5");
+    Antenna::getInstance()->FnAntennaSendReadIUCmd();
     
     std::cout << "start asynchronous operation." << std::endl;
 
@@ -625,6 +628,7 @@ void Test::antenna_test()
     t.async_wait(print);
 
     io_context.run();
+    EventManager::getInstance()->FnStopEventThread();
 }
 
 void Test::event_queue_test()
