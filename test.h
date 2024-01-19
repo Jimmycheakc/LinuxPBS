@@ -38,4 +38,5 @@ private:
     void led226_test();
     void antenna_test();
     void event_queue_test();
+    void lcsc_reader_test();
 };

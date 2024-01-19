@@ -33,4 +33,8 @@ private:
     bool handleAntennaFail(const BaseEvent* event);
     bool handleAntennaPower(const BaseEvent* event);
     bool handleAntennaIUCome(const BaseEvent* event);
+    bool handleLcscReaderStatus(const BaseEvent* event);
+    bool handleLcscReaderLogin(const BaseEvent* event);
+    bool handleLcscReaderLogout(const BaseEvent* event);
+    bool handleLcscReaderGetCardID(const BaseEvent* event);
 };

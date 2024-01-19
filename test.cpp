@@ -16,6 +16,7 @@
 #include "antenna.h"
 #include "event_manager.h"
 #include "event_handler.h"
+#include "lcsc.h"
 
 #include "boost/date_time/posix_time/posix_time.hpp"
 
@@ -48,8 +49,9 @@ void Test::FnTest(char* argv)
     //led614_test();
     //led216_test();
     //led226_test();
-    antenna_test();
+    //antenna_test();
     //event_queue_test();
+    lcsc_reader_test();
 }
 
 void Test::common_test(char* argv)
@@ -639,5 +641,41 @@ void Test::event_queue_test()
     EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 0);
     EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
     std::this_thread::sleep_for(std::chrono::seconds(2));
+    EventManager::getInstance()->FnStopEventThread();
+}
+
+void Test::lcsc_reader_test()
+{
+    boost::asio::io_context io_context;
+
+    IniParser::getInstance()->FnReadIniFile();
+    EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
+    EventManager::getInstance()->FnStartEventThread();
+    LCSCReader::getInstance()->FnLCSCReaderInit(115200, "/dev/ttyCH9344USB4");
+    LCSCReader::getInstance()->FnSendGetStatusCmd();
+    std::cout << "Serial number : " << LCSCReader::getInstance()->FnGetSerialNumber() << std::endl;
+    std::cout << "Reader mode : " << LCSCReader::getInstance()->FnGetReaderMode() << std::endl;
+    std::cout << "BL1 version : " << LCSCReader::getInstance()->FnGetBL1Version() << std::endl;
+    std::cout << "BL2 version : " << LCSCReader::getInstance()->FnGetBL2Version() << std::endl;
+    std::cout << "BL3 version : " << LCSCReader::getInstance()->FnGetBL3Version() << std::endl;
+    std::cout << "BL4 version : " << LCSCReader::getInstance()->FnGetBL4Version() << std::endl;
+    std::cout << "CIL1 version : " << LCSCReader::getInstance()->FnGetCIL1Version() << std::endl;
+    std::cout << "CIL2 version : " << LCSCReader::getInstance()->FnGetCIL2Version() << std::endl;
+    std::cout << "CIL3 version : " << LCSCReader::getInstance()->FnGetCIL3Version() << std::endl;
+    std::cout << "CIL4 version : " << LCSCReader::getInstance()->FnGetCIL4Version() << std::endl;
+    std::cout << "CFG version : " << LCSCReader::getInstance()->FnGetCFGVersion() << std::endl;
+    std::cout << "Firmware version : " << LCSCReader::getInstance()->FnGetFirmwareVersion() << std::endl;
+    LCSCReader::getInstance()->FnSendGetLoginCmd();
+    LCSCReader::getInstance()->FnSendGetLogoutCmd();
+    LCSCReader::getInstance()->FnSendGetCardIDCmd();
+    std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
+    std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
+
+    std::cout << "start asynchronous operation." << std::endl;
+
+    boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(5));
+    t.async_wait(print);
+
+    io_context.run();
     EventManager::getInstance()->FnStopEventThread();
 }

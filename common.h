@@ -19,6 +19,9 @@ public:
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
     std::string FnGetVectorCharToHexString(const std::vector<char>& data);
+    std::string FnGetVectorCharToHexString(const std::vector<uint8_t>& data, std::size_t startPos, std::size_t length);
+    std::string FnGetDisplayVectorCharToHexString(const std::vector<char>& data);
+    std::string FnGetDisplayVectorCharToHexString(const std::vector<uint8_t>& data);
     bool FnIsNumeric(const std::vector<char>& data);
     bool FnIsStringNumeric(const std::string& str);
 

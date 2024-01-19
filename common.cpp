@@ -99,6 +99,42 @@ std::string Common::FnGetVectorCharToHexString(const std::vector<char>& data)
     return hexStream.str();
 }
 
+std::string Common::FnGetVectorCharToHexString(const std::vector<uint8_t>& data, std::size_t startPos, std::size_t length)
+{
+    std::stringstream hexStream;
+    hexStream << std::hex << std::setfill('0');
+
+    for (std::size_t i = startPos; i < startPos + length && i < data.size(); ++i) {
+        hexStream << std::setw(2) << static_cast<int>(data[i]);
+    }
+
+    return hexStream.str();
+}
+
+std::string Common::FnGetDisplayVectorCharToHexString(const std::vector<char>& data)
+{
+    std::stringstream hexStream;
+
+    for (const auto& character : data)
+    {
+        hexStream << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character) << ' ';
+    }
+
+    return hexStream.str();
+}
+
+std::string Common::FnGetDisplayVectorCharToHexString(const std::vector<uint8_t>& data)
+{
+    std::stringstream hexStream;
+
+    for (const auto& character : data)
+    {
+        hexStream << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(character) << ' ';
+    }
+
+    return hexStream.str();
+}
+
 bool Common::FnIsNumeric(const std::vector<char>& data)
 {
     for (char character : data)

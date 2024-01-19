@@ -3,15 +3,20 @@
 #include <string>
 #include <sstream>
 #include "event_handler.h"
+#include "lcsc.h"
 #include "log.h"
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
 
 std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap = 
 {
-    {   "Evt_AntennaFail"      ,std::bind(&EventHandler::handleAntennaFail, eventHandler_, std::placeholders::_1)   },
-    {   "Evt_AntennaPower"     ,std::bind(&EventHandler::handleAntennaPower, eventHandler_, std::placeholders::_1)  },
-    {   "Evt_AntennaIUCome"    ,std::bind(&EventHandler::handleAntennaIUCome, eventHandler_, std::placeholders::_1) }
+    {   "Evt_AntennaFail"               ,std::bind(&EventHandler::handleAntennaFail,            eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaPower"              ,std::bind(&EventHandler::handleAntennaPower,           eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaIUCome"             ,std::bind(&EventHandler::handleAntennaIUCome,          eventHandler_, std::placeholders::_1) },
+    {   "Evt_LcscReaderStatus"          ,std::bind(&EventHandler::handleLcscReaderStatus,       eventHandler_, std::placeholders::_1) },
+    {   "Evt_LcscReaderLogin"           ,std::bind(&EventHandler::handleLcscReaderLogin,        eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderLogout"    ,std::bind(&EventHandler::handleLcscReaderLogout,       eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardID" ,std::bind(&EventHandler::handleLcscReaderGetCardID,    eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -114,6 +119,110 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
 
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderStatus(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderLogin(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderLogout(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
         Logger::getInstance()->FnLog(ss.str());
     }
     else
