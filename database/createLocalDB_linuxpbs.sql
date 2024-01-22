@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS season_mst (
     update_dt DATETIME,
     rate_type INT DEFAULT 0,
     pay_to DATETIME,
-    pay_from DATETIME,
+    pay_date DATETIME,
     multi_season_no VARCHAR(20),
     zone_id INT,
     redeem_amt INT,
