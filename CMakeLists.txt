@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.12)
 
 project(LinuxPBS)
 
+# Find ODBC
+find_package(ODBC REQUIRED)
+
+# Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -31,6 +35,11 @@ set(SOURCE_FILES
     event_manager.cpp
     event_handler.cpp
     lcsc.cpp
+    ping.cpp
+    udp.cpp
+    ce_time.cpp
+    odbc.cpp
+    db.cpp
     main.cpp
 )
 
@@ -56,4 +65,4 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/LinuxPBS.ini ${CMAKE_CURRENT_BINARY_D
 add_executable(linuxpbs ${SOURCE_FILES})
 
 # Link against libraries
-target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto)
+target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto ${ODBC_LIBRARIES})

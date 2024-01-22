@@ -39,4 +39,5 @@ private:
     void antenna_test();
     void event_queue_test();
     void lcsc_reader_test();
+    void db_test();
 };

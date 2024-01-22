@@ -82,8 +82,8 @@ CREATE TABLE IF NOT EXISTS message_mst (
     update_dt DATETIME
 );
 
--- Create Vechicle_type table in database
-CREATE TABLE IF NOT EXISTS Vechicle_type (
+-- Create Vehicle_type table in database
+CREATE TABLE IF NOT EXISTS Vehicle_type (
     VTypeID INT AUTO_INCREMENT PRIMARY KEY,
     IUCode INT,
     TransType INT,
