@@ -44,6 +44,28 @@ std::string Common::FnGetDateTime()
     return oss.str();
 }
 
+std::string Common::FnConvertDateTime(uint32_t seconds)
+{
+    time_t epochSeconds = seconds;
+    struct tm timeinfo = {};
+    localtime_r(&epochSeconds, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%d/%m/%Y %H:%M:%S %p");
+    return oss.str();
+}
+
+std::time_t Common::FnGetEpochSeconds()
+{
+    auto currentTime = std::chrono::system_clock::now();
+
+    auto durationSinceEpoch = currentTime.time_since_epoch();
+
+    auto secondsSinceEpoch = std::chrono::duration_cast<std::chrono::seconds>(durationSinceEpoch).count();
+
+    return static_cast<std::time_t>(secondsSinceEpoch);
+}
+
 std::string Common::FnGetDateTimeSpace()
 {
     std::ostringstream oss;

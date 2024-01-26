@@ -37,4 +37,10 @@ private:
     bool handleLcscReaderLogin(const BaseEvent* event);
     bool handleLcscReaderLogout(const BaseEvent* event);
     bool handleLcscReaderGetCardID(const BaseEvent* event);
+    bool handleLcscReaderGetCardBalance(const BaseEvent* event);
+    bool handleLcscReaderGetTime(const BaseEvent* event);
+    bool handleLcscReaderSetTime(const BaseEvent* event);
+    bool handleLcscReaderUploadCFGFile(const BaseEvent* event);
+    bool handleLcscReaderUploadCILFile(const BaseEvent* event);
+    bool handleLcscReaderUploadBLFile(const BaseEvent* event);
 };

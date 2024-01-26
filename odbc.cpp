@@ -117,6 +117,17 @@ int odbc::Connect()
     if (ret == SQL_SUCCESS_WITH_INFO) {
       GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
     }
+    
+    SQLCHAR* setModeQuery = (SQLCHAR*)"SET sql_mode='NO_BACKSLASH_ESCAPES'";
+    ret = SQLExecDirect(dbc, setModeQuery, SQL_NTS);
+    if (!SQL_SUCCEEDED(ret)) {
+      GetError("SQLExecDirect", dbc, SQL_HANDLE_DBC);
+      return -1;
+    }
+    if (ret == SQL_SUCCESS_WITH_INFO) {
+      GetError("SQLExecDirect", dbc, SQL_HANDLE_DBC);
+    }
+    
   }
   catch(...){
     std::stringstream ss;

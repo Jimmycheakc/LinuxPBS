@@ -1,6 +1,8 @@
 #include <cstdint>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <filesystem>
 #include <openssl/aes.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -38,7 +40,10 @@ LCSCReader::LCSCReader()
     firmware_version_(""),
     reader_challenge_({}),
     card_serial_num_(""),
-    card_application_num_("")
+    card_application_num_(""),
+    card_balance_(0.00),
+    reader_time_(""),
+    continueReadFlag_(false)
 {
     memset(txBuff, 0, sizeof(txBuff));
     memset(rxBuff, 0, sizeof(rxBuff));
@@ -116,9 +121,514 @@ void LCSCReader::FnSendGetLogoutCmd()
 
 void LCSCReader::FnSendGetCardIDCmd()
 {
-    int ret = lcscCmd(LcscCmd::GET_CARD_ID);
+    int ret;
+    continueReadFlag_.store(true);
+    do
+    {
+        ret = lcscCmd(LcscCmd::GET_CARD_ID);
+    } while(ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load());
 
-    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderLogout", ret);
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", ret);
+}
+
+void LCSCReader::FnSendGetCardBalance()
+{
+    int ret;
+    continueReadFlag_.store(true);
+    do
+    {
+        ret = lcscCmd(LcscCmd::CARD_BALANCE);
+    } while (ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load());
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", ret);
+}
+
+void LCSCReader::FnSendGetTime()
+{
+    int ret = lcscCmd(LcscCmd::GET_TIME);
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetTime", ret);
+}
+
+void LCSCReader::FnSendSetTime()
+{
+    int ret = lcscCmd(LcscCmd::SET_TIME);
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderSetTime", ret);
+}
+
+void LCSCReader::FnSendUploadCFGFile(const std::string& path)
+{
+    int ret;
+    const std::filesystem::path filePath(path);
+
+    if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
+    {
+        std::vector<unsigned char> fileData = readFile(filePath);
+
+        if (!fileData.empty())
+        {
+            std::size_t chunkSize = 256;
+            std::vector<std::vector<unsigned char>> chunks = chunkData(fileData, chunkSize);
+
+            for (const auto& chunk : chunks)
+            {
+                ret = uploadCFGSub(chunk);
+                if (ret != static_cast<int>(mCSCEvents::sCFGUploadSuccess))
+                {
+                    break;
+                }
+            }
+
+            ret = uploadCFGComplete();
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sCFGUploadCorrupt);
+
+            std::stringstream ss;
+            ss << "File not found or not a regular file: " << filePath;
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+
+        std::stringstream ss;
+        ss << "File not found or not a regular file: " << filePath;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+    }
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadCFGFile", ret);
+}
+
+std::vector<unsigned char> LCSCReader::readFile(const std::filesystem::path& filePath)
+{
+    std::ifstream file(filePath.string(), std::ios::binary | std::ios::ate);
+    
+    if (!file.is_open())
+    {
+        std::stringstream ss;
+        ss << __func__ << " Error opening file: " << filePath;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+        return {};
+    }
+
+    std::streamsize fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    std::vector<unsigned char> fileData(fileSize);
+    if (file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+    {
+        return fileData;
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Error reading file: " << filePath;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+        return {};
+    }
+}
+
+std::vector<std::vector<unsigned char>> LCSCReader::chunkData(const std::vector<unsigned char>& data, std::size_t chunkSize)
+{
+    std::vector<std::vector<unsigned char>> chunks;
+
+    for (std::size_t i = 0; i < data.size(); i += chunkSize)
+    {
+        auto begin = data.begin() + i;
+        auto end = (i + chunkSize < data.size()) ? begin + chunkSize : data.end();
+        chunks.push_back(std::vector<unsigned char>(begin, end));
+    }
+
+    return chunks;
+}
+
+int LCSCReader::uploadCFGSub(const std::vector<unsigned char>& data)
+{
+    int ret;
+    std::size_t size = data.size();
+    // 8 = First CFG_UPLOAD cmd (Byte[0 - 5]) + CRC (Byte[last 2])
+    std::size_t length = data.size() + 8;
+    std::vector<unsigned char> dataBuf(length - 2, 0);  // without CRC
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x32;
+    dataBuf[2] = (length >> 8) & 0xFF;
+    dataBuf[3] = length & 0xFF;
+    dataBuf[4] = (size >> 8) & 0xFF;
+    dataBuf[5] = size & 0xFF;
+
+    for (int i = 0; i < size; i++)
+    {
+        dataBuf[i + 6] = data[i];
+    }
+    
+    std::stringstream ss;
+    ss << __func__ <<  " Command : UPLOAD_CFG_FILE";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    bool cmdSendSuccess = lcscCmdSend(dataBuf);
+
+    if (cmdSendSuccess)
+    {
+        LCSCReader::ReadResult result;
+        result.data = {};
+        result.success = false;
+
+        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            ret = static_cast<int>(lcscHandleCmdResponse(LcscCmd::UPLOAD_CFG_FILE, result.data));
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sTimeout);
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+    }
+
+    return ret;
+}
+
+int LCSCReader::uploadCFGComplete()
+{
+    int ret;
+
+    std::vector<unsigned char> dataBuf(6, 0);
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x32;
+    dataBuf[2] = 0x00;
+    dataBuf[3] = 0x08;
+    dataBuf[4] = 0x00;
+    dataBuf[5] = 0x00;
+
+    std::stringstream ss;
+    ss << __func__ <<  " Command : UPLOAD_CFG_FILE";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    bool cmdSendSuccess = lcscCmdSend(dataBuf);
+
+    if (cmdSendSuccess)
+    {
+        LCSCReader::ReadResult result;
+        result.data = {};
+        result.success = false;
+
+        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            ret = static_cast<int>(lcscHandleCmdResponse(LcscCmd::UPLOAD_CFG_FILE, result.data));
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sTimeout);
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+    }
+
+    return ret;
+}
+
+void LCSCReader::FnSendUploadCILFile(const std::string& path)
+{
+    int ret;
+    const std::filesystem::path filePath(path);
+
+    if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
+    {
+        std::vector<unsigned char> fileData = readFile(filePath);
+
+        if (!fileData.empty() && (fileData.size() > 6))
+        {
+            std::size_t chunkSize = 256;
+            std::vector<std::vector<unsigned char>> chunks = chunkData(fileData, chunkSize);
+
+            bool isSubSequence = false;
+            for (const auto& chunk : chunks)
+            {
+                ret = uploadCILSub(chunk, isSubSequence);
+                if (ret != static_cast<int>(mCSCEvents::sCFGUploadSuccess))
+                {
+                    break;
+                }
+                isSubSequence = true;
+            }
+
+            ret = uploadCILComplete();
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sCILUploadCorrupt);
+
+            std::stringstream ss;
+            ss << "File not found or not a regular file: " << filePath;
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+
+        std::stringstream ss;
+        ss << "File not found or not a regular file: " << filePath;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+    }
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadCILFile", ret);
+}
+
+int LCSCReader::uploadCILSub(const std::vector<unsigned char>& data, bool isSubSequence)
+{
+    int ret;
+    std::size_t size = data.size();
+    // 8 = First CFG_UPLOAD cmd (Byte[0 - 5]) + CRC (Byte[last 2])
+    std::size_t length = data.size() + 9;
+    std::vector<unsigned char> dataBuf(length - 2, 0);  // without CRC
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x31;
+    dataBuf[2] = (length >> 8) & 0xFF;
+    dataBuf[3] = length & 0xFF;
+    dataBuf[4] = (!isSubSequence) ? (static_cast<int>(data[5]) - 143) : 0;
+    dataBuf[5] = (size >> 8) & 0xFF;
+    dataBuf[6] = size & 0xFF;
+
+    for (int i = 0; i < size; i++)
+    {
+        dataBuf[i + 7] = data[i];
+    }
+
+    std::stringstream ss;
+    ss << __func__ <<  " Command : UPLOAD_CIL_FILE";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    bool cmdSendSuccess = lcscCmdSend(dataBuf);
+
+    if (cmdSendSuccess)
+    {
+        LCSCReader::ReadResult result;
+        result.data = {};
+        result.success = false;
+
+        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            ret = static_cast<int>(lcscHandleCmdResponse(LcscCmd::UPLOAD_CIL_FILE, result.data));
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sTimeout);
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+    }
+
+    return ret;
+}
+
+int LCSCReader::uploadCILComplete()
+{
+    int ret;
+
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x31;
+    dataBuf[2] = 0x00;
+    dataBuf[3] = 0x09;
+    dataBuf[4] = 0x00;
+    dataBuf[5] = 0x00;
+    dataBuf[6] = 0x00;
+
+    std::stringstream ss;
+    ss << __func__ <<  " Command : UPLOAD_CIL_FILE";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    bool cmdSendSuccess = lcscCmdSend(dataBuf);
+
+    if (cmdSendSuccess)
+    {
+        LCSCReader::ReadResult result;
+        result.data = {};
+        result.success = false;
+
+        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            ret = static_cast<int>(lcscHandleCmdResponse(LcscCmd::UPLOAD_CIL_FILE, result.data));
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sTimeout);
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+    }
+
+    return ret;
+}
+
+void LCSCReader::FnSendUploadBLFile(const std::string& path)
+{
+    int ret;
+    const std::filesystem::path filePath(path);
+
+    if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
+    {
+        std::vector<unsigned char> fileData = readFile(filePath);
+
+        if (!fileData.empty() && (fileData.size() > 6))
+        {
+            std::size_t chunkSize = 256;
+            std::vector<std::vector<unsigned char>> chunks = chunkData(fileData, chunkSize);
+
+            bool isSubSequence = false;
+            for (const auto& chunk : chunks)
+            {
+                ret = uploadBLSub(chunk, isSubSequence);
+                if (ret != static_cast<int>(mCSCEvents::sBLUploadSuccess))
+                {
+                    break;
+                }
+                isSubSequence = true;
+            }
+
+            ret = uploadBLComplete();
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sBLUploadCorrupt);
+
+            std::stringstream ss;
+            ss << "File not found or not a regular file: " << filePath;
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+
+        std::stringstream ss;
+        ss << "File not found or not a regular file: " << filePath;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LSCS");
+    }
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadBLFile", ret);
+}
+
+int LCSCReader::uploadBLSub(const std::vector<unsigned char>& data, bool isSubSequence)
+{
+   int ret;
+    std::size_t size = data.size();
+    // 8 = First CFG_UPLOAD cmd (Byte[0 - 5]) + CRC (Byte[last 2])
+    std::size_t length = data.size() + 9;
+    std::vector<unsigned char> dataBuf(length - 2, 0);  // without CRC
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x30;
+    dataBuf[2] = (length >> 8) & 0xFF;
+    dataBuf[3] = length & 0xFF;
+    dataBuf[4] = (!isSubSequence) ? (static_cast<int>(data[5]) - 147) : 0;
+    dataBuf[5] = (size >> 8) & 0xFF;
+    dataBuf[6] = size & 0xFF;
+
+    for (int i = 0; i < size; i++)
+    {
+        dataBuf[i + 7] = data[i];
+    }
+
+    std::stringstream ss;
+    ss << __func__ <<  " Command : UPLOAD_BL_FILE";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    bool cmdSendSuccess = lcscCmdSend(dataBuf);
+
+    if (cmdSendSuccess)
+    {
+        LCSCReader::ReadResult result;
+        result.data = {};
+        result.success = false;
+
+        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            ret = static_cast<int>(lcscHandleCmdResponse(LcscCmd::UPLOAD_BL_FILE, result.data));
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sTimeout);
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+    }
+
+    return ret;
+}
+
+int LCSCReader::uploadBLComplete()
+{
+    int ret;
+
+    std::vector<unsigned char> dataBuf(7, 0);
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x30;
+    dataBuf[2] = 0x00;
+    dataBuf[3] = 0x09;
+    dataBuf[4] = 0x00;
+    dataBuf[5] = 0x00;
+    dataBuf[6] = 0x00;
+
+    std::stringstream ss;
+    ss << __func__ <<  " Command : UPLOAD_BL_FILE";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    bool cmdSendSuccess = lcscCmdSend(dataBuf);
+
+    if (cmdSendSuccess)
+    {
+        LCSCReader::ReadResult result;
+        result.data = {};
+        result.success = false;
+
+        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+        if (result.success)
+        {
+            ret = static_cast<int>(lcscHandleCmdResponse(LcscCmd::UPLOAD_BL_FILE, result.data));
+        }
+        else
+        {
+            ret = static_cast<int>(mCSCEvents::sTimeout);
+        }
+    }
+    else
+    {
+        ret = static_cast<int>(mCSCEvents::sSendcmdfail);
+    }
+
+    return ret;
 }
 
 std::string LCSCReader::lcscCmdToString(LCSCReader::LcscCmd cmd)
@@ -202,6 +712,21 @@ int LCSCReader::lcscCmd(LCSCReader::LcscCmd cmd)
         case LcscCmd::GET_CARD_ID:
         {
             dataBuffer = loadGetCardID();
+            break;
+        }
+        case LcscCmd::CARD_BALANCE:
+        {
+            dataBuffer = loadGetCardBalance();
+            break;
+        }
+        case LcscCmd::GET_TIME:
+        {
+            dataBuffer = loadGetTime();
+            break;
+        }
+        case LcscCmd::SET_TIME:
+        {
+            dataBuffer = loadSetTime();
             break;
         }
         default:
@@ -318,6 +843,50 @@ std::vector<unsigned char> LCSCReader::loadGetCardID()
     return dataBuf;
 }
 
+std::vector<unsigned char> LCSCReader::loadGetCardBalance()
+{
+    std::vector<unsigned char> dataBuf(5, 0);
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x21;
+    dataBuf[2] = 0x00;
+    dataBuf[3] = 0x07;
+    dataBuf[4] = 0x01;  // Timeout 1s
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> LCSCReader::loadGetTime()
+{
+    std::vector<unsigned char> dataBuf(4, 0);
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x42;
+    dataBuf[2] = 0x00;
+    dataBuf[3] = 0x06;
+
+    return dataBuf;
+}
+
+std::vector<unsigned char> LCSCReader::loadSetTime()
+{
+    std::vector<unsigned char> dataBuf(8, 0);
+
+    dataBuf[0] = 0xA5;
+    dataBuf[1] = 0x41;
+    dataBuf[2] = 0x00;
+    dataBuf[3] = 0x0A;
+
+    std::time_t epochSeconds = Common::getInstance()->FnGetEpochSeconds();
+    std::cout << "set time : " << epochSeconds << std::endl;
+    dataBuf[4] = (epochSeconds >> 24) & 0xFF;
+    dataBuf[5] = (epochSeconds >> 16) & 0xFF;
+    dataBuf[6] = (epochSeconds >> 8) & 0xFF;
+    dataBuf[7] = epochSeconds & 0xFF;
+
+    return dataBuf;
+}
+
 bool LCSCReader::lcscCmdSend(const std::vector<unsigned char>& dataBuff)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
@@ -332,13 +901,6 @@ bool LCSCReader::lcscCmdSend(const std::vector<unsigned char>& dataBuff)
     memset(txBuff, 0, sizeof(txBuff));
     uint16_t txCrc = 0xFFFF;
 
-    std::stringstream dataMsg;
-    dataMsg << "Data buffer to be sent in hex: ";
-    for (const auto& value : dataBuff) {
-        dataMsg << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(value) << " ";
-    }
-    Logger::getInstance()->FnLog(dataMsg.str(), logFileName_, "LCSC");
-
     for (int j = 0; j < dataBuff.size(); j++)
     {
         txBuff[i++] = dataBuff[j];
@@ -348,6 +910,16 @@ bool LCSCReader::lcscCmdSend(const std::vector<unsigned char>& dataBuff)
     txBuff[i++] = (txCrc >> 8) & 0xFF;
     txBuff[i++] = txCrc & 0xFF;
     TxNum_ = i;
+
+    std::stringstream dataMsg;
+    //dataMsg << "Data buffer to be sent in hex: ";
+    for (std::size_t k = 0; k < TxNum_ ; k++)
+    {
+        dataMsg << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(txBuff[k]) << ' ';
+    }
+    //Logger::getInstance()->FnLog(dataMsg.str(), logFileName_, "LCSC");
+    dataMsg << std::endl;
+    Logger::getInstance()->FnLog(dataMsg.str(), "test", "test");
 
     int retry = 0;
     boost::system::error_code error;
@@ -428,6 +1000,7 @@ LCSCReader::ReadResult LCSCReader::lcscReadWithTimeout(int milliseconds)
             success = false;
         }
 
+        
         io_serial_context.post([this]() {
             io_serial_context.stop();
         });
@@ -835,6 +1408,296 @@ LCSCReader::mCSCEvents LCSCReader::lcscHandleCmdResponse(LCSCReader::LcscCmd cmd
                     }
                     break;
                 }
+                case 0x21:  // Get Card Balance
+                {
+                    switch (packet.payload[0])
+                    {
+                        case 0x00:  // Result success cmd
+                        {
+                            // Format like .assign(begin() + startPos, .begin() + startPos + length)
+                            card_serial_num_ = Common::getInstance()->FnGetVectorCharToHexString(packet.payload, 1, 8);
+                            card_application_num_ = Common::getInstance()->FnGetVectorCharToHexString(packet.payload, 9, 8);
+                            uint32_t temp_card_balance = (packet.payload[17] << 16) | (packet.payload[18] << 8) | packet.payload[19];
+                            card_balance_ = static_cast<double>(temp_card_balance) / 100.00;
+
+                            Logger::getInstance()->FnLog("Cmd Response : sGetBlcSuccess", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sGetBlcSuccess;
+                            break;
+                        }
+                        case 0x01:  // Result corrupted cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCorruptedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCorruptedCmd;
+                            break;
+                        }
+                        case 0x02:  // Result incomplete cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncompleteCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncompleteCmd;
+                            break;
+                        }
+                        case 0x03:  // Result unsupported cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnsupportedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnsupportedCmd;
+                            break;
+                        }
+                        case 0x06:  // Result no card
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sNoCard", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sNoCard;
+                            break;
+                        }
+                        case 0x07:  // Result card error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCardError", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCardError;
+                            break;
+                        }
+                        case 0x08:  // Result RF error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sRFError", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sRFError;
+                            break;
+                        }
+                        case 0x10:  // Result multiple cards detected
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sMultiCard", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sMultiCard;
+                            break;
+                        }
+                        case 0x12:  // Result card not on card issuer list
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCardnotinlist", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCardnotinlist;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case 0x42:  // Get Time cmd
+                {
+                    switch (packet.payload[0])
+                    {
+                        case 0x00:  // Result success cmd
+                        {
+                            uint32_t epochSeconds = (packet.payload[1] << 24) | (packet.payload[2] << 16) | (packet.payload[3] << 8) | packet.payload[4];
+                            reader_time_ = Common::getInstance()->FnConvertDateTime(epochSeconds);
+                            Logger::getInstance()->FnLog("Cmd Response : sGetTimeSuccess", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sGetTimeSuccess;
+                            break;
+                        }
+                        case 0x01:  // Result corrupted cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : rCorruptedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::rCorruptedCmd;
+                            break;
+                        }
+                        case 0x02:  // Result incomplete cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncompleteCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncompleteCmd;
+                            break;
+                        }
+                        case 0x03:  // Result unsupported cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnsupportedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnsupportedCmd;
+                            break;
+                        }
+                        case 0x1c:  // Result unknown error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnknown", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnknown;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case 0x41:  // Set Time cmd
+                {
+                    switch (packet.payload[0])
+                    {
+                        case 0x00:  // Result success cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sSetTimeSuccess", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sSetTimeSuccess;
+                            break;
+                        }
+                        case 0x01:  // Result corrupted cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCorruptedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCorruptedCmd;
+                            break;
+                        }
+                        case 0x02:  // Result incomplete cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncompleteCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncompleteCmd;
+                            break;
+                        }
+                        case 0x03:  // Result unsupported cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnsupportedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnsupportedCmd;
+                            break;
+                        }
+                        case 0x1c:  // Result unknown error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnknown", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnknown;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case 0x32:  // CFG_UPLOAD cmd
+                {
+                    switch (packet.payload[0])
+                    {
+                        case 0x00:  // Result success cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCFGUploadSuccess", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCFGUploadSuccess;
+                            break;
+                        }
+                        case 0x01:  // Result corrupted cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCorruptedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCorruptedCmd;
+                            break;
+                        }
+                        case 0x02:  // Result incomplete cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncompleteCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncompleteCmd;
+                            break;
+                        }
+                        case 0x03:  // Result unsupported cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnsupportedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnsupportedCmd;
+                            break;
+                        }
+                        case 0x13:  // Result last transaction record not flushed
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sRecordNotFlush", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sRecordNotFlush;
+                            break;
+                        }
+                        case 0x1b:  // Result configuration file upload corrupted
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCFGUploadCorrupt", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCFGUploadCorrupt;
+                            break;
+                        }
+                        case 0x1c:  // Result unknown error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnknown", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnknown;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case 0x31:  // Upload CIL cmd
+                {
+                    switch (packet.payload[0])
+                    {
+                        case 0x00:  // Result success cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCILUploadSuccess", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCILUploadSuccess;
+                            break;
+                        }
+                        case 0x01:  // Result corrupted cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCorruptedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCorruptedCmd;
+                            break;
+                        }
+                        case 0x02:  // Result incomplete cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncompleteCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncompleteCmd;
+                            break;
+                        }
+                        case 0x03:  // Result unsupported cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnsupportedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnsupportedCmd;
+                            break;
+                        }
+                        case 0x17:  // Result incorrect list index
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncorrectIndex", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncorrectIndex;
+                            break;
+                        }
+                        case 0x1a:  // Result card issuer list upload corrupted
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCILUploadCorrupt", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCILUploadCorrupt;
+                            break;
+                        }
+                        case 0x1c:  // Result unknown error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnknown", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnknown;
+                            break;
+                        }
+                    }
+                    break;
+                }
+                case 0x30:  // Upload BL cmd
+                {
+                    switch (packet.payload[0])
+                    {
+                        case 0x00:  // Result success cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sBLUploadSuccess", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sBLUploadSuccess;
+                            break;
+                        }
+                        case 0x01:  // Result corrupted cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sCorruptedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sCorruptedCmd;
+                            break;
+                        }
+                        case 0x02:  // Result incomplete cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncompleteCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncompleteCmd;
+                            break;
+                        }
+                        case 0x03:  // Result unsupported cmd
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnsupportedCmd", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnsupportedCmd;
+                            break;
+                        }
+                        case 0x17:  // Result incorrect list index
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sIncorrectIndex", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sIncorrectIndex;
+                            break;
+                        }
+                        case 0x19:  // Result blacklist upload corrupted
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sBLUploadCorrupt", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sBLUploadCorrupt;
+                            break;
+                        }
+                        case 0x1c:  // Result unknown error
+                        {
+                            Logger::getInstance()->FnLog("Cmd Response : sUnknown", logFileName_, "LCSC");
+                            retEvent = mCSCEvents::sUnknown;
+                            break;
+                        }
+                    }
+                    break;
+                }
             }
         }
         else
@@ -983,4 +1846,19 @@ std::string LCSCReader::FnGetCardSerialNumber()
 std::string LCSCReader::FnGetCardApplicationNumber()
 {
     return card_application_num_;
+}
+
+double LCSCReader::FnGetCardBalance()
+{
+    return card_balance_;
+}
+
+std::string LCSCReader::FnGetReaderTime()
+{
+    return reader_time_;
+}
+
+void LCSCReader::FnLCSCReaderStopRead()
+{
+    continueReadFlag_.store(false);
 }

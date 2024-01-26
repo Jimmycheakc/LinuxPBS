@@ -53,8 +53,8 @@ void Test::FnTest(char* argv)
     //led226_test();
     //antenna_test();
     //event_queue_test();
-    //lcsc_reader_test();
-    db_test();
+    lcsc_reader_test();
+    //db_test();
 }
 
 void Test::db_test()
@@ -651,7 +651,8 @@ void Test::led226_test()
 
 void print(const boost::system::error_code& /*e*/)
 {
-  Logger::getInstance()->FnLog("Hello World");
+    Logger::getInstance()->FnLog("Hello World");
+    LCSCReader::getInstance()->FnLCSCReaderStopRead();
 }
 
 void Test::antenna_test()
@@ -692,6 +693,7 @@ void Test::lcsc_reader_test()
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
     EventManager::getInstance()->FnStartEventThread();
     LCSCReader::getInstance()->FnLCSCReaderInit(115200, "/dev/ttyCH9344USB4");
+    /*
     LCSCReader::getInstance()->FnSendGetStatusCmd();
     std::cout << "Serial number : " << LCSCReader::getInstance()->FnGetSerialNumber() << std::endl;
     std::cout << "Reader mode : " << LCSCReader::getInstance()->FnGetReaderMode() << std::endl;
@@ -706,16 +708,49 @@ void Test::lcsc_reader_test()
     std::cout << "CFG version : " << LCSCReader::getInstance()->FnGetCFGVersion() << std::endl;
     std::cout << "Firmware version : " << LCSCReader::getInstance()->FnGetFirmwareVersion() << std::endl;
     LCSCReader::getInstance()->FnSendGetLoginCmd();
-    LCSCReader::getInstance()->FnSendGetLogoutCmd();
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+    LCSCReader::getInstance()->FnSendUploadCFGFile("../cd/Device_V00B.zip");
+    LCSCReader::getInstance()->FnSendUploadCILFile("../cd/ezlkiss2.sys");
+    LCSCReader::getInstance()->FnSendUploadCILFile("../cd/fut3iss2.sys");
+    LCSCReader::getInstance()->FnSendUploadCILFile("../cd/netsiss2.sys");
+    LCSCReader::getInstance()->FnSendUploadBLFile("../cd/ezlkcsc2.blk");
+    LCSCReader::getInstance()->FnSendUploadBLFile("../cd/fut3csc2.blk");
+    LCSCReader::getInstance()->FnSendUploadBLFile("../cd/netscsc2.blk");
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration_seconds = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
+    auto duration_miliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+
+    std::cout << "Execution time : " << duration_seconds.count() << " seconds, " << duration_miliseconds.count() << " milliseconds" << std::endl;
     LCSCReader::getInstance()->FnSendGetCardIDCmd();
     std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
     std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
+    LCSCReader::getInstance()->FnSendGetLogoutCmd();
+    LCSCReader::getInstance()->FnSendGetCardBalance();
+    std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
+    std::cout << "Card Balance : " << LCSCReader::getInstance()->FnGetCardBalance() << std::endl;
+    */
+    /*
+    LCSCReader::getInstance()->FnSendSetTime();
+    LCSCReader::getInstance()->FnSendGetTime();
+    std::cout << "Reader time : " << LCSCReader::getInstance()->FnGetReaderTime() << std::endl;
+    */
 
     std::cout << "start asynchronous operation." << std::endl;
 
     boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(5));
     t.async_wait(print);
 
-    io_context.run();
+    // Create a thread to run io_context
+    std::thread ioThread([&io_context]() {
+        io_context.run();
+    });
+
+    LCSCReader::getInstance()->FnSendGetCardIDCmd();
+    std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
+    std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
+
+    //io_context.run();
+    ioThread.join();
     EventManager::getInstance()->FnStopEventThread();
 }

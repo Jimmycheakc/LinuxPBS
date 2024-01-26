@@ -1,0 +1,51 @@
+#dcf1b07e6d387ea438427cdb625fe66d2830aeb7ee01c531faf36e3b48679677
+#Location - HDB BJ61 - Blk 550A Segar Road - 43098
+#Issue Date = 20170620
+#Issued by = Sumathi
+#Version = 12
+
+[Device]
+DcbId=10
+DeviceType=16
+SiteId=511
+ManufacturerName=LTA(ConnTrans)
+HardwareRevisionNumber=4
+SoftwareVersionNumber=V3.2.0
+DeviceId=0
+ArcClientNodeID=34 #34 is CHU, 15 is tiger
+TcpServerIP=172.16.22.225
+TcpClientIP=172.16.22.231
+SftpServerIP=10.6.199.4
+SftpServerPort=22
+ResourceParameter=2824473856
+TxnType=9
+AutoTopupEnable=1
+TerminalPhysicalID=655
+ParameterVersion=12
+FileLoggingEnable=0 
+
+[UD]
+UdTimeout=10000
+UdTxnBufferSize=0
+UdSentInterval=900 #In seconds, Min is 15m/900s, Max is 120m/7200s, default is 15m/900s
+UdsentFailedInterval=30 #Debug only. This is to set the UD expiry time for re-uploading to CCS. In release mode, default to 30m
+UdDailyProcessTime=09:00
+UdDailyProcessTimeEnd=23:59
+UdFtpLoc=/eas2/share/csc/ftp/in/ud
+UdAckFtpLoc=/eas2/share/csc/ftp/out/udack
+UdAckDloadFreq=300 #In seconds, Min is 5m/300s, Max is 30m/1800s, default is 5m/300s
+UdUploadRetryFreq=60 #In seconds, Min is 1m/60s, Max is 30m/1800s, default is 5m/300s
+
+[CD]
+CdIsNewCuezAvailable=0
+CDAllowXEUpgrade=1	#For debug only, 1 is allowed, 0 is not allowed.
+CdPeriodActivationTime=120
+CdPeriodCheckExpiry=600000
+CdProcessInterval=00:10
+CdProcessTime=06:00
+CdProcessTimeEnd=06:15
+CdUploadMcctAckFreq=60 #In seconds, Min is 1m/60s, Max is 15m/900s, default is 1m/60s
+CdDownloadRetryFreq=300 #In seconds, Min is 5m/300s, Max is 30m/1800s, default is 5m/300s
+McctDownloadRetryFreq=60 #In seconds, Min is 1m/60s, Max is 30m/1800s, default is 5m/300s
+CdAckLoc=/eas2/share/csc/ftp/in/cdack001
+<SIGNATURE>80 36 17 40 3B 0A 02 DA A3 F5 E5 C2 2E C5 55 4B 09 0E 48 39 B3 1E C3 50 45 72 6F 92 15 92 F7 A8 6F 11 9E 3F 30 30 A7 3F 30 99 00 4E 9D 42 8E F6 91 91 C4 89 E2 74 B3 3E E4 87 53 24 88 6E FF 6B 91 7B 4E 0F 88 37 63 B5 6D 67 8F 78 AC 57 3D 61 62 89 08 92 2E 04 56 21 83 EA D8 32 12 61 7E D2 33 D6 AB D6 39 AD BC B8 ED D0 46 BF 73 F9 46 92 F9 F8 B0 35 09 E2 9C 74 86 54 B5 CD 07 53 92 21 </SIGNATURE>

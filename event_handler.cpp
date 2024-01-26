@@ -10,13 +10,19 @@ EventHandler* EventHandler::eventHandler_ = nullptr;
 
 std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap = 
 {
-    {   "Evt_AntennaFail"               ,std::bind(&EventHandler::handleAntennaFail,            eventHandler_, std::placeholders::_1) },
-    {   "Evt_AntennaPower"              ,std::bind(&EventHandler::handleAntennaPower,           eventHandler_, std::placeholders::_1) },
-    {   "Evt_AntennaIUCome"             ,std::bind(&EventHandler::handleAntennaIUCome,          eventHandler_, std::placeholders::_1) },
-    {   "Evt_LcscReaderStatus"          ,std::bind(&EventHandler::handleLcscReaderStatus,       eventHandler_, std::placeholders::_1) },
-    {   "Evt_LcscReaderLogin"           ,std::bind(&EventHandler::handleLcscReaderLogin,        eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderLogout"    ,std::bind(&EventHandler::handleLcscReaderLogout,       eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardID" ,std::bind(&EventHandler::handleLcscReaderGetCardID,    eventHandler_, std::placeholders::_1) }
+    {   "Evt_AntennaFail"                       ,std::bind(&EventHandler::handleAntennaFail,                eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaPower"                      ,std::bind(&EventHandler::handleAntennaPower,               eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaIUCome"                     ,std::bind(&EventHandler::handleAntennaIUCome,              eventHandler_, std::placeholders::_1) },
+    {   "Evt_LcscReaderStatus"                  ,std::bind(&EventHandler::handleLcscReaderStatus,           eventHandler_, std::placeholders::_1) },
+    {   "Evt_LcscReaderLogin"                   ,std::bind(&EventHandler::handleLcscReaderLogin,            eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderLogout"            ,std::bind(&EventHandler::handleLcscReaderLogout,           eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardID"         ,std::bind(&EventHandler::handleLcscReaderGetCardID,        eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardBalance"    ,std::bind(&EventHandler::handleLcscReaderGetCardBalance,   eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetTime"           ,std::bind(&EventHandler::handleLcscReaderGetTime,          eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderSetTime"           ,std::bind(&EventHandler::handleLcscReaderSetTime,          eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile,    eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderUploadCILFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCILFile,    eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile,     eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -211,6 +217,162 @@ bool EventHandler::handleLcscReaderLogout(const BaseEvent* event)
 }
 
 bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderGetCardBalance(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderGetTime(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderSetTime(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderUploadCFGFile(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderUploadCILFile(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        // Temp: Add handling in future
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderUploadBLFile(const BaseEvent* event)
 {
     bool ret = true;
 

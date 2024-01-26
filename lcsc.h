@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <iostream>
+#include <filesystem>
 #include <string>
 #include <memory>
 #include <vector>
@@ -108,7 +110,10 @@ public:
         CARD_RECORD,
         CARD_FLUSH,
         GET_TIME,
-        SET_TIME
+        SET_TIME,
+        UPLOAD_CFG_FILE,
+        UPLOAD_CIL_FILE,
+        UPLOAD_BL_FILE
     };
 
     static const int TX_BUF_SIZE = 1024;
@@ -116,10 +121,17 @@ public:
 
     static LCSCReader* getInstance();
     void FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName);
+    void FnLCSCReaderStopRead();
     void FnSendGetStatusCmd();
     void FnSendGetLoginCmd();
     void FnSendGetLogoutCmd();
     void FnSendGetCardIDCmd();
+    void FnSendGetCardBalance();
+    void FnSendGetTime();
+    void FnSendSetTime();
+    void FnSendUploadCFGFile(const std::string& path);
+    void FnSendUploadCILFile(const std::string& path);
+    void FnSendUploadBLFile(const std::string& path);
 
     std::string FnGetSerialNumber();
     int FnGetReaderMode();
@@ -135,6 +147,8 @@ public:
     std::string FnGetFirmwareVersion();
     std::string FnGetCardSerialNumber();
     std::string FnGetCardApplicationNumber();
+    double FnGetCardBalance();
+    std::string FnGetReaderTime();
 
     /**
      * Singleton LCSCReader should not be cloneable.
@@ -151,6 +165,7 @@ private:
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
+    std::atomic<bool> continueReadFlag_;
     std::string logFileName_;
     int lcscCmdTimeoutInMillisec_;
     int lcscCmdMaxRetry_;
@@ -175,6 +190,8 @@ private:
     std::vector<uint8_t> aes_key;
     std::string card_serial_num_;
     std::string card_application_num_;
+    double card_balance_;
+    std::string reader_time_;
     LCSCReader();
     std::string lcscCmdToString(LcscCmd cmd);
     int lcscCmd(LcscCmd cmd);
@@ -185,6 +202,17 @@ private:
     std::vector<unsigned char> loadLogin2();
     std::vector<unsigned char> loadLogout();
     std::vector<unsigned char> loadGetCardID();
+    std::vector<unsigned char> loadGetCardBalance();
+    std::vector<unsigned char> loadGetTime();
+    std::vector<unsigned char> loadSetTime();
+    int uploadCFGSub(const std::vector<unsigned char>& data);
+    std::vector<unsigned char> readFile(const std::filesystem::path& filePath);
+    std::vector<std::vector<unsigned char>> chunkData(const std::vector<unsigned char>& data, std::size_t chunkSize);
+    int uploadCFGComplete();
+    int uploadCILSub(const std::vector<unsigned char>& data, bool isSubSequence);
+    int uploadCILComplete();
+    int uploadBLSub(const std::vector<unsigned char>& data, bool isSubSequence);
+    int uploadBLComplete();
     ReadResult lcscReadWithTimeout(int milliseconds);
     void resetRxBuffer();
     bool responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred);

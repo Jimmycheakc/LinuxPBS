@@ -23,6 +23,7 @@
 int main (int agrc, char* argv[])
 {
     // Initialization
+    /*
     IniParser::getInstance()->FnReadIniFile();
     Logger::getInstance();
     SystemInfo::getInstance()->FnLogSysInfo();
@@ -30,6 +31,7 @@ int main (int agrc, char* argv[])
     LCD::getInstance()->FnLCDInit();
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
     EventManager::getInstance()->FnStartEventThread();
+    */
     //Antenna::getInstance()->FnAntennaInit(19200, "/dev/ttyCH9344USB5");
     //LCSCReader::getInstance()->FnLCSCReaderInit(115200, "/dev/ttyCH9344USB4");
 
@@ -38,7 +40,7 @@ int main (int agrc, char* argv[])
     return 0;
 #endif
 
-    EventManager::getInstance()->FnStopEventThread();
+    //EventManager::getInstance()->FnStopEventThread();
 
     return 0;
 }
