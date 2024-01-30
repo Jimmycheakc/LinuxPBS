@@ -94,7 +94,7 @@ public:
 
 };
 
-struct  tStation_Struct
+struct  tstation_struct
 {
 	int iSID;
 	string sName;
@@ -235,13 +235,13 @@ struct  tExitTrans_Struct
 
 struct  tProcess_Struct
 {
-	int m_enable_read_antenna_timer;//2019.07.15 QC
-	int AntTOFlag;//2019.07.15 QC
+	int m_enable_read_antenna_timer;
+	int AntTOFlag;
 	int m_en_AntTO_Tmr;
 	int m_AntTOCnt;
 	bool wrNAKlogFlag;
-	int CardTOFlag;//2019.07.15 QC
-	int canUseCard;//2019.07.15 QC
+	int CardTOFlag;
+	int canUseCard;
 	int rotate;
 	int combi_state;
 	int iu_readed;
@@ -251,8 +251,8 @@ struct  tProcess_Struct
 	int save_trans=0;
 	int processflag=0;
 	bool gbcarparkfull;
-	int giStationID;//2019.07.29 QC
-	long glNoofOfflineData;//2019.07.30 QC, counter for offline trans
+	int giStationID;
+	long glNoofOfflineData;
 	string fsLastIUNo;
 	string CardNo;
 	int readksm1_state;
@@ -295,10 +295,9 @@ public:
 
 struct  tParas_Struct
 {
+	string dbname;
+	string dbserver;
 	int giCommPortAntenna;
-	int giCommPortReader;
-	int giCommPortPrinter;
-
 	int giCommPortLCSC;
 	string gsLocalLCSC;
 	string gsRemoteLCSC;
@@ -307,253 +306,164 @@ struct  tParas_Struct
 	string gsCSCRcdackFolder;
 	string gsCPOID;
 	string gsCPID;
-	int giUPSWithDryContact;
-	int giCommPortCPT;
-	int giCommPortProximity;
+	int giUploadBLTO;
 	int giCommPortLED;
-	int giCommPortLCD;
-	int giCommPortLED2;
-	int giCommportNCSC;
-	int giCommportOEM75;
-	int giCommportEltraReader;
-	int giProximityReader;
-	int giBitLoopA;
-	int giBitLoopB;
-	int giBitLoopC;
-	int giBitMOpenBarrier;
-	int giBitButton;
-	int giBitTicket;
-	int giBitResetReader;
-	int giBitUPS;
-	int giBitOpenBarrier;
-	int giBitCloseBarrier;
-	int giBitCarparkFull;
-	int giBitLButton;
-	int giBitLReader;
-	int giBitEnableSeason;
-	int giBitOpenShutter;
-	int giBitCloseShutter;
-	string gsSite;
-	string gsCompany;
-	string gsZIP;
-	string gsGSTNo;
-	string gsAddress;
-	string gsTel;
 	string gsDBServer;
 	string gsCentralDBName;
-	string gsCHUIP;
-	bool gbEnableVoice;
-	int giVoice;
 	int giHasMCycle;
-	float gsMotorRate;
-	int giMaxMotorTimes;
-	int giMCEntryGraceTime;
-	int giHasTicket;
-	int giHasThreeWheelMC;
 	int giTicketSiteID;
-	int giUseTicketIfOffline;
-	int giCPTMaxRetry;
-	int giCPTInqTO;
-	int giCPTTestInterval;
-	string gsLocalSettle;
-	string gsRemoteSettle;
-	string gsSettleFileHeader;
-	int giSettleFileHeaderLength;
-	string gsNCSCLocalSettle;
-	string gsNCSCRemoteSettle;
-	string gsNCSCRemoteBackup;
-	string gsNCSCSettleFileHeader;
-	int giNCSCSettleFileHeaderLength;
-	string gsNCSCRemoteCdfFolder;
-	string gsNCSCSettleFileHeader2;
-	string gsNCSCRemoteCepas2CollFolder;
-	int giBatchFull;
-	bool mbOvernightCharge;
-	string msOvernightTime;
-	int giTariffFeeMode;
-	int giTariffGTMode;
-	int giFirstHourMode;
-	int giFirstHour;
-	int giPEAllowance;
-	int giHr2PEAllowance;
+
 	int giDataKeepDays;
-	int giMaxDebitDays;
-	int giUseLastNoPay;
-	int giProcessReversedCMD;
-	int giExitGraceTime;
-	float gsLostTicketCharge;
-	float gsLowBalValue;
-	bool gbAllowLowBalIn;
 	float gsBarrierPulse;
-	float gsShutterPulse;
-	int giSeasonCharge;
-	bool gbSeasonAsNormal;
-	int giSeasonPayStart;
-	int giSeasonAllowance;
-	eCheckSeason giCheckSeason;
-	int giShowSeasonExpireDays;
-	int giShowExpiredTime;
-	int giCHUCnTO;
-	int giCHUComTO;
-	int giCHUComRetry;
-	int giNoIURetry;
-	int giNoCardRetry;
-	int giCHUDebitRetry;
-	int giNoIUWT;
-	int giNoCardWT;
-	int giDebitNakWT;
-	int giCardProblemWT;
-	int giDebitFailWT;
-	int giCHUDebitWT;
-	int giNoIUAutoDebitWT;
-	int giEntryIUMode;
-	int giMaxDiffIU;
-	int giAllowEventWhenWait4GW;
+
 	int giAntMaxRetry;
 	int giAntMinOKTimes;
 	int giAntInqTO;
 	bool gbAntiIURepetition;
-	string giVideoType;
-	string gsVideoDefault;
-	string gsVideoInsertCard;
-	string gsVideoTakeCard;
-	string gsVideoWait;
-	string gsVideoOK;
-	string gsHdTk;
-	string gsHdRec;
-	int giPrinterType;
-	int giPrintMode;
+
 	int giCommportLED401;
 	int giAllowMultiEntry; //not in current central DB
 	int giMCAllowMultiEntry; //not in current central DB
-	int giHasHolidayEve;
+
 	int giIsHDBSite;
 	string gsAllowedHolderType;
-	int giDefaultLEDMode;
-	int giDefaultLEDSubmode;
-	int giLEDMode;
-	int giLEDSubmode;
-	int giLEDType;
-	int giDefaultLEDMode2;
-	int giDefaultLEDSubmode2;
-	int giDefaultLEDSeconds2;
-	int giLEDMinWaitTime;
+	
 	int giLEDMaxChar;
-	int giDefaultLEDSeconds;
-	int giLEDSeconds;
-	bool gbSynTimeHourly;
+	
 	bool gbAlwaysTryOnline;
 	bool gbAutoDebitNoEntry;
-	int giTryTimes4NE;
-	int giHoldTicketTime;
+	
 	int giLoopAHangTime;
 	int giOperationTO;
-	int giKSMOperationTO;
-	bool gbLoopAFirst;
-	int giCloseBarrierIfTO;
-	int giPrintReceiptTO;
-	int giTransactionTO;
-	int giRefreshTime;
-	int giUploadBLTO;
-	int giLoopC2OpenBarWT;
+
 	eFullAction giFullAction;
-	bool gbHasRedemption;
-	float msOvernightAmt;
-	int giHasLorry;
-	int giHasContainer;
-	int giLorryRelayTime;
-	int giMaxTransInterval;
-	int giMOBRelayTimes;
+	int giBarrierOpenTooLongTime;
+	int giBitBarrierArmBroken;
+	int giMCControlAction;
+	
+	bool gbLockBarrier;
+
 	string gsLogBackFolder;
 	int giLogKeepDays;
 	string gsDBBackupFolder;
-	int giUpdateAfterExit;
-	int giLoopC2MOBTime;
-	int giEntryWithScanner;
-	int giOfflineCheckAllCardSeason;
-	int giShowScreenTime;
-	int giBitLightPE;
-	int giNoTicketTaken;
-	int giUseCommIO;
-	int giExitTicketRedemption;
 	int giMaxSendOfflineNo;
 	long glMaxLocalDBSize;
-	int giDBNetLib;
-	int giSettleFileKeepMonths;
-	int giWithGSTField;
-	float gsGSTRate;
-	int giGWQLength;
-	int giMaxLogErrorTimes;
-	int giMCyclePerDay;
-	int giNeedCard4Complimentary;
-	int giV3TransType;
-	int giV4TransType;
-	int giV5TransType;
-	int giUseMagCard;
-	int giBarrierOpenTooLongTime;
-	int giBitBarrierArmBroken;
-	long glMaxRunningHours;
-	string gsAutoRestartPeriod;
-	int giMinAvailRAM;
-	int giMinFreeDiskSpace;
-	bool gbShowFreeParking;
-	int giUPSTripAction;
-	int giTime2WaitB4ConsiderTripped;
-	int giMCControlAction;
-	int giCommportUPS;
-	int giTime2WaitB4ShutdownUPS;
-	int giUPSInquiryInterval;
-	float giMinRedeemAmt;
-	int giMinRedeemTime;
-	bool gbLockBarrier;
-	string Licensekey;
-	int gcommportiu;
-	int gwaitiunotime;
-	int diostation_dooropen;
-	int diobarrier_dooropen;
-	int dio_barrier;
-	int showtime;
-	int hasinternal_link;
-	string internaldefault_msg;
-	string internalnonight_msg1;
-	string internalnonight_msg2;
-	int is_ledblinking;
-	int display_type;
-	int led_showtime;
+
 	string lprip_front;
 	string lprip_rear;
 	int wait_lpr_notime;
 	string nexpa_dbserver;
 	string nexpa_dbname;
 	int sid;
-	int has_internal;
-	string attached_dbname;
-	string attached_dbserver;
-	string dbname;
-	string dbserver;
-	int attachedexit_udpport;
-	int attachedexit_id;
-	int hdblost_adj_timer;
-	int lastiu_timeout;
-	int last_serial_no;
-	int last_redem_no;
+
 	int taxi_control;
-	int loading_bay;
 	int local_udpport;
 	int remote_udpport;
-	int entry_debit;
 	int not_allow_hourly;
-	int force_partial_eps;
-	int eps;
-	int interval_loopc_iu;
-	string tgd_server;
 	int cepas_enable;
+
+	//int giCommPortPrinter;
+	//int giCommPortLED2;
+	//string gsSite;
+	//string gsCompany;
+	//string gsZIP;
+	//string gsGSTNo;
+	//string gsAddress;
+	//string gsTel;
+	
+	//string gsCHUIP;
+	//bool gbEnableVoice;
+	//int giVoice;
+	
+	//float gsMotorRate;
+	//int giMCEntryGraceTime;
+	//int giHasThreeWheelMC;
+	
+
+	//bool mbOvernightCharge;
+	//string msOvernightTime;
+	//int giTariffFeeMode;
+	//int giTariffGTMode;
+	//int giFirstHourMode;
+	//int giFirstHour;
+	//int giPEAllowance;
+	//int giHr2PEAllowance;
+	
+	//int giMaxDebitDays;
+	//int giHasHolidayEve;
+	
+	//int giProcessReversedCMD;
+	//int giExitGraceTime;
+	
+	//float gsShutterPulse;
+	//int giSeasonCharge;
+	//bool gbSeasonAsNormal;
+	//int giSeasonPayStart;
+	//int giSeasonAllowance;
+	//eCheckSeason giCheckSeason;
+	//int giShowSeasonExpireDays;
+	//int giShowExpiredTime;
+	//int giCHUCnTO;
+	//int giCHUComTO;
+	//int giCHUComRetry;
+	//int giNoIURetry;
+	//int giNoCardRetry;
+	//int giCHUDebitRetry;
+	//int giNoIUWT;
+	//int giNoCardWT;
+	//int giDebitNakWT;
+	//int giCardProblemWT;
+	//int giDebitFailWT;
+	//nt giCHUDebitWT;
+	//int giNoIUAutoDebitWT;
+	//int giMaxDiffIU;
+	//int giTryTimes4NE;
+	
+	
+	//int giPrinterType;
+	//int giPrintMode;
+	
+	
+	//bool gbLoopAFirst;
+	//int giCloseBarrierIfTO;
+	//int giPrintReceiptTO;
+	//int giTransactionTO;
+	//int giRefreshTime;
+	
+	//int giLoopC2OpenBarWT;
+	
+	//bool gbHasRedemption;
+	//float msOvernightAmt;
+	//int giHasLorry;
+	//int giHasContainer;
+	//int giLorryRelayTime;
+	//int giMaxTransInterval;
+	//int giMOBRelayTimes;
+	
+	//int giUpdateAfterExit;
+	
+	
+
+	//int giV3TransType;
+	//int giV4TransType;
+	//int giV5TransType;
+	//int giUseMagCard;
+	
+	
+	//int showtime;
+	//int hasinternal_link;
+	
+	//int has_internal;
+	//string attached_dbname;
+	//string attached_dbserver;
+	
+	//int attachedexit_udpport;
+	//int attachedexit_id;
 
 };
 
 struct  tMsg_Struct
 {
-	string Msg_cancelticket;
 	string Msg_carderror;
 	string Msg_cardin;
 	string Msg_cardpaid;
@@ -574,7 +484,6 @@ struct  tMsg_Struct
 	string Msg_seasonblocked;
 	string Msg_seasonexpired;
 	string Msg_seasoninvalid;
-	string Msg_seasonlost;
 	string Msg_seasonnotstart;
 	string Msg_seasonpassback;
 	string Msg_seasonterminated;
@@ -582,13 +491,10 @@ struct  tMsg_Struct
 	string Msg_systemerror;
 	string Msg_takecard;
 	string Msg_taketicket;
-	string Msg_ticketbycashier;
 	string Msg_ticketexpired;
-	string Msg_ticketlocked;
 	string Msg_usedticket;
 	string Msg_validseason;
 	string Msg_wrongcard;
-	string Msg_wrongticket;
 	string Msg_xcardagain;
 	string Msg_xloopa;
 	string Msg_xlowbal;
@@ -655,31 +561,18 @@ struct  tMsg_Struct
 	string Msg_seasonnotvalid;
 	string Msg_setperiod;
 	string Msg_atmdebitok;
-	string Msg_seasonrenewok;
-	string Msg_seasonrenewfail;
-	string Msg_dispensecardfail;
-	string Msg_dispensecardok;
-	string Msg_dispensingcard;
-	string Msg_cardsoldout;
-	string Msg_dispensererror;
-	string Msg_vmcommerror;
-	string Msg_vmhostproblem;
-	string Msg_vmlineproblem;
-	string Msg_vmerror;
+	
 	string Msg_readererror;
 	string Msg_cardreadingerror;
-	string Msg_vmlogon;
-	string Msg_vmlogoncard;
-	string Msg_esscancel;
-	string Msg_wrongatm;
+
 	string Msg_topupok;
 	string Msg_dberror;
 	string Msg_carddebitfail;
 	string Msg_printingreceipt;
 	string Msg_takereceipt;
 	string Msg_carddebitdb;
-	string Msg_topupexceedmax;
-	string Msg_atmcancelpin;
+	
+
 	string Msg_readercommerror;
 	string Msg_vvip;
 	string Msg_masterseason;
@@ -852,7 +745,7 @@ struct  tMsg_Struct
 	string Msg_x_enhancedmcparking;
 };
 
-struct vehicle_struct {
+struct season_struct {
 
     string season_no;
     string SeasonType;

@@ -1,6 +1,5 @@
 
-#ifndef ODBC_H
-#define ODBC_H
+#pragma once
 
 #include <stdio.h>
 #include <sql.h>
@@ -69,4 +68,4 @@ private:
 
 };
 
-#endif //ODBC_H
+

@@ -27,7 +27,7 @@ bool SysfsGPIO::FnExportGPIO()
 
     exportFile << pinNumber_;
     exportFile.close();
-    usleep(100000); // Sleep for 100ms to allow the kernel to export the GPIO
+    usleep(50000); // Sleep for 100ms to allow the kernel to export the GPIO
 
     return true;
 }

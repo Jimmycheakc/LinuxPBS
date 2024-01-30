@@ -1,5 +1,4 @@
-#ifndef CE_TIME_H
-#define CE_TIME_H
+#pragma once
 
 #include<stdio.h>
 #include<string>
@@ -72,5 +71,3 @@ public:
 	static void SetSystemLocalTime(int year, int month, int day,int hour, int minute, int second);
 };
 
-
-#endif

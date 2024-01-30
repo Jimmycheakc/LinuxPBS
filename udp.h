@@ -1,8 +1,10 @@
+#pragma once
 
 #include <iostream>
 #include <cstdlib>
 #include <ctime>
 #include "boost/asio.hpp"
+#include "log.h"
 
 using namespace boost::asio;
 using ip::udp;
@@ -28,10 +30,6 @@ typedef enum {
 	CmdFeeTest=120
 } udp_rx_command;
 
-
-
-void udpinit(const std::string ServerIP, unsigned short RemotePort, unsigned short LocalPort);
-
 class udpclient {
 public:
     udp::socket socket_;
@@ -40,6 +38,7 @@ public:
     enum { max_length = 1024 };
     char data_[max_length];
     void processdata(const char*data, std::size_t length);
+    void udpinit(const std::string ServerIP, unsigned short RemotePort, unsigned short LocalPort);
 
 public:
     udpclient(io_service& ioService, const std::string& serverAddress, unsigned short serverPort,unsigned short LocalPort)
@@ -59,10 +58,14 @@ public:
     void startreceive() {
         socket_.async_receive_from(buffer(data_, max_length), senderEndpoint_, [this](const boost::system::error_code& error, std::size_t bytes_received) {
             if (!error) {
-                std::cout << "Received response from " << senderEndpoint_ << ": " << std::string(data_, bytes_received) << std::endl;
+                std::stringstream dbss;
+	            dbss << "Received response from " << senderEndpoint_ << ": " << std::string(data_, bytes_received) ;
+                Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
                 processdata(data_, bytes_received);
             } else {
-                std::cerr << "Error receiving message: " << error.message() << std::endl;
+                std::stringstream dbss;
+                dbss << "Error receiving message: " << error.message() ;
+                Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
             }
             startreceive();  // Continue with the next receive operation
         });

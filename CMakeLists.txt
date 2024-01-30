@@ -41,6 +41,7 @@ set(SOURCE_FILES
     odbc.cpp
     db.cpp
     dio.cpp
+    operation.cpp
     main.cpp
 )
 

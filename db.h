@@ -1,5 +1,4 @@
-#ifndef DB_H
-#define DB_H
+#pragma once
 
 #include <stdio.h>
 #include <string>
@@ -48,18 +47,27 @@ public:
 
     DBError RefreshTypeinRAM(std::list<tVType> *vlist);
 
-	int entry_query(string m_sSeasonNo);
+	int isvalidseason(string m_sSeasonNo);
     void synccentraltime ();
     void downloadseason();
-    int writeseason2local(vehicle_struct& v);
+    int writeseason2local(season_struct& v);
+    void downloadvehicletype();
+    int writevehicletype2local(string iucode,string iutype);
+    void downloadledmessage();
+    int writeledmessage2local(string m_id,string m_body);
+    void downloadparameter();
+    int writeparameter2local(string name,string value);
+    void downloadstationsetup();
+    int writestationsetup2local(tstation_struct& v);
 
 	
      DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	 DBError insertexittrans();
 	 DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
-	 int loadmessage();
-	 int loadParam();
-	 int loadstation();
+	 DBError loadmessage();
+	 DBError loadParam();
+	 DBError loadstationsetup();
+     DBError loadvehicletype();
 
 private:
 
@@ -68,9 +76,6 @@ private:
     string central_IP;
     float PingTimeOut;
     int clearseason();
-    int updatesetting();
-	int downloadmsg();
-	int downloadVehtype();
 
     template <typename T>
         string ToString(T a);
@@ -102,4 +107,3 @@ private:
 };
 
 
-#endif // DB_H

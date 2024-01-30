@@ -5,6 +5,7 @@
 #include <sys/time.h>
 #include "db.h"
 #include "log.h"
+#include "operation.h"
 
 
 db::db(string localStr,string CentralStr,
@@ -150,7 +151,7 @@ int db::local_isvalidseason(string L_sSeasonNo)
 
 }
 
-int db::entry_query(string m_sSeasonNo)
+int db::isvalidseason(string m_sSeasonNo)
 {
 	string sSerialNo="";
 	float sFee=0;
@@ -474,7 +475,7 @@ void db::downloadseason()
 	unsigned long j,k;
 	vector<ReaderItem> tResult;
 	vector<ReaderItem> selResult;
-	vehicle_struct v;
+	season_struct v;
 	int r=0;
 	string seasonno;
 	std::string sqlStmt;
@@ -543,7 +544,9 @@ void db::downloadseason()
 				if(r!=0) 
 				{
 					m_remote_db_err_flag=2;
-					dbss << "set central season failed.";
+					dbss.str("");  // Set the underlying string to an empty string
+    				dbss.clear();   // Clear the state of the stream
+					dbss << "update central season status failed.";
 					Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 				}
 				else 
@@ -566,11 +569,8 @@ void db::downloadseason()
 	if (selResult.size()<10){season_update_flag=0;}
 }
 
-int db::writeseason2local(vehicle_struct& v)
+int db::writeseason2local(season_struct& v)
 {
-
-	time_t vfdate,vtdate;
-	CE_Time vfdt,vtdt;
 	int r=-1;// success flag
 	int debug=0;
 	std::string sqlStmt;
@@ -649,7 +649,8 @@ int db::writeseason2local(vehicle_struct& v)
 				m_local_db_err_flag=1;
 				dbss.str("");  // Set the underlying string to an empty string
     			dbss.clear();   // Clear the state of the stream
-				dbss << "Insert season to local failed. ";
+				//dbss << "Insert season to local failed. ";
+				dbss << sqlStmt;
 				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 					}
 			else  
@@ -678,7 +679,738 @@ int db::writeseason2local(vehicle_struct& v)
 
 }
 
+void db::downloadvehicletype()
+{
+	unsigned long j;
+	vector<ReaderItem> tResult;
+	vector<ReaderItem> selResult;
+	int r=0;
+	string iu_code;
+	string iu_type;
+	std::string sqlStmt;
+	int w=-1;
+	std::stringstream dbss;
 
+	//write log for total seasons
+
+	sqlStmt="SELECT SUM(A) FROM (";
+	sqlStmt=sqlStmt+ "SELECT count(IUCode) as A FROM Vehicle_type";
+	sqlStmt=sqlStmt + ") as B ";
+
+	//dbss << sqlStmt;
+    //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+
+	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
+	if(r!=0) m_remote_db_err_flag=1;
+	else 
+	{
+		m_remote_db_err_flag=0;
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " vehicle type to be download.";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		
+	}
+
+	r=centraldb->SQLSelect("SELECT  * FROM Vehicle_type",&selResult,true);
+	if(r!=0) m_remote_db_err_flag=1;
+	else m_remote_db_err_flag=0;
+
+	if (selResult.size()>0){
+
+		//--------------------------------------------------------
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading " << std::to_string (selResult.size()) << " Records: Started";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		
+
+		for(j=0;j<selResult.size();j++){
+			// std::cout<<"Rec "<<j<<std::endl;
+			// for (k=0;k<selResult[j].getDataSize();k++){
+			//     std::cout<<"item["<<k<< "]= " << selResult[j].GetDataItem(k)<<std::endl;                
+			// }  
+			iu_code = selResult[j].GetDataItem(1);
+			iu_type = selResult[j].GetDataItem(2); 
+
+			w=writevehicletype2local(iu_code,iu_type);
+			//---------------------------------------
+			
+		}
+		//m->initStnParameters();
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading vehicle type Records: End";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+	return;
+
+}
+
+int db::writevehicletype2local(string iucode,string iutype)
+{
+
+	int r=-1;// success flag
+	int debug=0;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+	std::stringstream dbss;
+	
+	try 
+	{
+		r=localdb->SQLSelect("SELECT IUCode FROM Vehicle_type Where IUCode= '" + iucode + "'",&selResult,false);
+		if(r!=0)  m_local_db_err_flag=1;
+		else  m_local_db_err_flag=0;
+
+		if (selResult.size()>0)
+		{
+
+			//update param records
+			sqlStmt="Update Vehicle_type SET ";
+			sqlStmt= sqlStmt+ "TransType='" + iutype + "'";
+			sqlStmt=sqlStmt + " Where IUCode= '" + iucode + "'";
+			
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "update local vehicle type failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+				//dbss.str("");  // Set the underlying string to an empty string
+				//dbss.clear();   // Clear the state of the stream
+				//dbss << "update local vehicle type success ";
+				//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			
+		}
+		else
+		{
+			sqlStmt="INSERT INTO Vehicle_type";
+			sqlStmt=sqlStmt+ " (IUCode,TransType) ";
+			
+			sqlStmt=sqlStmt+ " VALUES ('" +iucode+ "'";
+			sqlStmt=sqlStmt+ ",'" + iutype + "')";
+
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "insert vehicle type to local failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+			}
+		}
+
+	}
+	catch (const std::exception &e)
+	{
+		r=-1;// success flag
+		// cout << "ERROR: " << err << endl;
+		dbss.str("");  // Set the underlying string to an empty string
+		dbss.clear();   // Clear the state of the stream
+		dbss << "DB: local db error in writing rec: " << std::string(e.what());
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_local_db_err_flag=1;
+	} 
+	return r;
+}
+
+void db::downloadledmessage()
+{
+	unsigned long j,k;
+	vector<ReaderItem> tResult;
+	vector<ReaderItem> selResult;
+	int r=-1;
+	string msg_id;
+	string msg_body;
+	std::string sqlStmt;
+	int w=-1;
+	std::stringstream dbss;
+	int giStnid;
+	giStnid = operation::getInstance()->gtStation.iSID;
+
+	//write log for total seasons
+
+	sqlStmt="SELECT SUM(A) FROM (";
+	sqlStmt=sqlStmt+ "SELECT count(msg_id) as A FROM message_mst WHERE s"+to_string(giStnid)+"_fetched = 0";
+	sqlStmt=sqlStmt + ") as B ";
+
+	//dbss << sqlStmt;
+    //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+
+	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
+	if(r!=0) m_remote_db_err_flag=1;
+	else 
+	{
+		m_remote_db_err_flag=0;
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " message to be download.";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+
+	r=centraldb->SQLSelect("SELECT  * FROM message_mst WHERE s"+to_string(giStnid)+"_fetched = 0",&selResult,true);
+	if(r!=0) m_remote_db_err_flag=1;
+	else m_remote_db_err_flag=0;
+
+	if (selResult.size()>0){
+
+		//--------------------------------------------------------
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading message " << std::to_string (selResult.size()) << " Records: Started";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+
+		for(j=0;j<selResult.size();j++){
+			// std::cout<<"Rec "<<j<<std::endl;
+			// for (k=0;k<selResult[j].getDataSize();k++){
+			//     std::cout<<"item["<<k<< "]= " << selResult[j].GetDataItem(k)<<std::endl;                
+			// }  
+			msg_id = selResult[j].GetDataItem(0);
+			msg_body = selResult[j].GetDataItem(2);      
+			
+			w=writeledmessage2local(msg_id,msg_body);
+			
+			if (w==0) 
+			{
+				//update to central DB
+				r=centraldb->SQLExecutNoneQuery("UPDATE message_mst SET s"+
+				to_string(giStnid)+"_fetched = '1' WHERE msg_id = '"+msg_id+ "'");
+				if(r!=0) 
+				{
+					m_remote_db_err_flag=2;
+					dbss.str("");  // Set the underlying string to an empty string
+    				dbss.clear();   // Clear the state of the stream
+					dbss << "update central message status failed.";
+					Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+				}
+				else 
+				{
+					m_remote_db_err_flag=0;
+					//printf("update central message success \n");
+				}
+			}
+			
+
+			//---------------------------------------
+			
+		}
+		//m->initStnParameters();
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading Msg Records: End";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+	return;
+
+}
+
+int db::writeledmessage2local(string m_id,string m_body)
+{
+
+	int r=-1;// success flag
+	int debug=0;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+	std::stringstream dbss;
+
+	try 
+	{
+		r=localdb->SQLSelect("SELECT msg_id FROM message_mst Where msg_id= '" + m_id + "'",&selResult,false);
+		if(r!=0)  m_local_db_err_flag=1;
+		else  m_local_db_err_flag=0;
+
+		if (selResult.size()>0)
+		{
+
+			//update param records
+			sqlStmt="Update message_mst SET ";
+			sqlStmt= sqlStmt+ "msg_body='" + m_body + "'";
+			sqlStmt=sqlStmt + " Where msg_id= '" + m_id + "'";
+			
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "update local message failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+			//	printf("update local msg success \n");
+			}
+			
+		}
+		else
+		{
+			sqlStmt="INSERT INTO message_mst";
+			sqlStmt=sqlStmt+ " (msg_id,msg_body) ";
+			
+			sqlStmt=sqlStmt+ " VALUES ('" +m_id+ "'";
+			sqlStmt=sqlStmt+ ",'" + m_body + "')";
+
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "insert message to local failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+			//	printf("set local msg success \n");
+			}
+		}
+
+	}
+	catch (const std::exception &e)
+	{
+		r=-1;// success flag
+		// cout << "ERROR: " << err << endl;
+		dbss.str("");  // Set the underlying string to an empty string
+		dbss.clear();   // Clear the state of the stream
+		dbss << "DB: local db error in writing rec: " << std::string(e.what());
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_local_db_err_flag=1;
+	} 
+	return r;
+
+}
+
+void db::downloadparameter()
+{
+	unsigned long j,k;
+	vector<ReaderItem> tResult;
+	vector<ReaderItem> selResult;
+	int r=0;
+	string param_name;
+	string param_value;
+	std::string sqlStmt;
+	std::stringstream dbss;
+	int w=-1;
+	int giStnid;
+	giStnid = operation::getInstance()->gtStation.iSID;
+
+	//write log for total seasons
+
+	sqlStmt="SELECT SUM(A) FROM (";
+	sqlStmt=sqlStmt+ "SELECT count(name) as A FROM parameter_mst WHERE s"+to_string(giStnid)+"_fetched = 0 and for_station=1";
+	sqlStmt=sqlStmt + ") as B ";
+
+
+	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
+	if(r!=0) m_remote_db_err_flag=1;
+	else 
+	{
+		m_remote_db_err_flag=0;
+		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " parameter to be download.";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+
+	r=centraldb->SQLSelect("SELECT  * FROM parameter_mst WHERE s"+to_string(giStnid)+"_fetched = 0 and for_station=1",&selResult,true);
+	if(r!=0) m_remote_db_err_flag=1;
+	else m_remote_db_err_flag=0;
+
+	if (selResult.size()>0){
+
+		//--------------------------------------------------------
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading parameter " << std::to_string (selResult.size()) << " Records: Started";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+
+		for(j=0;j<selResult.size();j++){
+
+			param_name = selResult[j].GetDataItem(0);
+			param_value = selResult[j].GetDataItem(49+giStnid);      
+			dbss.str("");  // Set the underlying string to an empty string
+			dbss.clear();   // Clear the state of the stream
+			dbss << param_name << " = "  << param_value;
+			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			param_update_count++;
+			w=writeparameter2local(param_name,param_value);
+			
+			if (w==0) 
+			{
+				//update to central DB
+				r=centraldb->SQLExecutNoneQuery("UPDATE parameter_mst SET s"+
+				to_string(giStnid)+"_fetched = '1' WHERE name = '"+param_name+ "'");
+				if(r!=0) 
+				{
+					m_remote_db_err_flag=2;
+					dbss.str("");  // Set the underlying string to an empty string
+    				dbss.clear();   // Clear the state of the stream
+					dbss << "update central parameter status failed.";
+					Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+				}
+				else 
+				{
+					m_remote_db_err_flag=0;
+				//	printf("set central parameter success \n");
+				}
+			}			
+			
+		}
+		//m->initStnParameters();
+		//LoadParam();
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading Parameter Records: End";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+	else param_update_flag=0;
+}
+
+
+int db::writeparameter2local(string name,string value)
+{
+
+	
+	int r=-1;// success flag
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+	std::stringstream dbss;
+	
+	try 
+	{
+		
+		r=localdb->SQLSelect("SELECT ParamName FROM Param_mst Where ParamName= '" + name + "'",&selResult,false);
+		if(r!=0)  m_local_db_err_flag=1;
+		else  m_local_db_err_flag=0;
+
+		if (selResult.size()>0)
+		{
+
+			//update param records
+			sqlStmt="Update Param_mst SET ";
+			sqlStmt= sqlStmt+ "ParamValue='" + value + "'";
+			sqlStmt=sqlStmt + " Where ParamName= '" + name + "'";
+			
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "update parameter to local failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+			//	printf("update Param success \n");
+			}
+			
+		}
+		else
+		{
+			sqlStmt="INSERT INTO Param_mst";
+			sqlStmt=sqlStmt+ " (ParamName,ParamValue) ";
+			
+			sqlStmt=sqlStmt+ " VALUES ('" +name+ "'";
+			sqlStmt=sqlStmt+ ",'" + value  + "')";
+
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "insert parameter to local failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+				//printf("set Param success \n");
+			}
+		}
+
+	}
+	catch (const std::exception &e)
+	{
+		r=-1;// success flag
+		// cout << "ERROR: " << err << endl;
+		dbss.str("");  // Set the underlying string to an empty string
+		dbss.clear();   // Clear the state of the stream
+		dbss << "DB: local db error in writing rec: " << std::string(e.what());
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_local_db_err_flag=1;
+	} 
+	return r;
+
+}
+
+void db::downloadstationsetup()
+{
+	tstation_struct v;
+	vector<ReaderItem> tResult;
+	vector<ReaderItem> selResult;
+	std::string sqlStmt;
+	std::stringstream dbss;
+	int r=-1;
+	int w=-1;
+	
+	//write log for total seasons
+
+	sqlStmt="SELECT SUM(A) FROM (";
+	sqlStmt=sqlStmt+ "SELECT count(station_id) as A FROM station_setup";
+	sqlStmt=sqlStmt + ") as B ";
+
+	//dbss << sqlStmt;
+    //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+
+	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
+	if(r!=0) m_remote_db_err_flag=1;
+	else 
+	{
+		m_remote_db_err_flag=0;
+		dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " station setup to be download.";
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		
+	}
+
+	r=centraldb->SQLSelect("SELECT  * FROM station_setup",&selResult,true);
+	if(r!=0) m_remote_db_err_flag=1;
+	else m_remote_db_err_flag=0;
+
+	if (selResult.size()>0)
+	{
+		for(int j=0;j<selResult.size();j++){
+			v.iGroupID=std::stoi(selResult[j].GetDataItem(0));
+			v.iSID= std::stoi(selResult[j].GetDataItem(2));
+			v.sName= selResult[j].GetDataItem(3);
+			switch(std::stoi(selResult[j].GetDataItem(5)))
+			{
+			case 1:
+				v.iType=tientry;
+				break;
+			case 2:
+				v.iType=tiExit;
+				break;
+			default:
+				break;
+			};
+			v.iStatus= std::stoi(selResult[j].GetDataItem(6));
+			v.sPCName= selResult[j].GetDataItem(4);
+			v.iCHUPort= std::stoi(selResult[j].GetDataItem(17));
+			v.iAntID= std::stoi(selResult[j].GetDataItem(18));
+			v.iZoneID= std::stoi(selResult[j].GetDataItem(19));
+			v.iIsVirtual= std::stoi(selResult[j].GetDataItem(20));
+			switch(std::stoi(selResult[j].GetDataItem(22)))
+			{
+			case 0:
+				v.iSubType=iNormal;
+				break;
+			case 1:
+				v.iSubType=iXwithVENoPay;
+				break;
+			case 2:
+				v.iSubType=iXwithVEPay;
+				break;
+			default:
+				break;
+			};
+			v.iVirtualID= std::stoi(selResult[j].GetDataItem(21));
+			
+			w=writestationsetup2local(v);
+			
+			if (w==0) 
+			{
+			//	printf("set station setup ok \n");
+			}
+			//m->initStnParameters();
+		}
+		
+	}
+	if (selResult.size()<1){
+		//no record
+		r=-1; //should raise error, //2018.11.23 QC
+	}
+	return;
+}
+
+
+int db::writestationsetup2local(tstation_struct& v)
+{
+	
+	int r=-1;// success flag
+	int debug=0;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+	std::stringstream dbss;
+	
+	try 
+	{ 
+		r=localdb->SQLSelect("SELECT StationType FROM Station_Setup Where StationID= '" + std::to_string(v.iSID) + "'",&selResult,false);
+		if(r!=0)  m_local_db_err_flag=1;
+		else  m_local_db_err_flag=0;
+
+		if (selResult.size()>0)
+		{
+			sqlStmt="Update Station_Setup SET ";
+			//sqlStmt= sqlStmt+ "groupid='" + std::to_string(v.iGroupID) + "',";
+			sqlStmt= sqlStmt+ "StationID='" + std::to_string(v.iSID) + "',";
+			sqlStmt= sqlStmt+ "StationName='" +v.sName + "',";
+			sqlStmt= sqlStmt+ "StationType='" + std::to_string(v.iType) + "',";
+			sqlStmt= sqlStmt+ "Status='" + std::to_string(v.iStatus) + "',";
+			sqlStmt= sqlStmt+ "PCName='" + v.sPCName + "',";
+			sqlStmt= sqlStmt+ "CHUPort='" + std::to_string(v.iCHUPort) + "',";
+			sqlStmt= sqlStmt+ "AntID='" + std::to_string(v.iAntID) + "',";
+			sqlStmt= sqlStmt+ "ZoneID='" + std::to_string(v.iZoneID) + "',";
+			sqlStmt= sqlStmt+ "IsVirtual='" + std::to_string(v.iIsVirtual) + "',";
+			sqlStmt= sqlStmt+ "SubType='" + std::to_string(v.iSubType) + "',";
+			sqlStmt= sqlStmt+ "VirtualID='" + std::to_string(v.iVirtualID) + "'";
+			sqlStmt= sqlStmt+ " WHERE StationID='" +std::to_string(v.iSID) + "'";
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << " Update local station set up failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+			//	printf("update Station_Setup success \n");
+			}
+		}
+		else
+		{
+			sqlStmt="INSERT INTO Station_Setup";
+			sqlStmt=sqlStmt+ " (StationID,StationName,StationType,Status,PCName,CHUPort,AntID, ";
+			sqlStmt=sqlStmt+ " ZoneID,IsVirtual,SubType,VirtualID)";
+			sqlStmt=sqlStmt+ " VALUES ('" + std::to_string(v.iSID)+ "'";
+			sqlStmt=sqlStmt+ ",'" + v.sName + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iType) + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iStatus) + "'";
+			sqlStmt=sqlStmt+ ",'" + v.sPCName + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iCHUPort) + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iAntID) + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iZoneID) + "'";
+			sqlStmt=sqlStmt+ ",'" +  std::to_string(v.iIsVirtual) + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iSubType) + "'";
+			sqlStmt=sqlStmt+ ",'" + std::to_string(v.iVirtualID) + "')";
+			//sqlStmt=sqlStmt+ ",'" + std::to_string(v.iGroupID) + "') ";
+
+			r=localdb->SQLExecutNoneQuery (sqlStmt);
+
+			if(r!=0)  
+			{
+				m_local_db_err_flag=1;
+				dbss.str("");  // Set the underlying string to an empty string
+				dbss.clear();   // Clear the state of the stream
+				dbss << "insert parameter to local failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else  
+			{
+				m_local_db_err_flag=0;
+			//	printf("station_setup insert sucess\n");
+			}	               
+		}
+	}
+	catch (const std::exception &e)
+	{
+		r=-1;// success flag
+		// cout << "ERROR: " << err << endl;
+		dbss.str("");  // Set the underlying string to an empty string
+		dbss.clear();   // Clear the state of the stream
+		dbss << "DB: local db error in writing rec: " << std::string(e.what());
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_local_db_err_flag=1;
+	} 
+	return r;
+}
+
+DBError db::loadstationsetup()
+{
+	vector<ReaderItem> selResult;
+	int r=-1;
+	int giStnid;
+	giStnid = operation::getInstance()->gtStation.iSID;
+
+	r=localdb->SQLSelect("SELECT * FROM Station_Setup WHERE StationId = '"+
+	std::to_string(giStnid)+"'",&selResult,false);
+
+	if (r!=0)
+	{
+		//m_log->WriteAndPrint("Get Station Setup: fail");
+		return iLocalFail;
+	}
+
+	if (selResult.size()>0)
+	{            
+		//Set configuration
+		operation::getInstance()->gtStation.iSID= std::stoi(selResult[0].GetDataItem(0));
+		operation::getInstance()->gtStation.sName= selResult[0].GetDataItem(1);
+		switch(std::stoi(selResult[0].GetDataItem(2)))
+		{
+		case 1:
+			operation::getInstance()->gtStation.iType=tientry;
+			break;
+		case 2:
+			operation::getInstance()->gtStation.iType=tiExit;
+			break;
+		default:
+			break;
+		};
+		operation::getInstance()->gtStation.iStatus= std::stoi(selResult[0].GetDataItem(3));
+		operation::getInstance()->gtStation.sPCName= selResult[0].GetDataItem(4);
+		operation::getInstance()->gtStation.iCHUPort= std::stoi(selResult[0].GetDataItem(5));
+		operation::getInstance()->gtStation.iAntID= std::stoi(selResult[0].GetDataItem(6));
+		operation::getInstance()->gtStation.iZoneID= std::stoi(selResult[0].GetDataItem(7));
+		operation::getInstance()->gtStation.iIsVirtual= std::stoi(selResult[0].GetDataItem(8));
+		switch(std::stoi(selResult[0].GetDataItem(9)))
+		{
+		case 0:
+			operation::getInstance()->gtStation.iSubType=iNormal;
+			break;
+		case 1:
+			operation::getInstance()->gtStation.iSubType=iXwithVENoPay;
+			break;
+		case 2:
+			operation::getInstance()->gtStation.iSubType=iXwithVEPay;
+			break;
+		default:
+			break;
+		};
+		operation::getInstance()->gtStation.iVirtualID= std::stoi(selResult[0].GetDataItem(10));
+		operation::getInstance()->gtStation.iGroupID= std::stoi(selResult[0].GetDataItem(11));
+		//m->gtStation.sZoneName= selResult[0].GetDataItem(11);
+		//m->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
+		return iDBSuccess;
+	}
+	return iNoData; 
+};
 
 
 

@@ -6,6 +6,7 @@
 #include "event_handler.h"
 #include "lcsc.h"
 #include "log.h"
+#include "operation.h"
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
 
@@ -128,6 +129,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
+        operation::getInstance()->dooperation(value);
     }
     else
     {

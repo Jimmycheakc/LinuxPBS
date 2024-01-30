@@ -11,15 +11,15 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
     Entry_Time DATETIME,
     iu_tk_no VARCHAR(20),
     trans_type INT,
-    paid_amt INT,
+    paid_amt DECIMAL(10,2),
     TK_SerialNo INT,
     Status INT,
     Send_Status BOOLEAN,
     card_no VARCHAR(20),
-    parking_fee INT,
+    parking_fee DECIMAL(10,2),
     gst_amt DECIMAL(10, 2),
     Card_Type INT DEFAULT 0,
-    Owe_Amt INT,
+    Owe_Amt DECIMAL(10,2),
     lpr VARCHAR(20),
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -32,27 +32,27 @@ CREATE TABLE IF NOT EXISTS season_mst (
     s_status INT,
     date_from DATETIME,
     date_to DATETIME,
-    vehicle_no VARCHAR(20),
+    vehicle_no VARCHAR(100),
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME,
     rate_type INT DEFAULT 0,
     pay_to DATETIME,
     pay_date DATETIME,
-    multi_season_no VARCHAR(20),
-    zone_id INT,
-    redeem_amt INT,
+    multi_season_no VARCHAR(100),
+    zone_id VARCHAR(100),
+    redeem_amt DECIMAL(10,2),
     redeem_time INT,
     holder_type INT,
-    sub_zone_id INT
+    sub_zone_id VARCHAR(100)
 );
 
 -- Create a Station_Setup table in database
 CREATE TABLE IF NOT EXISTS Station_Setup (
     StationID INT,
-    StationName VARCHAR(20),
+    StationName VARCHAR(100),
     StationType INT,
     Status INT,
-    PCName VARCHAR(20),
+    PCName VARCHAR(100),
     CHUPort INT,
     AntID INT,
     ZoneID INT DEFAULT 0,
@@ -65,8 +65,8 @@ CREATE TABLE IF NOT EXISTS Station_Setup (
 -- Create a Param_mst table in database
 CREATE TABLE IF NOT EXISTS Param_mst (
     ParamID INT AUTO_INCREMENT PRIMARY KEY,
-    ParamName VARCHAR(20),
-    ParamValue VARCHAR(20),
+    ParamName VARCHAR(100),
+    ParamValue VARCHAR(100),
     AddDT TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UpdateDT DATETIME
 );
@@ -74,9 +74,9 @@ CREATE TABLE IF NOT EXISTS Param_mst (
 -- Create message_mst table in database
 CREATE TABLE IF NOT EXISTS message_mst (
     MsgID INT AUTO_INCREMENT PRIMARY KEY,
-    msg_id VARCHAR(20),
-    descrip VARCHAR(20),
-    msg_body VARCHAR(20),
+    msg_id VARCHAR(100),
+    descrip VARCHAR(100),
+    msg_body VARCHAR(100),
     m_status INT,
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME

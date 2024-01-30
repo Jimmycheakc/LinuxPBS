@@ -1,5 +1,4 @@
-#ifndef PING_H
-#define PING_H
+#pragma once
 
 // C++ Libraries
 #include <cstdio>
@@ -26,4 +25,4 @@ bool PingWithTimeOut( const std::string& address,
            std::string&       details );
 
 
-#endif // PING_H
+

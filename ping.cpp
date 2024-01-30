@@ -101,7 +101,7 @@ bool PingWithTimeOut( const std::string& address,
 
     //std::string command = "ping -w " + num2str(max_TimeOutInSeconds) + " " + address + " 2>&1";
 
-    //2019.07.25 QC
+   
     std::string command = "timeout " + num2str(max_TimeOutInSeconds) + " ping -c1 " + address+ " 2>&1";
     std::string output;
 

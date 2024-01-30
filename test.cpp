@@ -56,15 +56,15 @@ void Test::FnTest(char* argv)
     //event_queue_test();
     //lcsc_reader_test();
     //db_test();
-    dio_test();
+    //dio_test();
 }
 
 void Test::db_test()
 {
-    db *m_db;
+    /*  db *m_db;
     m_db=new db("DSN={MariaDB-server};DRIVER={MariaDB ODBC 3.0 Driver};SERVER=127.0.0.1;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;","DSN=mssqlserver;DATABASE=RF;UID=sa;PWD=yzhh2007","192.168.2.47",10,2,2,2);
 
-    int ret = m_db->entry_query("1128436044");
+    int ret = m_db->isvalidseason("1128436044");
     
     std::stringstream ss;
 
@@ -91,9 +91,13 @@ void Test::db_test()
 
     m_db->synccentraltime();
 
-    m_db->downloadseason();
+  //  m_db->downloadseason();
+  //  m_db->downloadvehicletype();
+  //  m_db->downloadledmessage();
+      m_db->downloadparameter();
+      m_db->downloadstationsetup();
 
-
+*/
 }
 
 void Test::common_test(char* argv)
