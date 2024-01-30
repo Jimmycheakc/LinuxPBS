@@ -19,6 +19,7 @@
 #include "lcsc.h"
 #include "db.h"
 #include "structuredata.h"
+#include "dio.h"
 
 #include "boost/date_time/posix_time/posix_time.hpp"
 
@@ -44,7 +45,7 @@ void Test::FnTest(char* argv)
     //common_test(argv);
     //systeminfo_test();
     //crc_test();
-    //dio_test();
+    //gpio_test();
     //upt_test();
     //lcd_test();
     //logger_test();
@@ -53,8 +54,9 @@ void Test::FnTest(char* argv)
     //led226_test();
     //antenna_test();
     //event_queue_test();
-    lcsc_reader_test();
+    //lcsc_reader_test();
     //db_test();
+    dio_test();
 }
 
 void Test::db_test()
@@ -191,7 +193,17 @@ void Test::iniparser_test()
     std::cout << IniParser::getInstance()->FnGetBlockIUPrefix() << std::endl;
     std::cout << IniParser::getInstance()->FnGetQ584PrinterComPort() << std::endl;
     std::cout << IniParser::getInstance()->FnGetLPRIP4Container() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetLoopA() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetLoopC() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetLoopB() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetIntercom() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetStationDooropen() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetBarrierDooropen() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetBarrierStatus() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetOpenbarrier() << std::endl;
+    std::cout << IniParser::getInstance()->FnGetLCDbacklight() << std::endl;
     */
+
 }
 
 void Test::crc_test()
@@ -204,7 +216,7 @@ void Test::crc_test()
     std::cout << "CRC value : " << std::hex << value << std::dec << std::endl;
 }
 
-void Test::dio_test()
+void Test::gpio_test()
 {
     /*
     GPIOManager::getInstance()->FnGPIOInit();
@@ -752,5 +764,44 @@ void Test::lcsc_reader_test()
 
     //io_context.run();
     ioThread.join();
+    EventManager::getInstance()->FnStopEventThread();
+}
+
+void Test::dio_test()
+{
+    boost::asio::io_context io_context;
+
+    IniParser::getInstance()->FnReadIniFile();
+    GPIOManager::getInstance()->FnGPIOInit();
+    DIO::getInstance()->FnDIOInit();
+    EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
+    EventManager::getInstance()->FnStartEventThread();
+
+    std::cout << "Get barrier status : " << DIO::getInstance()->FnGetOpenBarrier() << std::endl;
+    DIO::getInstance()->FnSetOpenBarrier(1);
+    std::cout << "Set barrier status 1" << std::endl;
+    std::cout << "Get barrier status : " << DIO::getInstance()->FnGetOpenBarrier() << std::endl;
+    DIO::getInstance()->FnSetOpenBarrier(0);
+    std::cout << "Set barrier status 0" << std::endl;
+    std::cout << "Get barrier status : " << DIO::getInstance()->FnGetOpenBarrier() << std::endl;
+
+    std::cout << "Get LCD backlight status : " << DIO::getInstance()->FnGetLCDBacklight() << std::endl;
+    DIO::getInstance()->FnSetLCDBacklight(1);
+    std::cout << "Set LCD backlight status 1" << std::endl;
+    std::cout << "Get LCD backlight status : " << DIO::getInstance()->FnGetLCDBacklight() << std::endl;
+    DIO::getInstance()->FnSetLCDBacklight(0);
+    std::cout << "Set LCD backlight status 0" << std::endl;
+    std::cout << "Get LCD backlight status : " << DIO::getInstance()->FnGetLCDBacklight() << std::endl;
+
+    DIO::getInstance()->FnStartDIOMonitoring();
+
+    std::cout << "start asynchronous operation." << std::endl;
+
+    boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(60));
+    t.async_wait(print);
+
+    io_context.run();
+    
+    DIO::getInstance()->FnStopDIOMonitoring();
     EventManager::getInstance()->FnStopEventThread();
 }

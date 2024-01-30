@@ -102,6 +102,11 @@ int SysfsGPIO::FnGetValue() const
     return value;
 }
 
+std::string SysfsGPIO::FnGetGPIOPath() const
+{
+    return gpioPath_;
+}
+
 
 // GPIO Manager Code
 GPIOManager* GPIOManager::GPIOManager_;
@@ -134,6 +139,11 @@ void GPIOManager::FnGPIOInit()
     FnInitSetGPIODirection(PIN_DO5, GPIO_OUT);
     FnInitSetGPIODirection(PIN_DO6, GPIO_OUT);
 
+    FnInitSetGPIODirection(PIN_DO7, GPIO_OUT);
+    FnInitSetGPIODirection(PIN_DO8, GPIO_OUT);
+    FnInitSetGPIODirection(PIN_DO9, GPIO_OUT);
+    FnInitSetGPIODirection(PIN_DO10, GPIO_OUT);
+
     FnInitSetGPIODirection(PIN_DI1, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI2, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI3, GPIO_IN);
@@ -143,18 +153,14 @@ void GPIOManager::FnGPIOInit()
     FnInitSetGPIODirection(PIN_DI7, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI8, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI9, GPIO_IN);
+    FnInitSetGPIODirection(PIN_DI10, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI11, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI12, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI13, GPIO_IN);
 
-    FnInitSetGPIODirection(PIN_DOJ1, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ2, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ3, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ4, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ7, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ8, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ9, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DOJ10, GPIO_OUT);
+    FnInitSetGPIODirection(PIN_DI13, GPIO_IN);
+    FnInitSetGPIODirection(PIN_DI14, GPIO_IN);
+    FnInitSetGPIODirection(PIN_DI15, GPIO_IN);
+    FnInitSetGPIODirection(PIN_DI16, GPIO_IN);
 }
 
 SysfsGPIO* GPIOManager::FnGetGPIO(int pinNumber)

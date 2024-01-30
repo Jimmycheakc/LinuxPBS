@@ -107,12 +107,25 @@ void IniParser::FnReadIniFile()
     Q584PrinterComPort_             = pt.get<std::string>("setting.Q584PrinterComPort", "");
     LPRIP4Container_                = pt.get<std::string>("setting.LPRIP4Container", "");
 
-    // Confirm
+    // Confirm [setting]
     AntennaID_                      = pt.get<int>("setting.AntennaId");
     WaitIUNoTime_                   = pt.get<int>("setting.WaitIUNoTime");
     AntennaMaxRetry_                = pt.get<int>("setting.AntennaMaxRetry");
     AntennaInqTO_                   = pt.get<int>("setting.AntennaInqTO");
     AntennaMinOKtimes_              = pt.get<int>("setting.AntennaMinOKtimes");
+
+    // Confirm [DI]
+    LoopA_                          = pt.get<int>("DI.LoopA");
+    LoopC_                          = pt.get<int>("DI.LoopC");
+    LoopB_                          = pt.get<int>("DI.LoopB");
+    Intercom_                       = pt.get<int>("DI.Intercom");
+    StationDooropen_                = pt.get<int>("DI.StationDooropen");
+    BarrierDooropen_                = pt.get<int>("DI.BarrierDooropen");
+    BarrierStatus_                  = pt.get<int>("DI.BarrierStatus");
+
+    // Confirm [DO]
+    Openbarrier_                    = pt.get<int>("DO.Openbarrier");
+    LCDbacklight_                   = pt.get<int>("DO.LCDbacklight");
 }
 
 void IniParser::FnPrintIniFile()
@@ -537,8 +550,7 @@ std::string IniParser::FnGetLPRIP4Container() const
     return LPRIP4Container_;
 }
 
-
-// Confirm
+// Confirm [setting]
 int IniParser::FnGetAntennaId() const
 {
     return AntennaID_;
@@ -562,4 +574,51 @@ int IniParser::FnGetAntennaInqTO() const
 int IniParser::FnGetAntennaMinOKtimes() const
 {
     return AntennaMinOKtimes_;
+}
+
+// Confirm [DI]
+int IniParser::FnGetLoopA() const
+{
+    return LoopA_;
+}
+
+int IniParser::FnGetLoopC() const
+{
+    return LoopC_;
+}
+
+int IniParser::FnGetLoopB() const
+{
+    return LoopB_;
+}
+
+int IniParser::FnGetIntercom() const
+{
+    return Intercom_;
+}
+
+int IniParser::FnGetStationDooropen() const
+{
+    return StationDooropen_;
+}
+
+int IniParser::FnGetBarrierDooropen() const
+{
+    return BarrierDooropen_;
+}
+
+int IniParser::FnGetBarrierStatus() const
+{
+    return BarrierStatus_;
+}
+
+// Confirm [DO]
+int IniParser::FnGetOpenbarrier() const
+{
+    return Openbarrier_;
+}
+
+int IniParser::FnGetLCDbacklight() const
+{
+    return LCDbacklight_;
 }

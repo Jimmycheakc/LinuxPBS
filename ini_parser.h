@@ -93,12 +93,25 @@ public:
     std::string FnGetQ584PrinterComPort() const;
     std::string FnGetLPRIP4Container() const;
 
-    // Confirm
+    // Confirm [setting]
     int FnGetAntennaId() const;
     int FnGetWaitIUNoTime() const;
     int FnGetAntennaMaxRetry() const;
     int FnGetAntennaInqTO() const;
     int FnGetAntennaMinOKtimes() const;
+
+    // Confirm [DI]
+    int FnGetLoopA() const;
+    int FnGetLoopC() const;
+    int FnGetLoopB() const;
+    int FnGetIntercom() const;
+    int FnGetStationDooropen() const;
+    int FnGetBarrierDooropen() const;
+    int FnGetBarrierStatus() const;
+
+    // Confirm [DO]
+    int FnGetOpenbarrier() const;
+    int FnGetLCDbacklight() const;
 
     /**
      * Singleton IniParser should not be cloneable.
@@ -195,10 +208,23 @@ private:
     std::string Q584PrinterComPort_;
     std::string LPRIP4Container_;
 
-    // Confirm
+    // Confirm [setting]
     int AntennaID_;
     int WaitIUNoTime_;
     int AntennaMaxRetry_;
     int AntennaInqTO_;
     int AntennaMinOKtimes_;
+
+    // Confirm [DI]
+    int LoopA_;
+    int LoopC_;
+    int LoopB_;
+    int Intercom_;
+    int StationDooropen_;
+    int BarrierDooropen_;
+    int BarrierStatus_;
+
+    // Confirm [DO]
+    int Openbarrier_;
+    int LCDbacklight_;
 };

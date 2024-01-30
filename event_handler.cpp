@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <sstream>
+#include "dio.h"
 #include "event_handler.h"
 #include "lcsc.h"
 #include "log.h"
@@ -22,7 +23,8 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleLcscReaderSetTime"           ,std::bind(&EventHandler::handleLcscReaderSetTime,          eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile,    eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderUploadCILFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCILFile,    eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile,     eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile,     eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent,                   eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -385,6 +387,75 @@ bool EventHandler::handleLcscReaderUploadBLFile(const BaseEvent* event)
 
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleDIOEvent(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        DIO::DIO_EVENT dioEvent = static_cast<DIO::DIO_EVENT>(intEvent->data);
+        // Temp: Add handling in future
+
+        switch (dioEvent)
+        {
+            case DIO::DIO_EVENT::LOOP_A_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::LOOP_B_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::LOOP_C_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::INTERCOM_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::INTERCOM_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::BARRIER_STATUS_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_EVENT");
+                break;
+            }
+            default:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::UNKNOWN_EVENT");
+                break;
+            }
+        }
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << static_cast<int>(dioEvent);
         Logger::getInstance()->FnLog(ss.str());
     }
     else

@@ -40,6 +40,7 @@ set(SOURCE_FILES
     ce_time.cpp
     odbc.cpp
     db.cpp
+    dio.cpp
     main.cpp
 )
 

@@ -43,4 +43,5 @@ private:
     bool handleLcscReaderUploadCFGFile(const BaseEvent* event);
     bool handleLcscReaderUploadCILFile(const BaseEvent* event);
     bool handleLcscReaderUploadBLFile(const BaseEvent* event);
+    bool handleDIOEvent(const BaseEvent* event);
 };

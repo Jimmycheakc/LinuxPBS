@@ -24,7 +24,7 @@ private:
     void systeminfo_test();
     void iniparser_test();
     void crc_test();
-    void dio_test();
+    void gpio_test();
     void upt_test();
     void lcd_test_ascii();
     void lcd_test_display_two_rows();
@@ -40,4 +40,5 @@ private:
     void event_queue_test();
     void lcsc_reader_test();
     void db_test();
+    void dio_test();
 };

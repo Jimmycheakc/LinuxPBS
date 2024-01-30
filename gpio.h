@@ -15,6 +15,7 @@ public:
     bool FnSetDirection(const std::string& direction);
     bool FnSetValue(int value);
     int FnGetValue() const;
+    std::string FnGetGPIOPath() const;
 
 private:
     int pinNumber_;
@@ -43,29 +44,31 @@ public:
     static const int PIN_DO5               = 511;
     static const int PIN_DO6               = 510;
 
-    // Define PININ
-    static const int PIN_DI1               = 329;
-    static const int PIN_DI2               = 330;
-    static const int PIN_DI3               = 331;
-    static const int PIN_DI4               = 332;
-    static const int PIN_DI5               = 333;
-    static const int PIN_DI6               = 334;
-    static const int PIN_DI7               = 346;
-    static const int PIN_DI8               = 347;
-    static const int PIN_DI9               = 361;
-    static const int PIN_DI11              = 362;
-    static const int PIN_DI12              = 365;
-    static const int PIN_DI13              = 366;
-
     // Define PINOUT J2 (Output 5v)
-    static const int PIN_DOJ1              = 507;
-    static const int PIN_DOJ2              = 508;
-    static const int PIN_DOJ3              = 505;
-    static const int PIN_DOJ4              = 506;
-    static const int PIN_DOJ7              = 504;
-    static const int PIN_DOJ8              = 503;
-    static const int PIN_DOJ9              = 502;
-    static const int PIN_DOJ10             = 501;
+    static const int PIN_DO7               = 504;   // J2 07
+    static const int PIN_DO8               = 503;   // J2 08
+    static const int PIN_DO9               = 502;   // J2 09
+    static const int PIN_DO10              = 501;   // J2 10
+
+    // Define PININ
+    static const int PIN_DI1               = 362;
+    static const int PIN_DI2               = 365;
+    static const int PIN_DI3               = 366;
+    static const int PIN_DI4               = 346;
+    static const int PIN_DI5               = 347;
+    static const int PIN_DI6               = 361;
+    static const int PIN_DI7               = 332;
+    static const int PIN_DI8               = 333;
+    static const int PIN_DI9               = 334;
+    static const int PIN_DI10              = 329;
+    static const int PIN_DI11              = 330;
+    static const int PIN_DI12              = 331;
+
+    // Define PININ J2 (Input 5v)
+    static const int PIN_DI13              = 507;   // J2 01
+    static const int PIN_DI14              = 508;   // J2 02
+    static const int PIN_DI15              = 505;   // J2 03
+    static const int PIN_DI16              = 506;   // J2 04
 
     static GPIOManager* getInstance();
     void FnGPIOInit();
