@@ -7,17 +7,66 @@
 #include "log.h"
 #include "operation.h"
 
+db* db::db_ = nullptr;
 
-db::db(string localStr,string CentralStr,
-string cent_IP,int LocalSQLTimeOut,
-int CentralSQLTimeOut, int SP_SQLTimeOut,float mPingTimeOut)
+db::db()
 {
 
-	localConnStr=localStr;
-	CentralConnStr=CentralStr;
-	central_IP=cent_IP;
+}
+
+db* db::getInstance()
+{
+    if (db_ == nullptr)
+    {
+        db_ = new db();
+    }
+    return db_;
+}
+
+
+int db::connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOut, int SP_SQLTimeOut,float mPingTimeOut)
+{
+
+	CentralConnStr=connectStr;
+	
+	central_IP=connectIP;
 
 	CentralDB_TimeOut=CentralSQLTimeOut;
+
+	SP_TimeOut=SP_SQLTimeOut;
+
+	PingTimeOut=mPingTimeOut;
+
+	season_update_flag=0;
+	season_update_count=0;
+	param_update_flag=0;
+
+	Alive=0;
+	timeOutVal=100; // PMS offline timeOut=10s
+
+	onlineState=_Online;
+	initialFlag=false;
+	//---------------------------------
+	centraldb=new odbc(SP_TimeOut,1,mPingTimeOut,central_IP,CentralConnStr);
+   
+    std::stringstream dbss;
+	if (centraldb->Connect()==0) {
+		dbss << "Central DB is connected!" ;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		return 1;
+	}
+	else {
+		dbss << "unable to connect Central DB" ;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		return 0;
+	}
+}
+
+int db::connectlocaldb(string connectstr,int LocalSQLTimeOut,int SP_SQLTimeOut,float mPingTimeOut)
+{
+
+	std::stringstream dbss;
+	localConnStr=connectstr;
 	LocalDB_TimeOut=LocalSQLTimeOut;
 	SP_TimeOut=SP_SQLTimeOut;
 
@@ -33,30 +82,17 @@ int CentralSQLTimeOut, int SP_SQLTimeOut,float mPingTimeOut)
 	onlineState=_Online;
 	initialFlag=false;
 	//---------------------------------
-	centraldb=new odbc(SP_TimeOut,1,PingTimeOut,central_IP,CentralConnStr);
-   
-    std::stringstream dbss;
-	if (centraldb->Connect()==0) {
-		dbss << "Central DB is connected!" ;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-	else {
-		dbss << "unable to connect Central DB" ;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-	
-	dbss.str("");  // Set the underlying string to an empty string
-    dbss.clear();   // Clear the state of the stream
-
 	localdb=new odbc(LocalDB_TimeOut,1,PingTimeOut,"127.0.0.1",localConnStr);
 
 	if (localdb->Connect()==0) {
 		dbss << "Local DB is connected!" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		return 1;
 	}
 	else{
 		dbss << "unable to connect Local DB" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		return 0;
 	}
 
 }
@@ -475,7 +511,7 @@ void db::downloadseason()
 	unsigned long j,k;
 	vector<ReaderItem> tResult;
 	vector<ReaderItem> selResult;
-	season_struct v;
+	tseason_struct v;
 	int r=0;
 	string seasonno;
 	std::string sqlStmt;
@@ -569,7 +605,7 @@ void db::downloadseason()
 	if (selResult.size()<10){season_update_flag=0;}
 }
 
-int db::writeseason2local(season_struct& v)
+int db::writeseason2local(tseason_struct& v)
 {
 	int r=-1;// success flag
 	int debug=0;
@@ -881,8 +917,8 @@ void db::downloadledmessage()
 			//     std::cout<<"item["<<k<< "]= " << selResult[j].GetDataItem(k)<<std::endl;                
 			// }  
 			msg_id = selResult[j].GetDataItem(0);
-			msg_body = selResult[j].GetDataItem(2); 
-			msg_status =  selResult[j].GetDataItem(3);    
+			msg_body = selResult[j].GetDataItem(2);
+			msg_status =  selResult[j].GetDataItem(3); 
 			
 			w=writeledmessage2local(msg_id,msg_body,msg_status);
 			
@@ -1416,6 +1452,67 @@ DBError db::loadstationsetup()
 	return iNoData; 
 };
 
+DBError db::loadcentralDBinfo()
+{
+	vector<ReaderItem> selResult;
+	int r=-1;
+	int giStnid;
+	giStnid = operation::getInstance()->gtStation.iSID;
+
+	r=localdb->SQLSelect("SELECT * FROM Station_Setup WHERE StationId = '"+
+	std::to_string(giStnid)+"'",&selResult,false);
+
+	if (r!=0)
+	{
+		//m_log->WriteAndPrint("Get Station Setup: fail");
+		return iLocalFail;
+	}
+
+	if (selResult.size()>0)
+	{            
+		//Set configuration
+		operation::getInstance()->gtStation.iSID= std::stoi(selResult[0].GetDataItem(0));
+		operation::getInstance()->gtStation.sName= selResult[0].GetDataItem(1);
+		switch(std::stoi(selResult[0].GetDataItem(2)))
+		{
+		case 1:
+			operation::getInstance()->gtStation.iType=tientry;
+			break;
+		case 2:
+			operation::getInstance()->gtStation.iType=tiExit;
+			break;
+		default:
+			break;
+		};
+		operation::getInstance()->gtStation.iStatus= std::stoi(selResult[0].GetDataItem(3));
+		operation::getInstance()->gtStation.sPCName= selResult[0].GetDataItem(4);
+		operation::getInstance()->gtStation.iCHUPort= std::stoi(selResult[0].GetDataItem(5));
+		operation::getInstance()->gtStation.iAntID= std::stoi(selResult[0].GetDataItem(6));
+		operation::getInstance()->gtStation.iZoneID= std::stoi(selResult[0].GetDataItem(7));
+		operation::getInstance()->gtStation.iIsVirtual= std::stoi(selResult[0].GetDataItem(8));
+		switch(std::stoi(selResult[0].GetDataItem(9)))
+		{
+		case 0:
+			operation::getInstance()->gtStation.iSubType=iNormal;
+			break;
+		case 1:
+			operation::getInstance()->gtStation.iSubType=iXwithVENoPay;
+			break;
+		case 2:
+			operation::getInstance()->gtStation.iSubType=iXwithVEPay;
+			break;
+		default:
+			break;
+		};
+		operation::getInstance()->gtStation.iVirtualID= std::stoi(selResult[0].GetDataItem(10));
+		operation::getInstance()->gtStation.iGroupID= std::stoi(selResult[0].GetDataItem(11));
+		//m->gtStation.sZoneName= selResult[0].GetDataItem(11);
+		//m->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
+		return iDBSuccess;
+	}
+	return iNoData; 
+};
+
 DBError db::loadParam()
 {
 	int r = -1;
@@ -1511,7 +1608,7 @@ DBError db::loadParam()
 
                 if (readerItem.GetDataItem(0) == "BarrierPulse")
 				{
-				    operation::getInstance()->tParas.gsBarrierPulse = std::stof(readerItem.GetDataItem(1));
+				    operation::getInstance()->tParas.gsBarrierPulse = std::stoi(readerItem.GetDataItem(1));
 				}
 
                 if (readerItem.GetDataItem(0) == "AntMaxRetry")

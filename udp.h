@@ -41,8 +41,8 @@ public:
     void udpinit(const std::string ServerIP, unsigned short RemotePort, unsigned short LocalPort);
 
 public:
-    udpclient(io_service& ioService, const std::string& serverAddress, unsigned short serverPort,unsigned short LocalPort)
-        : socket_(ioService, udp::endpoint(udp::v4(), LocalPort)), serverEndpoint_(ip::address::from_string(serverAddress), serverPort) {
+    udpclient(io_context& ioContext, const std::string& serverAddress, unsigned short serverPort,unsigned short LocalPort)
+        : socket_(ioContext, udp::endpoint(udp::v4(), LocalPort)), serverEndpoint_(ip::address::from_string(serverAddress), serverPort) {
         startreceive();
     }
     void startsend(const std::string& message) {

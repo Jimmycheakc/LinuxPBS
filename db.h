@@ -30,9 +30,9 @@ typedef enum
 
 class db {
 public:
-    db(string localStr,string CentralStr,
-       string cent_IP,int LocalSQLTimeOut,
-       int CentralSQLTimeOut, int SP_SQLTimeOut, float mPingTimeOut);
+    static db* getInstance();
+    int connectlocaldb(string connectstr,int LocalSQLTimeOut,int SP_SQLTimeOut,float mPingTimeOut);
+    int connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOut, int SP_SQLTimeOut,float mPingTimeOut);
     virtual ~db();
 
     int sp_isvalidseason(const std::string & sSeasonNo,
@@ -45,12 +45,10 @@ public:
 
 	int local_isvalidseason(string L_sSeasonNo);
 
-    DBError RefreshTypeinRAM(std::list<tVType_Struct> *vlist);
-
 	int isvalidseason(string m_sSeasonNo);
     void synccentraltime ();
     void downloadseason();
-    int writeseason2local(season_struct& v);
+    int writeseason2local(tseason_struct& v);
     void downloadvehicletype();
     int writevehicletype2local(string iucode,string iutype);
     void downloadledmessage();
@@ -67,9 +65,20 @@ public:
 	 DBError loadmessage();
 	 DBError loadParam();
 	 DBError loadstationsetup();
+     DBError loadcentralDBinfo();
      DBError loadvehicletype();
 
     int FnGetVehicleType(std::string IUCode);
+
+    /**
+     * Singleton db should not be cloneable.
+     */
+     db (db&) = delete;
+
+    /**
+     * Singleton db should not be assignable.
+     */
+    void operator=(const db&) = delete;
 
 private:
 
@@ -82,7 +91,6 @@ private:
     template <typename T>
         string ToString(T a);
 
-    void insertToVTypeList(tVType_Struct v, std::list<tVType_Struct> *tmpList);
     DBError loadEntrymessage(std::vector<ReaderItem>& selResult);
 
     
@@ -106,6 +114,9 @@ private:
 
 	odbc *centraldb;
 	odbc *localdb;
+
+    static db* db_;
+    db();
 
 };
 

@@ -1,7 +1,4 @@
-
-
-#ifndef STRUCTUREDATA_H
-#define STRUCTUREDATA_H
+#pragma once
 
 #include "ce_time.h"
 
@@ -151,23 +148,23 @@ struct  tEntryTrans_Struct
 	int iTransType;
 	short iRateType;
 	int iStatus;  //enter or reverse
-	string sPwd;      //password, for ticket
-	string sTag;
+//	string sPwd;      //password, for ticket
+//	string sTag;
 	string sCardNo;
 	float sFee=0;
 	float sPaidAmt=0;
 	float sGSTAmt;
 	string sReceiptNo;
 	int iCardType=0;
-	string sCHUDebitCode; //Entry debit from CHU
-	string sCHUDebitTime;
+//	string sCHUDebitCode; //Entry debit from CHU
+//	string sCHUDebitTime;
 	float sOweAmt=0;
-	bool sEnableReader;
+//	bool sEnableReader;
 	string sLPN[2];
 	int iVehcileType;
-	string sGreeting;
-	string sRPLPN;
-	string sPaidtime;
+//	string sGreeting;
+//	string sRPLPN;
+//	string sPaidtime;
 
 
 };
@@ -309,7 +306,7 @@ struct  tParas_Struct
 	int giTicketSiteID;
 
 	int giDataKeepDays;
-	float gsBarrierPulse;
+	int gsBarrierPulse;
 
 	int giAntMaxRetry;
 	int giAntMinOKTimes;
@@ -356,6 +353,9 @@ struct  tParas_Struct
 	int remote_udpport; //not in current central DB
 	int not_allow_hourly; //not in current central DB
 	int cepas_enable; //not in current central DB
+
+	string gsDefaultIU; 
+	string gsBroadCastIP; 
 
 	//int giCommPortPrinter;
 	//int giCommPortLED2;
@@ -559,291 +559,9 @@ struct  tMsg_Struct
 	std::string MsgEntry_WithIU[2];
 	std::string MsgEntry_WrongATM[2];
 	std::string MsgEntry_E1enhancedMCParking[2];
-	
-/*
-	string Msg_carderror;
-	string Msg_cardin;
-	string Msg_cardpaid;
-	string Msg_cardtaken;
-	string Msg_compexpired;
-	string Msg_expcard;
-	string Msg_graceperiod;
-	string Msg_idle;
-	string Msg_invalidticket;
-	string Msg_lockstation;
-	string Msg_loopa;
-	string Msg_loopafull;
-	string Msg_lowbal;
-	string Msg_noentry;
-	string Msg_noentry1;
-	string Msg_offline;
-	string Msg_printererror;
-	string Msg_seasonblocked;
-	string Msg_seasonexpired;
-	string Msg_seasoninvalid;
-	string Msg_seasonnotstart;
-	string Msg_seasonpassback;
-	string Msg_seasonterminated;
-	string Msg_seasonwrongtype;
-	string Msg_systemerror;
-	string Msg_takecard;
-	string Msg_taketicket;
-	string Msg_ticketexpired;
-	string Msg_usedticket;
-	string Msg_validseason;
-	string Msg_wrongcard;
-	string Msg_xcardagain;
-	string Msg_xloopa;
-	string Msg_xlowbal;
-	string Msg_xvalidseason;
-	string Msg_noiu;
-	string Msg_fleetcard;
-	string Msg_nocard;
-	string Msg_xnoiu;
-	string Msg_xnocard;
-	string Msg_complimentary;
-	string Msg_blacklist;
-	string Msg_nochu;
-	string Msg_redemptionticket;
-	string Msg_ticketnotfound;
-	string Msg_defaultled;
-	string Msg_redeemfail;
-	string Msg_redeemok;
-	string Msg_redemption;
-	string Msg_getreceipt;
-	string Msg_norecharge;
-	string Msg_xnochu;
-	string Msg_defaultiu;
-	string Msg_xdefaultiu;
-	string Msg_withiu;
-	string Msg_freeparking;
-	string Msg_iuproblem;
-	string Msg_xidle;
-	string Msg_apsidle;
-	string Msg_xdefaultled;
-	string Msg_seasonregnoiu;
-	string Msg_seasonregok;
-	string Msg_debitnak;
-	string Msg_fullled;
-	string Msg_debitfail;
-	string Msg_defaultled2;
-	string Msg_flashled;
-	string Msg_expiringseason;
-	string Msg_xcardtaken;
-	string Msg_xdefaultled2;
-	string Msg_xexpiringseason;
-	string Msg_redemptionexpired;
-	string Msg_seasonashourly;
-	string Msg_seasonwithinallownace;
-	string Msg_comp2val;
-	string Msg_compvalfail;
-	string Msg_comvalok;
-	string Msg_scanentryticket;
-	string Msg_scanvalticket;
-	string Msg_insertatm;
-	string Msg_takeatm;
-	string Msg_insertcashcard;
-	string Msg_selecttopupvalue;
-	string Msg_keyinlpn;
-	string Msg_processing;
-	string Msg_essok;
-	string Msg_keyinpwd;
-	string Msg_rekeyinpwd;
-	string Msg_maxpinretried;
-	string Msg_atmdebitfail;
-	string Msg_topupfail;
-	string Msg_vmtimeout;
-	string Msg_seasonnotfound;
-	string Msg_seasonmultifound;
-	string Msg_seasonnotvalid;
-	string Msg_setperiod;
-	string Msg_atmdebitok;
-	
-	string Msg_readererror;
-	string Msg_cardreadingerror;
-
-	string Msg_topupok;
-	string Msg_dberror;
-	string Msg_carddebitfail;
-	string Msg_printingreceipt;
-	string Msg_takereceipt;
-	string Msg_carddebitdb;
-	
-
-	string Msg_readercommerror;
-	string Msg_vvip;
-	string Msg_masterseason;
-	string Msg_entrydebit;
-	string Msg_ticketnotstart;
-	string Msg_card4complimentary;
-	string Msg_seasononly;
-	string Msg_wholedayparking;
-	string Msg_cexpiringseason;
-	string Msg_cfull_led;
-	string Msg_cidle;
-	string Msg_c_lockstation;
-	string Msg_c_loopa;
-	string Msg_c_loopafull;
-	string Msg_c_seasonexpired;
-	string Msg_c_seasonwithinallownace;
-	string Msg_cx_expringseason;
-	string Msg_cx_idle;
-	string Msg_cx_loopa;
-	string Msg_c_defaultled;
-	string Msg_c_defaultled2;
-	string Msg_cx_defaultled;
-	string Msg_cx_defaultled2;
-	string Msg_c_apsidle;
-	string Msg_c_atmcancelpin;
-	string Msg_c_atmdebitfail;
-	string Msg_c_atmdebitok;
-	string Msg_c_blacklist;
-	string Msg_c_cancelledticket;
-	string Msg_c_card4complimentary;
-	string Msg_c_carddebitdb;
-	string Msg_c_carddebitfail;
-	string Msg_c_carderror;
-	string Msg_c_cardin;
-	string Msg_c_cardpaid;
-	string Msg_c_cardreadingerror;
-	string Msg_c_cardsoldout;
-	string Msg_c_cardtaken;
-	string Msg_c_comp2val;
-	string Msg_c_compexpired;
-	string Msg_c_complimentary;
-	string Msg_c_compvalfail;
-	string Msg_c_compvalok;
-	string Msg_c_dberror;
-	string Msg_c_debitfail;
-	string Msg_c_debitnak;
-	string Msg_c_defaultiu;
-	string Msg_c_dispensecardfail;
-	string Msg_c_dispensecardok;
-	string Msg_c_dispensererror;
-	string Msg_c_dispensingcard;
-	string Msg_c_entrydebit;
-	string Msg_c_esscancel;
-	string Msg_c_essok;
-	string Msg_c_expcard;
-	string Msg_c_flashled;
-	string Msg_c_fleetcard;
-	string Msg_c_freeparking;
-	string Msg_c_getreceipt;
-	string Msg_c_graceperiod;
-	string Msg_c_insertatm;
-	string Msg_c_insertcashcard;
-	string Msg_c_invalidticket;
-	string Msg_c_iuproblem;
-	string Msg_c_keyinlpn;
-	string Msg_c_keyinpwd;
-	string Msg_c_lowbal;
-	string Msg_c_masterseason;
-	string Msg_c_maxpinretried;
-	string Msg_c_nocard;
-	string Msg_c_nochu;
-	string Msg_c_noentry;
-	string Msg_c_noentry1;
-	string Msg_c_noiu;
-	string Msg_c_norecharge;
-	string Msg_c_offline;
-	string Msg_c_printererror;
-	string Msg_c_printingreceipt;
-	string Msg_c_processing;
-	string Msg_c_readercommerror;
-	string Msg_c_readererror;
-	string Msg_c_redeemfail;
-	string Msg_c_redeemok;
-	string Msg_c_redemption;
-	string Msg_c_redemptionexpired;
-	string Msg_c_redemptionticket;
-	string Msg_c_rekeyinpwd;
-	string Msg_c_scanentryticket;
-	string Msg_c_scanvalticket;
-	string Msg_c_seasonashourly;
-	string Msg_c_seasonblocked;
-	string Msg_c_seasoninvalid;
-	string Msg_c_seasonlost;
-	string Msg_c_seasonmultifound;
-	string Msg_c_seasonnotfound;
-	string Msg_c_seasonnotstart;
-	string Msg_c_seasonnotvalid;
-	string Msg_c_seasononly;
-	string Msg_c_seasonpassback;
-	string Msg_c_seasonregiu;
-	string Msg_c_seasonregok;
-	string Msg_c_seasonrenewfail;
-	string Msg_c_seasonrenewok;
-	string Msg_c_seasonterminated;
-	string Msg_c_seasonwrongtype;
-	string Msg_c_selecttopupvalue;
-	string Msg_c_setperiod;
-	string Msg_c_systemerror;
-	string Msg_c_takeatm;
-	string Msg_c_takecard;
-	string Msg_c_takereceipt;
-	string Msg_c_taketicket;
-	string Msg_c_ticketbycashier;
-	string Msg_c_ticketexpired;
-	string Msg_c_ticketlocked;
-	string Msg_c_ticketnotfound;
-	string Msg_c_topupexceedmax;
-	string Msg_c_touupfail;
-	string Msg_c_topupok;
-	string Msg_c_usedticket;
-	string Msg_c_validseason;
-	string Msg_c_vmcommerror;
-	string Msg_c_vmerror;
-	string Msg_c_vmhostproblem;
-	string Msg_c_vmlineproblem;
-	string Msg_c_vmlogon;
-	string Msg_c_vmlogoncard;
-	string Msg_c_vmtimeout;
-	string Msg_c_vvip;
-	string Msg_c_wholedayparking;
-	string Msg_c_withiu;
-	string Msg_c_wrongatm;
-	string Msg_c_wrongcard;
-	string Msg_c_wrongticket;
-	string Msg_cx_cardagain;
-	string Msg_cx_cardtaken;
-	string Msg_cx_defaultiu;
-	string Msg_cx_lowbal;
-	string Msg_cx_nocard;
-	string Msg_cx_nochu;
-	string Msg_cx_noiu;
-	string Msg_cx_validseason;
-	string Msg_altdefaultled;
-	string Msg_altdefaultled2;
-	string Msg_authorizedvehicle;
-	string Msg_carfull_led;
-	string Msg_carparkfull2led;
-	string Msg_ce_seasonwithinallowance;
-	string Msg_c_samelastiu;
-	string Msg_cx_samelastiu;
-	string Msg_cx_seasonwithinallowance;
-	string Msg_defaultmsg2led;
-	string Msg_defaultmsgled;
-	string Msg_eseasonwithinallowance;
-	string Msg_espt3parking;
-	string Msg_evipholderparking;
-	string Msg_lorryfull_led;
-	string Msg_lotadjustmentmsg;
-	string Msg_nonoghtparking2led;
-	string Msg_samelastiu;
-	string Msg_x_samelastiu;
-	string Msg_x_seasonwithinallowance;
-	string Msg_x_spt3parking;
-	string Msg_x_vipholderparking;
-	string Msg_altdefaultled3;
-	string Msg_altdefaultled4;
-	string Msg_e1_enhancedmcparking;
-	string Msg_e_enhancedmcparking;
-	string Msg_x1_enhancedmcparking;
-	string Msg_x_enhancedmcparking;
-*/
 };
 
-struct season_struct {
+struct tseason_struct {
 
     string season_no;
     string SeasonType;
@@ -863,11 +581,8 @@ struct season_struct {
 	 int found;
 };
 
-
-
-#endif
-
-
-
-
-
+struct tPBSError_struct {
+	int ErrNo;
+	int Errcode;
+	string ErrMsg;
+};

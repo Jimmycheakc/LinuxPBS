@@ -130,7 +130,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
-        operation::getInstance()->dooperation(value);
+        operation::getInstance()->IUcome(value);
     }
     else
     {
@@ -419,11 +419,13 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
+                operation::getInstance()->LoopACome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
+                operation::getInstance()->LoopAGone();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_B_ON_EVENT:
@@ -439,11 +441,13 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_ON_EVENT");
+                operation::getInstance()->LoopCCome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_OFF_EVENT");
+                operation::getInstance()->LoopCGone();
                 break;
             }
             case DIO::DIO_EVENT::INTERCOM_ON_EVENT:

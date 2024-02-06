@@ -57,7 +57,7 @@ void Test::FnTest(char* argv)
     //event_queue_test();
     //lcsc_reader_test();
     //db_test();
-    dio_test();
+    //dio_test();
 }
 
 void Test::db_test()
