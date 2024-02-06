@@ -30,7 +30,13 @@ void operation::OperationInit(io_service& ioService)
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
     m_db=new db("DSN={MariaDB-server};DRIVER={MariaDB ODBC 3.0 Driver};SERVER=127.0.0.1;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;","DSN=mssqlserver;DATABASE=RF;UID=sa;PWD=yzhh2007","192.168.2.47",10,2,2,2);
     m_db->synccentraltime();
-    m_db->loadstationsetup();
+    //m_db->loadstationsetup();
+    //m_db->downloadledmessage();
+    //m_db->downloadvehicletype();
+    //m_db->downloadparameter();
+    //m_db->loadParam();
+    //m_db->loadvehicletype();
+    //m_db->loadmessage();
     // create new UDP
     try {
         m_udp = new udpclient(ioService, "192.168.2.47", 2001,2001);

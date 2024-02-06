@@ -13,13 +13,20 @@ class DIO
 public:
     enum class DIO_EVENT
     {
-        LOOP_A_EVENT = 0,
-        LOOP_B_EVENT = 1,
-        LOOP_C_EVENT = 2,
-        INTERCOM_EVENT = 3,
-        STATION_DOOR_OPEN_EVENT = 4,
-        BARRIER_DOOR_OPEN_EVENT = 5,
-        BARRIER_STATUS_EVENT = 6
+        LOOP_A_ON_EVENT = 0,
+        LOOP_A_OFF_EVENT = 1,
+        LOOP_B_ON_EVENT = 2,
+        LOOP_B_OFF_EVENT = 3,
+        LOOP_C_ON_EVENT = 4,
+        LOOP_C_OFF_EVENT = 5,
+        INTERCOM_ON_EVENT = 6,
+        INTERCOM_OFF_EVENT = 7,
+        STATION_DOOR_OPEN_EVENT = 8,
+        STATION_DOOR_CLOSE_EVENT = 9,
+        BARRIER_DOOR_OPEN_EVENT = 10,
+        BARRIER_DOOR_CLOSE_EVENT = 11,
+        BARRIER_STATUS_ON_EVENT = 12,
+        BARRIER_STATUS_OFF_EVENT = 13
     };
 
     static DIO* getInstance();
@@ -30,6 +37,13 @@ public:
     int FnGetOpenBarrier() const;
     void FnSetLCDBacklight(int value);
     int FnGetLCDBacklight() const;
+    int FnGetLoopAStatus() const;
+    int FnGetLoopBStatus() const;
+    int FnGetLoopCStatus() const;
+    int FnGetIntercomStatus() const;
+    int FnGetStationDoorStatus() const;
+    int FnGetBarrierDoorStatus() const;
+    int FnGetBarrierStatusStatus() const;
 
     /**
      * Singleton DIO should not be cloneable.

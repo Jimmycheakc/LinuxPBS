@@ -2,6 +2,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include "antenna.h"
 #include "boost/asio.hpp"
 #include "crc.h"
 #include "common.h"
@@ -56,7 +57,7 @@ void Test::FnTest(char* argv)
     //event_queue_test();
     //lcsc_reader_test();
     //db_test();
-    //dio_test();
+    dio_test();
 }
 
 void Test::db_test()
@@ -668,7 +669,8 @@ void Test::led226_test()
 void print(const boost::system::error_code& /*e*/)
 {
     Logger::getInstance()->FnLog("Hello World");
-    LCSCReader::getInstance()->FnLCSCReaderStopRead();
+    Antenna::getInstance()->FnAntennaStopRead();
+    //LCSCReader::getInstance()->FnLCSCReaderStopRead();
 }
 
 void Test::antenna_test()
@@ -678,15 +680,22 @@ void Test::antenna_test()
     IniParser::getInstance()->FnReadIniFile();
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
     EventManager::getInstance()->FnStartEventThread();
-    Antenna::getInstance()->FnAntennaInit(19200, "/dev/ttyCH9344USB5");
-    Antenna::getInstance()->FnAntennaSendReadIUCmd();
+    Antenna::getInstance()->FnAntennaInit(io_context, 19200, "/dev/ttyCH9344USB5");
     
     std::cout << "start asynchronous operation." << std::endl;
 
     boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(5));
     t.async_wait(print);
 
-    io_context.run();
+    // Create a thread to run io_context
+    std::thread ioThread([&io_context]() {
+        io_context.run();
+    });
+
+    Antenna::getInstance()->FnAntennaSendReadIUCmd();
+
+    usleep(1000000);
+    ioThread.join();
     EventManager::getInstance()->FnStopEventThread();
 }
 
@@ -708,7 +717,7 @@ void Test::lcsc_reader_test()
     IniParser::getInstance()->FnReadIniFile();
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
     EventManager::getInstance()->FnStartEventThread();
-    LCSCReader::getInstance()->FnLCSCReaderInit(115200, "/dev/ttyCH9344USB4");
+    LCSCReader::getInstance()->FnLCSCReaderInit(io_context, 115200, "/dev/ttyCH9344USB4");
     /*
     LCSCReader::getInstance()->FnSendGetStatusCmd();
     std::cout << "Serial number : " << LCSCReader::getInstance()->FnGetSerialNumber() << std::endl;
@@ -754,20 +763,21 @@ void Test::lcsc_reader_test()
 
     std::cout << "start asynchronous operation." << std::endl;
 
-    boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(5));
+    boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(10));
     t.async_wait(print);
 
     // Create a thread to run io_context
-    std::thread ioThread([&io_context]() {
-        io_context.run();
-    });
+    //std::thread ioThread([&io_context]() {
+    //    io_context.run();
+    //});
 
     LCSCReader::getInstance()->FnSendGetCardIDCmd();
-    std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
-    std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
+    LCSCReader::getInstance()->FnSendGetCardBalance();
+    //std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
+    //std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
 
-    //io_context.run();
-    ioThread.join();
+    io_context.run();
+    //ioThread.join();
     EventManager::getInstance()->FnStopEventThread();
 }
 
@@ -785,6 +795,7 @@ void Test::dio_test()
     DIO::getInstance()->FnSetOpenBarrier(1);
     std::cout << "Set barrier status 1" << std::endl;
     std::cout << "Get barrier status : " << DIO::getInstance()->FnGetOpenBarrier() << std::endl;
+    usleep(1000000);
     DIO::getInstance()->FnSetOpenBarrier(0);
     std::cout << "Set barrier status 0" << std::endl;
     std::cout << "Get barrier status : " << DIO::getInstance()->FnGetOpenBarrier() << std::endl;
@@ -793,6 +804,7 @@ void Test::dio_test()
     DIO::getInstance()->FnSetLCDBacklight(1);
     std::cout << "Set LCD backlight status 1" << std::endl;
     std::cout << "Get LCD backlight status : " << DIO::getInstance()->FnGetLCDBacklight() << std::endl;
+    usleep(1000000);
     DIO::getInstance()->FnSetLCDBacklight(0);
     std::cout << "Set LCD backlight status 0" << std::endl;
     std::cout << "Get LCD backlight status : " << DIO::getInstance()->FnGetLCDBacklight() << std::endl;

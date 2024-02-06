@@ -836,6 +836,7 @@ void db::downloadledmessage()
 	int r=-1;
 	string msg_id;
 	string msg_body;
+	string msg_status;
 	std::string sqlStmt;
 	int w=-1;
 	std::stringstream dbss;
@@ -880,9 +881,10 @@ void db::downloadledmessage()
 			//     std::cout<<"item["<<k<< "]= " << selResult[j].GetDataItem(k)<<std::endl;                
 			// }  
 			msg_id = selResult[j].GetDataItem(0);
-			msg_body = selResult[j].GetDataItem(2);      
+			msg_body = selResult[j].GetDataItem(2); 
+			msg_status =  selResult[j].GetDataItem(3);    
 			
-			w=writeledmessage2local(msg_id,msg_body);
+			w=writeledmessage2local(msg_id,msg_body,msg_status);
 			
 			if (w==0) 
 			{
@@ -918,7 +920,7 @@ void db::downloadledmessage()
 
 }
 
-int db::writeledmessage2local(string m_id,string m_body)
+int db::writeledmessage2local(string m_id,string m_body, string m_status)
 {
 
 	int r=-1;// success flag
@@ -939,6 +941,7 @@ int db::writeledmessage2local(string m_id,string m_body)
 			//update param records
 			sqlStmt="Update message_mst SET ";
 			sqlStmt= sqlStmt+ "msg_body='" + m_body + "'";
+			sqlStmt=sqlStmt + ", m_status= '" + m_status + "'";
 			sqlStmt=sqlStmt + " Where msg_id= '" + m_id + "'";
 			
 			r=localdb->SQLExecutNoneQuery (sqlStmt);
@@ -961,10 +964,11 @@ int db::writeledmessage2local(string m_id,string m_body)
 		else
 		{
 			sqlStmt="INSERT INTO message_mst";
-			sqlStmt=sqlStmt+ " (msg_id,msg_body) ";
+			sqlStmt=sqlStmt+ " (msg_id,msg_body,m_status) ";
 			
 			sqlStmt=sqlStmt+ " VALUES ('" +m_id+ "'";
-			sqlStmt=sqlStmt+ ",'" + m_body + "')";
+			sqlStmt=sqlStmt+ ",'" + m_body + "'";
+			sqlStmt=sqlStmt+ ",'" + m_status + "')";
 
 			r=localdb->SQLExecutNoneQuery (sqlStmt);
 
@@ -1412,6 +1416,1481 @@ DBError db::loadstationsetup()
 	return iNoData; 
 };
 
+DBError db::loadParam()
+{
+	int r = -1;
+	vector<ReaderItem> selResult;
+
+	r = localdb->SQLSelect("SELECT ParamName, ParamValue FROM Param_mst", &selResult, true);
+	if (r != 0)
+	{
+		//m_log->WriteAndPrint("Get Station Setup: fail");
+		return iLocalFail;
+	}
+
+	if (selResult.size()>0)
+	{
+		for (auto &readerItem : selResult)
+		{
+			if (readerItem.getDataSize() == 2)
+			{
+				if (readerItem.GetDataItem(0) == "DBName")
+				{
+					operation::getInstance()->tParas.gsCentralDBName = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DBServer")
+				{
+					operation::getInstance()->tParas.gsCentralDBServer = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CommPortAntenna")
+				{
+					operation::getInstance()->tParas.giCommPortAntenna = std::stoi(readerItem.GetDataItem(1));
+				}
+
+				if (readerItem.GetDataItem(0) == "commportlcsc")
+				{
+					operation::getInstance()->tParas.giCommPortLCSC = std::stoi(readerItem.GetDataItem(1));
+				}
+
+				if (readerItem.GetDataItem(0) == "locallcsc")
+				{
+				    operation::getInstance()->tParas.gsLocalLCSC = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "remotelcsc")
+				{
+				    operation::getInstance()->tParas.gsRemoteLCSC = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "remotelcscback")
+				{
+				    operation::getInstance()->tParas.gsRemoteLCSCBack = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "CSCRcdfFolder")
+				{
+				    operation::getInstance()->tParas.gsCSCRcdfFolder = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "CSCRcdackFolder")
+				{
+				    operation::getInstance()->tParas.gsCSCRcdackFolder = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "CPOID")
+				{
+				    operation::getInstance()->tParas.gsCPOID = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "CPID")
+				{
+				    operation::getInstance()->tParas.gsCPID = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "CommPortLED")
+				{
+				    operation::getInstance()->tParas.giCommPortLED = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "HasMCycle")
+				{
+				    operation::getInstance()->tParas.giHasMCycle = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "TicketSiteID")
+				{
+				    operation::getInstance()->tParas.giTicketSiteID = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "DataKeepDays")
+				{
+				    operation::getInstance()->tParas.giDataKeepDays = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "BarrierPulse")
+				{
+				    operation::getInstance()->tParas.gsBarrierPulse = std::stof(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "AntMaxRetry")
+				{
+				    operation::getInstance()->tParas.giAntMaxRetry = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "AntMinOKTimes")
+				{
+				    operation::getInstance()->tParas.giAntMinOKTimes = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "AntInqTO")
+				{
+				    operation::getInstance()->tParas.giAntInqTO = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "AntiIURepetition")
+				{
+				    operation::getInstance()->tParas.gbAntiIURepetition = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+				}
+
+                if (readerItem.GetDataItem(0) == "commportled401")
+				{
+				    operation::getInstance()->tParas.giCommportLED401 = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "IsHDBSite")
+				{
+				    operation::getInstance()->tParas.giIsHDBSite = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "allowedholdertype")
+				{
+				    operation::getInstance()->tParas.gsAllowedHolderType = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "LEDMaxChar")
+				{
+				    operation::getInstance()->tParas.giLEDMaxChar = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "AlwaysTryOnline")
+				{
+				    operation::getInstance()->tParas.gbAlwaysTryOnline = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+				}
+
+                if (readerItem.GetDataItem(0) == "AutoDebitNoEntry")
+				{
+				    operation::getInstance()->tParas.gbAutoDebitNoEntry = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+				}
+
+                if (readerItem.GetDataItem(0) == "LoopAHangTime")
+				{
+				    operation::getInstance()->tParas.giLoopAHangTime = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "OperationTO")
+				{
+				    operation::getInstance()->tParas.giOperationTO = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "FullAction")
+				{
+				    operation::getInstance()->tParas.giFullAction = static_cast<eFullAction>(std::stoi(readerItem.GetDataItem(1)));
+				}
+
+                if (readerItem.GetDataItem(0) == "barrieropentoolongtime")
+				{
+				    operation::getInstance()->tParas.giBarrierOpenTooLongTime = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "bitbarrierarmbroken")
+				{
+				    operation::getInstance()->tParas.giBitBarrierArmBroken = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "mccontrolaction")
+				{
+				    operation::getInstance()->tParas.giMCControlAction = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "LogBackFolder")
+				{
+				    operation::getInstance()->tParas.gsLogBackFolder = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "LogKeepDays")
+				{
+				    operation::getInstance()->tParas.giLogKeepDays = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "DBBackupFolder")
+				{
+				    operation::getInstance()->tParas.gsDBBackupFolder = readerItem.GetDataItem(1);
+				}
+
+                if (readerItem.GetDataItem(0) == "maxsendofflineno")
+				{
+				    operation::getInstance()->tParas.giMaxSendOfflineNo = std::stoi(readerItem.GetDataItem(1));
+				}
+
+                if (readerItem.GetDataItem(0) == "maxlocaldbsize")
+				{
+				    operation::getInstance()->tParas.glMaxLocalDBSize = std::stol(readerItem.GetDataItem(1));
+				}
+			}
+		}
+        return iDBSuccess;
+	}
+
+	return iNoData;
+}
 
 
+DBError db::loadvehicletype()
+{
+	int r = -1;
+	vector<ReaderItem> selResult;
+
+	r = localdb->SQLSelect("SELECT IUCode, TransType FROM Vehicle_type", &selResult, true);
+	if (r != 0)
+	{
+		//m_log->WriteAndPrint("Get Station Setup: fail");
+		return iLocalFail;
+	}
+
+	if (selResult.size()>0)
+	{
+		for (auto &readerItem : selResult)
+		{
+			if (readerItem.getDataSize() == 2)
+			{
+				operation::getInstance()->tVType.push_back({std::stoi(readerItem.GetDataItem(0)), std::stoi(readerItem.GetDataItem(1))});
+			}
+		}
+		return iDBSuccess;
+	}
+	return iNoData;
+}
+
+int db::FnGetVehicleType(std::string IUCode)
+{
+	int ret = -1;
+
+	for (auto &item : operation::getInstance()->tVType)
+	{
+		if (item.iIUCode == std::stoi(IUCode))
+		{
+			ret = item.iType;
+			break;
+		}
+	}
+
+	return ret;
+}
+
+DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
+{
+	if (selResult.size()>0)
+	{
+		for (auto &readerItem : selResult)
+		{
+			if (readerItem.getDataSize() == 2)
+			{
+				if (readerItem.GetDataItem(0) == "AltDefaultLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "AltDefaultLED2")
+				{
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED2[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED2[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "AltDefaultLED3")
+				{
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED3[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED3[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "AltDefaultLED4")
+				{
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED4[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED4[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ATMCancelPin")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CATMCancelPin")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ATMDebitFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CATMDebitFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ATMDebitOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CATMDebitOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "authorizedvehicle")
+				{
+					operation::getInstance()->tMsg.MsgEntry_authorizedvehicle[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_authorizedvehicle[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "Card4Complimentary")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCard4Complimentary")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CardDebitDB")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardDebitDB")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CardDebitFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardDebitFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CardReadingError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardReadingError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CardReadingError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardReadingError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardReadingError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_CardReadingError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CardSoldOut")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardSoldOut")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CardTaken")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardTaken[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CardTaken[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardTaken")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CardTaken[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_CardTaken[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CarFullLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CarFullLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CarFullLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "CarParkFull2LED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_CarParkFull2LED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_CarParkFull2LED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DBError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DBError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DBError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDBError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DBError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DBError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DefaultIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DefaultIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDefaultIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultIU[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DefaultIU[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DefaultLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDefaultLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DefaultLED2")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED2[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDefaultLED2")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DefaultMsg2LED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultMsg2LED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DefaultMsg2LED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DefaultMsgLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DefaultMsgLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DefaultMsgLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DispenseCardFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDispenseCardFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DispenseCardOk")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDispenseCardOk")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DispenserError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispenserError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DispenserError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDispenserError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispenserError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DispenserError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "DispensingCard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispensingCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_DispensingCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDispensingCard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_DispensingCard[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_DispensingCard[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "EenhancedMCParking")
+				{
+					operation::getInstance()->tMsg.MsgEntry_EenhancedMCParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_EenhancedMCParking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ESeasonWithinAllowance")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CESeasonWithinAllowance")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ESPT3Parking")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESPT3Parking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ESPT3Parking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ESSCancel")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESSCancel[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ESSCancel[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CESSCancel")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESSCancel[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ESSCancel[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ESSOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESSOK[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ESSOK[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CESSOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ESSOK[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ESSOK[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "EVIPHolderParking")
+				{
+					operation::getInstance()->tMsg.MsgEntry_EVIPHolderParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_EVIPHolderParking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ExpiringSeason")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CExpiringSeason")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "FlashLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_FlashLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_FlashLED[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CFlashLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_FlashLED[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_FlashLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "FullLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_FullLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_FullLED[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CFullLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_FullLED[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_FullLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "Idle")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Idle[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_Idle[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CIdle")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Idle[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_Idle[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "InsertATM")
+				{
+					operation::getInstance()->tMsg.MsgEntry_InsertATM[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_InsertATM[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CInsertATM")
+				{
+					operation::getInstance()->tMsg.MsgEntry_InsertATM[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_InsertATM[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "InsertCashcard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CInsertCashcard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "IUProblem")
+				{
+					operation::getInstance()->tMsg.MsgEntry_IUProblem[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_IUProblem[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CIUProblem")
+				{
+					operation::getInstance()->tMsg.MsgEntry_IUProblem[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_IUProblem[1] = readerItem.GetDataItem(1);
+				}
+				
+				if (readerItem.GetDataItem(0) == "KeyinLPN")
+				{
+					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CKeyinLPN")
+				{
+					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "KeyInPwd")
+				{
+					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CKeyInPwd")
+				{
+					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "LockStation")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LockStation[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_LockStation[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CLockStation")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LockStation[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_LockStation[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "LoopA")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LoopA[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_LoopA[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CLoopA")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LoopA[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_LoopA[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "LoopAFull")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LoopAFull[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_LoopAFull[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CLoopAFull")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LoopAFull[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_LoopAFull[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "LorryFullLED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LorryFullLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_LorryFullLED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "LotAdjustmentMsg")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LotAdjustmentMsg[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_LotAdjustmentMsg[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "LowBal")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LowBal[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_LowBal[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CLowBal")
+				{
+					operation::getInstance()->tMsg.MsgEntry_LowBal[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_LowBal[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "MaxPinRetried")
+				{
+					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CMaxPinRetried")
+				{
+					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "NoCard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_NoCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CNoCard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoCard[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_NoCard[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "NoCHU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoCHU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_NoCHU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CNoCHU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoCHU[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_NoCHU[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "NoIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_NoIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CNoIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoIU[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_NoIU[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "NoNightParking2LED")
+				{
+					operation::getInstance()->tMsg.MsgEntry_NoNightParking2LED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_NoNightParking2LED[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "Offline")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Offline[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_Offline[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "COffline")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Offline[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_Offline[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "PrinterError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_PrinterError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_PrinterError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CPrinterError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_PrinterError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_PrinterError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "PrintingReceipt")
+				{
+					operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CPrintingReceipt")
+				{
+					operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "Processing")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Processing[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_Processing[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CProcessing")
+				{
+					operation::getInstance()->tMsg.MsgEntry_Processing[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_Processing[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ReaderCommError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ReaderCommError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CReaderCommError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ReaderError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ReaderError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ReaderError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CReaderError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ReaderError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ReaderError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ReKeyInPWD")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CReKeyInPWD")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SameLastIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SameLastIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SameLastIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSameLastIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SameLastIU[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SameLastIU[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ScanEntryTicket")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CScanEntryTicket")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ScanValTicket")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ScanValTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CScanValTicket")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonAsHourly")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonAsHourly")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonBlocked")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonBlocked")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonExpired")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonExpired[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonExpired")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonInvalid")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonInvalid")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonMultiFound")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonMultiFound")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonNotFound")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonNotFound")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonNotStart")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonNotStart")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonNotValid")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonNotValid")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonOnly")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonOnly[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonOnly")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonPassback")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonPassback")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonRenewFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonRenewFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonRenewOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonRenewOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonTerminated")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonTerminated")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SelectTopupValue")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSelectTopupValue")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SetPeriod")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SetPeriod[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SetPeriod[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSetPeriod")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SetPeriod[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SetPeriod[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "SystemError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SystemError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_SystemError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSystemError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_SystemError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_SystemError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TakeATM")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TakeATM[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TakeATM[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTakeATM")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TakeATM[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TakeATM[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TakeReceipt")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTakeReceipt")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TakeTicket")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TakeTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TakeTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTakeTicket")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TakeTicket[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TakeTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TicketByCashier")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTicketByCashier")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TicketLocked")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TicketLocked[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TicketLocked[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTicketLocked")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TicketLocked[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TicketLocked[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TopupExceedMax")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTopupExceedMax")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TopupFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TopupFail[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TopupFail[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTopupFail")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TopupFail[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TopupFail[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "TopupOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TopupOK[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_TopupOK[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTopupOK")
+				{
+					operation::getInstance()->tMsg.MsgEntry_TopupOK[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_TopupOK[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "ValidSeason")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ValidSeason[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CValidSeason")
+				{
+					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMCommError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMCommError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMCommError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMCommError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMCommError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMCommError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMError")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMError[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMError[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMHostProblem")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMHostProblem")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMLineProblem")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMLineProblem")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMLogon")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMLogon[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMLogon[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMLogon")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMLogon[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMLogon[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMLogonCard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMLogonCard")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VMTimeout")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMTimeout[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VMTimeout[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVMTimeout")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VMTimeout[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VMTimeout[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "VVIP")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VVIP[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_VVIP[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CVVIP")
+				{
+					operation::getInstance()->tMsg.MsgEntry_VVIP[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_VVIP[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "WholeDayParking")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CWholeDayParking")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "WithIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WithIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_WithIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CWithIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WithIU[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_WithIU[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "WrongATM")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WrongATM[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_WrongATM[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CWrongATM")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WrongATM[1].clear();
+					operation::getInstance()->tMsg.MsgEntry_WrongATM[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "E1enhancedMCParking")
+				{
+					operation::getInstance()->tMsg.MsgEntry_E1enhancedMCParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_E1enhancedMCParking[1] = readerItem.GetDataItem(1);
+				}
+			}
+		}
+		return iDBSuccess;
+	}
+	return iNoData;
+}
+
+DBError db::loadmessage()
+{
+	int r = -1;
+	DBError retErr;
+	vector<ReaderItem> ledSelResult;
+	vector<ReaderItem> lcdSelResult;
+
+	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status = 1 or m_status = 4 or m_status = 5", &ledSelResult, true);
+	if (r != 0)
+	{
+		//m_log->WriteAndPrint("Get Station Setup: fail");
+		return iLocalFail;
+	}
+
+	retErr = loadEntrymessage(ledSelResult);
+	if (retErr == DBError::iNoData)
+	{
+		return retErr;
+	}
+
+	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status = 11 or m_status = 14 or m_status = 15", &lcdSelResult, true);
+	if (r != 0)
+	{
+		//m_log->WriteAndPrint("Get Station Setup: fail");
+		return iLocalFail;
+	}
+
+	retErr = loadEntrymessage(lcdSelResult);
+	if (retErr == DBError::iNoData)
+	{
+		return retErr;
+	}
+
+	return retErr;
+}
 

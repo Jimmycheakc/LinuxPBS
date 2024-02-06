@@ -120,7 +120,7 @@ public:
     static const int RX_BUF_SIZE = 1024;
 
     static LCSCReader* getInstance();
-    void FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName);
+    void FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
     void FnLCSCReaderStopRead();
     void FnSendGetStatusCmd();
     void FnSendGetLoginCmd();
@@ -132,6 +132,7 @@ public:
     void FnSendUploadCFGFile(const std::string& path);
     void FnSendUploadCILFile(const std::string& path);
     void FnSendUploadBLFile(const std::string& path);
+    bool FnGetIsCmdExecuting() const;
 
     std::string FnGetSerialNumber();
     int FnGetReaderMode();
@@ -162,10 +163,14 @@ public:
 
 private:
     static LCSCReader* lcscReader_;
+    boost::asio::io_context* pMainIOContext_;
+    std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardIDCmdTimer_;
+    std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardBalanceCmdTimer_;
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     std::atomic<bool> continueReadFlag_;
+    std::atomic<bool> isCmdExecuting_;
     std::string logFileName_;
     int lcscCmdTimeoutInMillisec_;
     int lcscCmdMaxRetry_;
@@ -202,7 +207,9 @@ private:
     std::vector<unsigned char> loadLogin2();
     std::vector<unsigned char> loadLogout();
     std::vector<unsigned char> loadGetCardID();
+    void handleGetCardIDTimerExpiration();
     std::vector<unsigned char> loadGetCardBalance();
+    void handleGetCardBalanceTimerExpiration();
     std::vector<unsigned char> loadGetTime();
     std::vector<unsigned char> loadSetTime();
     int uploadCFGSub(const std::vector<unsigned char>& data);

@@ -43,7 +43,8 @@ LCSCReader::LCSCReader()
     card_application_num_(""),
     card_balance_(0.00),
     reader_time_(""),
-    continueReadFlag_(false)
+    continueReadFlag_(false),
+    isCmdExecuting_(false)
 {
     memset(txBuff, 0, sizeof(txBuff));
     memset(rxBuff, 0, sizeof(rxBuff));
@@ -66,8 +67,11 @@ LCSCReader* LCSCReader::getInstance()
     return lcscReader_;
 }
 
-void LCSCReader::FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName)
+void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
+    pMainIOContext_ = &mainIOContext;
+    periodicSendGetCardIDCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
+    periodicSendGetCardBalanceCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
     pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
@@ -119,28 +123,68 @@ void LCSCReader::FnSendGetLogoutCmd()
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderLogout", ret);
 }
 
-void LCSCReader::FnSendGetCardIDCmd()
+void LCSCReader::handleGetCardIDTimerExpiration()
 {
     int ret;
-    continueReadFlag_.store(true);
-    do
-    {
-        ret = lcscCmd(LcscCmd::GET_CARD_ID);
-    } while(ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load());
+    ret = lcscCmd(LcscCmd::GET_CARD_ID);
 
-    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", ret);
+    if (ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load())
+    {
+        periodicSendGetCardIDCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
+        periodicSendGetCardIDCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                if (!error) {
+                    handleGetCardIDTimerExpiration();
+                }
+        });
+    }
+    else
+    {
+        continueReadFlag_.store(false);
+        EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", ret);
+    }
+}
+
+void LCSCReader::FnSendGetCardIDCmd()
+{
+    continueReadFlag_.store(true);
+    periodicSendGetCardIDCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
+    periodicSendGetCardIDCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+            if (!error) {
+                handleGetCardIDTimerExpiration();
+            }
+    });
+}
+
+void LCSCReader::handleGetCardBalanceTimerExpiration()
+{
+    int ret;
+    ret = lcscCmd(LcscCmd::CARD_BALANCE);
+
+    if (ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load())
+    {
+        periodicSendGetCardBalanceCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
+        periodicSendGetCardBalanceCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                if (!error) {
+                    handleGetCardBalanceTimerExpiration();
+                }
+        });
+    }
+    else
+    {
+        continueReadFlag_.store(false);
+        EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", ret);
+    }
 }
 
 void LCSCReader::FnSendGetCardBalance()
 {
-    int ret;
     continueReadFlag_.store(true);
-    do
-    {
-        ret = lcscCmd(LcscCmd::CARD_BALANCE);
-    } while (ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load());
-
-    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", ret);
+    periodicSendGetCardBalanceCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
+    periodicSendGetCardBalanceCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+            if (!error) {
+                handleGetCardBalanceTimerExpiration();
+            }
+    });
 }
 
 void LCSCReader::FnSendGetTime()
@@ -673,93 +717,108 @@ std::string LCSCReader::lcscCmdToString(LCSCReader::LcscCmd cmd)
     }
 }
 
+bool LCSCReader::FnGetIsCmdExecuting() const
+{
+    return isCmdExecuting_.load();
+}
+
 int LCSCReader::lcscCmd(LCSCReader::LcscCmd cmd)
 {
     int ret;
-    std::stringstream ss;
-    ss << __func__ <<  " Command : " << lcscCmdToString(cmd);
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
-
-    if (!pSerialPort_->is_open())
+    if (!isCmdExecuting_.exchange(true))
     {
-        return -1;
-    }
+        std::stringstream ss;
+        ss << __func__ <<  " Command : " << lcscCmdToString(cmd);
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 
-    std::vector<unsigned char> dataBuffer;
+        if (!pSerialPort_->is_open())
+        {
+            return -1;
+        }
 
-    switch (cmd)
-    {
-        case LcscCmd::GET_STATUS_CMD:
-        {
-            dataBuffer = loadGetStatus();
-            break;
-        }
-        case LcscCmd::LOGIN_1:
-        {
-            dataBuffer = loadLogin1();
-            break;
-        }
-        case LcscCmd::LOGIN_2:
-        {
-            dataBuffer = loadLogin2();
-            break;
-        }
-        case LcscCmd::LOGOUT:
-        {
-            dataBuffer = loadLogout();
-            break;
-        }
-        case LcscCmd::GET_CARD_ID:
-        {
-            dataBuffer = loadGetCardID();
-            break;
-        }
-        case LcscCmd::CARD_BALANCE:
-        {
-            dataBuffer = loadGetCardBalance();
-            break;
-        }
-        case LcscCmd::GET_TIME:
-        {
-            dataBuffer = loadGetTime();
-            break;
-        }
-        case LcscCmd::SET_TIME:
-        {
-            dataBuffer = loadSetTime();
-            break;
-        }
-        default:
-        {
-            std::stringstream ss;
-            ss << __func__ << " : Command not found.";
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+        std::vector<unsigned char> dataBuffer;
 
-            return static_cast<int>(mCSCEvents::sWrongCmd);
-        }
-    }
-
-    bool cmdSendSuccess = lcscCmdSend(dataBuffer);
-
-    if (cmdSendSuccess)
-    {
-        LCSCReader::ReadResult result;
-        result.data = {};
-        result.success = false;
-
-        result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
-
-        if (result.success)
+        switch (cmd)
         {
-            ret = static_cast<int>(lcscHandleCmdResponse(cmd, result.data));
+            case LcscCmd::GET_STATUS_CMD:
+            {
+                dataBuffer = loadGetStatus();
+                break;
+            }
+            case LcscCmd::LOGIN_1:
+            {
+                dataBuffer = loadLogin1();
+                break;
+            }
+            case LcscCmd::LOGIN_2:
+            {
+                dataBuffer = loadLogin2();
+                break;
+            }
+            case LcscCmd::LOGOUT:
+            {
+                dataBuffer = loadLogout();
+                break;
+            }
+            case LcscCmd::GET_CARD_ID:
+            {
+                dataBuffer = loadGetCardID();
+                break;
+            }
+            case LcscCmd::CARD_BALANCE:
+            {
+                dataBuffer = loadGetCardBalance();
+                break;
+            }
+            case LcscCmd::GET_TIME:
+            {
+                dataBuffer = loadGetTime();
+                break;
+            }
+            case LcscCmd::SET_TIME:
+            {
+                dataBuffer = loadSetTime();
+                break;
+            }
+            default:
+            {
+                std::stringstream ss;
+                ss << __func__ << " : Command not found.";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+                return static_cast<int>(mCSCEvents::sWrongCmd);
+            }
+        }
+
+        bool cmdSendSuccess = lcscCmdSend(dataBuffer);
+
+        if (cmdSendSuccess)
+        {
+            LCSCReader::ReadResult result;
+            result.data = {};
+            result.success = false;
+
+            result = lcscReadWithTimeout(lcscCmdTimeoutInMillisec_);
+
+            if (result.success)
+            {
+                ret = static_cast<int>(lcscHandleCmdResponse(cmd, result.data));
+            }
+            else
+            {
+                ret = static_cast<int>(mCSCEvents::sTimeout);
+            }
         }
         else
         {
-            ret = static_cast<int>(mCSCEvents::sTimeout);
+            ret = static_cast<int>(mCSCEvents::sSendcmdfail);
         }
+
+        isCmdExecuting_.store(false);
     }
     else
     {
+        Logger::getInstance()->FnLog("Cmd cannot send, there is already one Cmd executing.", logFileName_, "LCSC");
         ret = static_cast<int>(mCSCEvents::sSendcmdfail);
     }
 

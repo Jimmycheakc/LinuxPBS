@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <sstream>
+#include "antenna.h"
 #include "dio.h"
 #include "event_handler.h"
 #include "lcsc.h"
@@ -415,24 +416,44 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
 
         switch (dioEvent)
         {
-            case DIO::DIO_EVENT::LOOP_A_EVENT:
+            case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_EVENT");
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
                 break;
             }
-            case DIO::DIO_EVENT::LOOP_B_EVENT:
+            case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_EVENT");
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
                 break;
             }
-            case DIO::DIO_EVENT::LOOP_C_EVENT:
+            case DIO::DIO_EVENT::LOOP_B_ON_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_EVENT");
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_ON_EVENT");
                 break;
             }
-            case DIO::DIO_EVENT::INTERCOM_EVENT:
+            case DIO::DIO_EVENT::LOOP_B_OFF_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::INTERCOM_EVENT");
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_OFF_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_ON_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_OFF_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::INTERCOM_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::INTERCOM_ON_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::INTERCOM_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::INTERCOM_OFF_EVENT");
                 break;
             }
             case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
@@ -440,14 +461,29 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT");
                 break;
             }
+            case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT");
+                break;
+            }
             case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT");
                 break;
             }
-            case DIO::DIO_EVENT::BARRIER_STATUS_EVENT:
+            case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_EVENT");
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT");
                 break;
             }
             default:

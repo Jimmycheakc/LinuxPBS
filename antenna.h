@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -69,6 +70,7 @@ public:
 
     enum class AntCmdRetCode
     {
+        AntSend_Failed      = -3,
         AntRecv_CmdNotFound = -2,
         AntRecv_NoResp      = -1,
         AntRecv_ACK         = 1,
@@ -96,8 +98,10 @@ public:
     };
 
     static Antenna* getInstance();
-    void FnAntennaInit(unsigned int baudRate, const std::string& comPortName);
+    void FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
     void FnAntennaSendReadIUCmd();
+    void FnAntennaStopRead();
+    bool FnGetIsCmdExecuting() const;
 
     /**
      * Singleton Antenna should not be cloneable.
@@ -112,10 +116,15 @@ public:
 private:
 
     boost::mutex mutex_;
+    boost::asio::io_context* pMainIOContext_;
     static Antenna* antenna_;
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
+    std::unique_ptr<boost::asio::deadline_timer> periodicSendReadIUCmdTimer_;
+    std::string logFileName_;
+    std::atomic<bool> continueReadFlag_;
+    std::atomic<bool> isCmdExecuting_;
     int antennaCmdTimeoutInMillisec_;
     int antennaCmdMaxRetry_;
     int antennaIUCmdMinOKtimes_;
@@ -152,8 +161,11 @@ private:
     std::vector<unsigned char> loadReqIOStatus(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo);
     std::vector<unsigned char> loadSetOutput(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo, unsigned char maskIO, unsigned char statusOfIO);
     std::vector<unsigned char> loadForceGetUINo(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo);
+    void handleReadIUTimerExpiration();
     void antennaCmdSend(const std::vector<unsigned char>& dataBuff);
     ReadResult antennaReadWithTimeout(int milliseconds);
+    void resetRxBuffer();
+    bool responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred);
     AntCmdRetCode antennaHandleCmdResponse(AntCmdID cmd, const std::vector<char>& dataBuff);
     std::string antennaCmdIDToString(AntCmdID cmd);
     unsigned int CRC16R_Calculate(unsigned char* s, unsigned char len, unsigned int crc);

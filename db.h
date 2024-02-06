@@ -45,7 +45,7 @@ public:
 
 	int local_isvalidseason(string L_sSeasonNo);
 
-    DBError RefreshTypeinRAM(std::list<tVType> *vlist);
+    DBError RefreshTypeinRAM(std::list<tVType_Struct> *vlist);
 
 	int isvalidseason(string m_sSeasonNo);
     void synccentraltime ();
@@ -54,7 +54,7 @@ public:
     void downloadvehicletype();
     int writevehicletype2local(string iucode,string iutype);
     void downloadledmessage();
-    int writeledmessage2local(string m_id,string m_body);
+    int writeledmessage2local(string m_id,string m_body, string m_status);
     void downloadparameter();
     int writeparameter2local(string name,string value);
     void downloadstationsetup();
@@ -69,6 +69,8 @@ public:
 	 DBError loadstationsetup();
      DBError loadvehicletype();
 
+    int FnGetVehicleType(std::string IUCode);
+
 private:
 
     string localConnStr;
@@ -80,7 +82,8 @@ private:
     template <typename T>
         string ToString(T a);
 
-    void insertToVTypeList(tVType v, std::list<tVType> *tmpList);
+    void insertToVTypeList(tVType_Struct v, std::list<tVType_Struct> *tmpList);
+    DBError loadEntrymessage(std::vector<ReaderItem>& selResult);
 
     
     int season_update_flag;

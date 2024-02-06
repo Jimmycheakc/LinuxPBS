@@ -282,21 +282,18 @@ struct  tProcess_Struct
 
 
 
-class tVType
+struct tVType_Struct
 {
-
-public:
-	string iIUCode;
+	int iIUCode;
 	int iType;
-
 };
 
 
 
 struct  tParas_Struct
 {
-	string dbname;
-	string dbserver;
+	string gsCentralDBName;
+	string gsCentralDBServer;
 	int giCommPortAntenna;
 	int giCommPortLCSC;
 	string gsLocalLCSC;
@@ -306,10 +303,8 @@ struct  tParas_Struct
 	string gsCSCRcdackFolder;
 	string gsCPOID;
 	string gsCPID;
-	int giUploadBLTO;
+	int giUploadBLTO;	//not in current central DB
 	int giCommPortLED;
-	string gsDBServer;
-	string gsCentralDBName;
 	int giHasMCycle;
 	int giTicketSiteID;
 
@@ -341,7 +336,7 @@ struct  tParas_Struct
 	int giBitBarrierArmBroken;
 	int giMCControlAction;
 	
-	bool gbLockBarrier;
+	bool gbLockBarrier;	//not in current central DB
 
 	string gsLogBackFolder;
 	int giLogKeepDays;
@@ -349,18 +344,18 @@ struct  tParas_Struct
 	int giMaxSendOfflineNo;
 	long glMaxLocalDBSize;
 
-	string lprip_front;
-	string lprip_rear;
-	int wait_lpr_notime;
-	string nexpa_dbserver;
-	string nexpa_dbname;
-	int sid;
+	string lprip_front; //not in current central DB
+	string lprip_rear; //not in current central DB
+	int wait_lpr_notime; //not in current central DB
+	string nexpa_dbserver; //not in current central DB
+	string nexpa_dbname; //not in current central DB
+	int sid;	//not in current central DB
 
-	int taxi_control;
-	int local_udpport;
-	int remote_udpport;
-	int not_allow_hourly;
-	int cepas_enable;
+	int taxi_control; //not in current central DB
+	int local_udpport; //not in current central DB
+	int remote_udpport; //not in current central DB
+	int not_allow_hourly; //not in current central DB
+	int cepas_enable; //not in current central DB
 
 	//int giCommPortPrinter;
 	//int giCommPortLED2;
@@ -464,6 +459,108 @@ struct  tParas_Struct
 
 struct  tMsg_Struct
 {
+	// Message Entry - index 0 : LED, index 1 : LCD
+	std::string MsgEntry_AltDefaultLED[2];
+	std::string MsgEntry_AltDefaultLED2[2];
+	std::string MsgEntry_AltDefaultLED3[2];
+	std::string MsgEntry_AltDefaultLED4[2];
+	std::string MsgEntry_ATMCancelPin[2];
+	std::string MsgEntry_ATMDebitFail[2];
+	std::string MsgEntry_ATMDebitOK[2];
+	std::string MsgEntry_authorizedvehicle[2];
+	std::string MsgEntry_Card4Complimentary[2];
+	std::string MsgEntry_CardDebitDB[2];
+	std::string MsgEntry_CardDebitFail[2];
+	std::string MsgEntry_CardReadingError[2];
+	std::string MsgEntry_CardSoldOut[2];
+	std::string MsgEntry_CardTaken[2];
+	std::string MsgEntry_CarFullLED[2];
+	std::string MsgEntry_CarParkFull2LED[2];
+	std::string MsgEntry_DBError[2];
+	std::string MsgEntry_DefaultIU[2];
+	std::string MsgEntry_DefaultLED[2];
+	std::string MsgEntry_DefaultLED2[2];
+	std::string MsgEntry_DefaultMsg2LED[2];
+	std::string MsgEntry_DefaultMsgLED[2];
+	std::string MsgEntry_DispenseCardFail[2];
+	std::string MsgEntry_DispenseCardOk[2];
+	std::string MsgEntry_DispenserError[2];
+	std::string MsgEntry_DispensingCard[2];
+	std::string MsgEntry_EenhancedMCParking[2];
+	std::string MsgEntry_ESeasonWithinAllowance[2];
+	std::string MsgEntry_ESPT3Parking[2];
+	std::string MsgEntry_ESSCancel[2];
+	std::string MsgEntry_ESSOK[2];
+	std::string MsgEntry_EVIPHolderParking[2];
+	std::string MsgEntry_ExpiringSeason[2];
+	std::string MsgEntry_FlashLED[2];
+	std::string MsgEntry_FullLED[2];
+	std::string MsgEntry_Idle[2];
+	std::string MsgEntry_InsertATM[2];
+	std::string MsgEntry_InsertCashcard[2];
+	std::string MsgEntry_IUProblem[2];
+	std::string MsgEntry_KeyinLPN[2];
+	std::string MsgEntry_KeyInPwd[2];
+	std::string MsgEntry_LockStation[2];
+	std::string MsgEntry_LoopA[2];
+	std::string MsgEntry_LoopAFull[2];
+	std::string MsgEntry_LorryFullLED[2];
+	std::string MsgEntry_LotAdjustmentMsg[2];
+	std::string MsgEntry_LowBal[2];
+	std::string MsgEntry_MaxPinRetried[2];
+	std::string MsgEntry_NoCard[2];
+	std::string MsgEntry_NoCHU[2];
+	std::string MsgEntry_NoIU[2];
+	std::string MsgEntry_NoNightParking2LED[2];
+	std::string MsgEntry_Offline[2];
+	std::string MsgEntry_PrinterError[2];
+	std::string MsgEntry_PrintingReceipt[2];
+	std::string MsgEntry_Processing[2];
+	std::string MsgEntry_ReaderCommError[2];
+	std::string MsgEntry_ReaderError[2];
+	std::string MsgEntry_ReKeyInPWD[2];
+	std::string MsgEntry_SameLastIU[2];
+	std::string MsgEntry_ScanEntryTicket[2];
+	std::string MsgEntry_ScanValTicket[2];
+	std::string MsgEntry_SeasonAsHourly[2];
+	std::string MsgEntry_SeasonBlocked[2];
+	std::string MsgEntry_SeasonExpired[2];
+	std::string MsgEntry_SeasonInvalid[2];
+	std::string MsgEntry_SeasonMultiFound[2];
+	std::string MsgEntry_SeasonNotFound[2];
+	std::string MsgEntry_SeasonNotStart[2];
+	std::string MsgEntry_SeasonNotValid[2];
+	std::string MsgEntry_SeasonOnly[2];
+	std::string MsgEntry_SeasonPassback[2];
+	std::string MsgEntry_SeasonRenewFail[2];
+	std::string MsgEntry_SeasonRenewOK[2];
+	std::string MsgEntry_SeasonTerminated[2];
+	std::string MsgEntry_SelectTopupValue[2];
+	std::string MsgEntry_SetPeriod[2];
+	std::string MsgEntry_SystemError[2];
+	std::string MsgEntry_TakeATM[2];
+	std::string MsgEntry_TakeReceipt[2];
+	std::string MsgEntry_TakeTicket[2];
+	std::string MsgEntry_TicketByCashier[2];
+	std::string MsgEntry_TicketLocked[2];
+	std::string MsgEntry_TopupExceedMax[2];
+	std::string MsgEntry_TopupFail[2];
+	std::string MsgEntry_TopupOK[2];
+	std::string MsgEntry_ValidSeason[2];
+	std::string MsgEntry_VMCommError[2];
+	std::string MsgEntry_VMError[2];
+	std::string MsgEntry_VMHostProblem[2];
+	std::string MsgEntry_VMLineProblem[2];
+	std::string MsgEntry_VMLogon[2];
+	std::string MsgEntry_VMLogonCard[2];
+	std::string MsgEntry_VMTimeout[2];
+	std::string MsgEntry_VVIP[2];
+	std::string MsgEntry_WholeDayParking[2];
+	std::string MsgEntry_WithIU[2];
+	std::string MsgEntry_WrongATM[2];
+	std::string MsgEntry_E1enhancedMCParking[2];
+	
+/*
 	string Msg_carderror;
 	string Msg_cardin;
 	string Msg_cardpaid;
@@ -743,6 +840,7 @@ struct  tMsg_Struct
 	string Msg_e_enhancedmcparking;
 	string Msg_x1_enhancedmcparking;
 	string Msg_x_enhancedmcparking;
+*/
 };
 
 struct season_struct {

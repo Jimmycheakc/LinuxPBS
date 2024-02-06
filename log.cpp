@@ -96,12 +96,13 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
     std::stringstream ssYearMonthDay;
     ssYearMonthDay << std::put_time(&timeinfo, "%y%m%d");
 
+    std::string loggerName  = (filename == "") ? sStationID : filename;
     std::string absoluteFilePath = LOG_FILE_PATH + std::string("/") + sStationID + filename + ssYearMonthDay.str() + std::string(".log");
     std::string absoluteMainFilePath = LOG_FILE_PATH + std::string("/") + sStationID + ssYearMonthDay.str() + std::string(".log");
 
     if (!(boost::filesystem::exists(absoluteFilePath)))
     {
-        spdlog::drop(filename);
+        spdlog::drop(loggerName);
         FnCreateLogFile(filename);
     }
 
@@ -113,7 +114,7 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
 
     if (!filename.empty())
     {
-        auto logger = spdlog::get(filename);
+        auto logger = spdlog::get(loggerName);
         if (logger)
         {
             logger->info(sLogMsg.str());
@@ -121,12 +122,14 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
 
         }
     }
-
-    auto mainLogger = spdlog::get(sStationID);
-    if (mainLogger)
+    else
     {
-        mainLogger->info(sLogMsg.str());
-        mainLogger->flush();
+        auto mainLogger = spdlog::get(sStationID);
+        if (mainLogger)
+        {
+            mainLogger->info(sLogMsg.str());
+            mainLogger->flush();
+        }
     }
 
 #ifdef CONSOLE_LOG_ENABLE

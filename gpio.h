@@ -37,12 +37,12 @@ public:
     static const int GPIO_LOW              = 0;
 
     // Define PINOUT
-    static const int PIN_DO1               = 354;
-    static const int PIN_DO2               = 355;
-    static const int PIN_DO3               = 356;
-    static const int PIN_DO4               = 367;
-    static const int PIN_DO5               = 511;
-    static const int PIN_DO6               = 510;
+    static const int PIN_DO1               = 510;
+    static const int PIN_DO2               = 511;
+    static const int PIN_DO3               = 367;
+    static const int PIN_DO4               = 356;
+    static const int PIN_DO5               = 355;
+    static const int PIN_DO6               = 354;
 
     // Define PINOUT J2 (Output 5v)
     static const int PIN_DO7               = 504;   // J2 07

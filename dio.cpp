@@ -54,6 +54,7 @@ void DIO::FnDIOInit()
     lcd_backlight_do_ = getOutputPinNum(IniParser::getInstance()->FnGetLCDbacklight());
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
+    Logger::getInstance()->FnLog("DIO initialization completed.");
     Logger::getInstance()->FnLog("DIO initialization completed.", logFileName_, "DIO");
 }
 
@@ -91,39 +92,101 @@ void DIO::monitoringDIOChangeThreadFunction()
         int barrier_door_open_curr_val = GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue();
         int barrier_status_curr_value = GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue();
         
+        // Case : Loop A on, Loop B off 
+        if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
+            && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
+        }
+        // Case : Loop B on, Loop A off
+        else if ((loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW) 
+                && (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_LOW))
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
+        }
+        // Case : Loop A on, Loop B on
+        else if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
+                && (loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
+        }
+
+        // Case : Loop A off, Loop B off
+        if ((loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
+            && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
+        }
+        // Case : Loop B off, Loop A off
+        else if ((loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH)
+                && (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_LOW))
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
+        }
+
+        /*
         if (loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_EVENT));
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
+        }
+        else if (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
         }
 
         if (loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_B_EVENT));
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_B_ON_EVENT));
         }
+        else if (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_B_OFF_EVENT));
+        }
+        */
         
         if (loop_c_curr_val == GPIOManager::GPIO_HIGH && loop_c_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_EVENT));
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_ON_EVENT));
+        }
+        else if (loop_c_curr_val == GPIOManager::GPIO_LOW && loop_c_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_OFF_EVENT));
         }
         
         if (intercom_curr_val == GPIOManager::GPIO_HIGH && intercom_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::INTERCOM_EVENT));
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::INTERCOM_ON_EVENT));
+        }
+        else if (intercom_curr_val == GPIOManager::GPIO_LOW && intercom_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::INTERCOM_OFF_EVENT));
         }
         
         if (station_door_open_curr_val == GPIOManager::GPIO_HIGH && station_door_open_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::STATION_DOOR_OPEN_EVENT));
         }
+        else if (station_door_open_curr_val == GPIOManager::GPIO_LOW && station_door_open_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::STATION_DOOR_CLOSE_EVENT));
+        }
         
         if (barrier_door_open_curr_val == GPIOManager::GPIO_HIGH && barrier_door_open_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_DOOR_OPEN_EVENT));
         }
+        else if (barrier_door_open_curr_val == GPIOManager::GPIO_LOW && barrier_door_open_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT));
+        }
         
         if (barrier_status_curr_value == GPIOManager::GPIO_HIGH && barrier_status_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_STATUS_EVENT));
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_STATUS_ON_EVENT));
+        }
+        else if (barrier_status_curr_value == GPIOManager::GPIO_LOW && barrier_status_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_STATUS_OFF_EVENT));
         }
 
         loop_a_di_last_val_ = loop_a_curr_val;
@@ -164,6 +227,55 @@ int DIO::FnGetLCDBacklight() const
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
     return GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_)->FnGetValue();
+}
+
+int DIO::FnGetLoopAStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(loop_a_di_)->FnGetValue();
+}
+
+int DIO::FnGetLoopBStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(loop_b_di_)->FnGetValue();
+}
+
+int DIO::FnGetLoopCStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(loop_c_di_)->FnGetValue();
+}
+
+int DIO::FnGetIntercomStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(intercom_di_)->FnGetValue();
+}
+
+int DIO::FnGetStationDoorStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_)->FnGetValue();
+}
+
+int DIO::FnGetBarrierDoorStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue();
+}
+
+int DIO::FnGetBarrierStatusStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue();
 }
 
 int DIO::getInputPinNum(int pinNum)

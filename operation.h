@@ -19,6 +19,7 @@ public:
     struct  tProcess_Struct tProcess;
     struct  tParas_Struct tParas;
 	struct  tMsg_Struct tMsg;
+    std::vector<struct tVType_Struct> tVType;
 
 
      void OperationInit(io_service& ioService);
