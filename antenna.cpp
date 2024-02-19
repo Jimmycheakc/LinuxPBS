@@ -7,6 +7,7 @@
 #include "event_handler.h"
 #include "ini_parser.h"
 #include "log.h"
+#include "operation.h"
 
 Antenna* Antenna::antenna_ = nullptr;
 unsigned char Antenna::SEQUENCE_NO = 0;
@@ -26,9 +27,9 @@ Antenna::Antenna()
     memset(rxBuffData, 0, sizeof(rxBuffData));
     IUNumber_ = "";
     IUNumberPrev_ = "";
-    antennaCmdTimeoutInMillisec_ = IniParser::getInstance()->FnGetAntennaInqTO();
-    antennaCmdMaxRetry_ = IniParser::getInstance()->FnGetAntennaMaxRetry();
-    antennaIUCmdMinOKtimes_ = IniParser::getInstance()->FnGetAntennaMinOKtimes();
+    antennaCmdTimeoutInMillisec_ = operation::getInstance()->tParas.giAntInqTO;//IniParser::getInstance()->FnGetAntennaInqTO();
+    antennaCmdMaxRetry_ = operation::getInstance()->tParas.giAntMaxRetry;//IniParser::getInstance()->FnGetAntennaMaxRetry();
+    antennaIUCmdMinOKtimes_ = operation::getInstance()->tParas.giAntMinOKTimes;//IniParser::getInstance()->FnGetAntennaMinOKtimes();
     logFileName_ = "antenna";
 }
 
@@ -68,7 +69,7 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
     
     int result = antennaInit();
-    if (result)
+    if (result == 1)
     {
         // raise antenna power event success
         EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
@@ -180,7 +181,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
 
         int antennaCmdTimeoutInMs = 1000;
         std::vector<unsigned char> dataBuffer;
-        unsigned char antennaID = IniParser::getInstance()->FnGetAntennaId();
+        unsigned char antennaID = operation::getInstance()->gtStation.iAntID;//IniParser::getInstance()->FnGetAntennaId();
         unsigned char destID = 0xB0 + antennaID;
         unsigned char sourceID = 0x00;
 

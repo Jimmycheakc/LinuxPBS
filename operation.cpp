@@ -37,6 +37,8 @@ void operation::OperationInit(io_context& ioContext)
 {
    
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
+    tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
+    tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
     //
     Setdefaultparameter();
     //
@@ -48,23 +50,23 @@ void operation::OperationInit(io_context& ioContext)
         writelog ("Unable to connect local DB.","opr");
         exit(0); 
     }
-    iRet = m_db->loadParam();
-    if (iRet != 0) {
-        writelog ("Unable to load Parameter from  Local DB","opr");
-        exit(0);
-    }
     string m_connstring;
-    m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
-    m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,2);
+    for (int i = 0 ; i < 5; ++i ) {
+        m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
+        iRet = m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,2);
+        if (iRet == 1) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
     // sync central time
-    m_db->synccentraltime();
+    if (iRet == 1) m_db->synccentraltime();
     //
     m_db->loadstationsetup();
     m_db->loadmessage();
     m_db->loadParam();
     m_db->loadvehicletype();
     //
-    tProcess.gsBroadCastIP = getIPAddress();
+    tProcess.gsBroadCastIP = "192.168.2.255";//getIPAddress();
+    std::cout << "tProcess.gsBroadCastIP = " << tProcess.gsBroadCastIP << std::endl;
 
     try {
         m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
@@ -77,7 +79,7 @@ void operation::OperationInit(io_context& ioContext)
    
     Initdevice(ioContext);
     
-    ShowLEDMsg("EPS in OPeration^have a nice day!","EPS in OPeration^have a nice day!");
+    ShowLEDMsg("EPS in OPeration^have a nice day!","Please Insert CashCard");
 
     iRet= m_db->FnGetVehicleType("001");
 
@@ -183,11 +185,37 @@ void operation::Clearme()
 
 }
 
+std::string operation::getSerialPort(const std::string& key)
+{
+    std::map<std::string, std::string> serial_port_map = 
+    {
+        {"COM1", "/dev/ttyCH9344USB7"}, // J3
+        {"COM2", "/dev/ttyCH9344USB6"}, // J4
+        {"COM3", "/dev/ttyCH9344USB5"}, // J5
+        {"COM4", "/dev/ttyCH9344USB4"}, // J6
+        {"COM5", "/dev/ttyCH9344USB3"}, // J7
+        {"COM6", "/dev/ttyCH9344USB2"}, // J8
+        {"COM7", "/dev/ttyCH9344USB1"}, // J9
+        {"COM8", "/dev/ttyCH9344USB0"}  // J10
+    };
+
+    auto it = serial_port_map.find(key);
+
+    if (it != serial_port_map.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        return "";
+    }
+}
+
 void operation::Initdevice(io_context& ioContext)
 {
     LCD::getInstance()->FnLCDInit();
-    Antenna::getInstance()->FnAntennaInit(ioContext, 19200, "/dev/ttyCH9344USB5");
-    LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, "/dev/ttyCH9344USB4");
+    Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort("COM3"));
+    LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort("COM4"));
   //LED401 giCommportLED401
   //LED226 giCommPortLED
   //LCD
@@ -205,7 +233,6 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 
     char* sLCDMsg = const_cast<char*>(LCDMsg.data());
     LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
-
 }
 
 void operation::PBSEntry(string sIU)
@@ -268,8 +295,8 @@ string operation:: getIPAddress()
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         result = buffer;
          if (iRet == 1) {
-             size_t pos = result.find("Bcast:");
-             result = result.substr(pos + 6);
+             size_t pos = result.find("inet addr:");
+             result = result.substr(pos + 10);
              result.erase(result.find(' '));
             break;
          }
@@ -281,6 +308,8 @@ string operation:: getIPAddress()
     
     pclose(pipe);
 
+    size_t lastDotPosition = result.find_last_of('.');
+    result = result.substr(0, lastDotPosition + 1)+ "255";
     // Output the result
     return result;
 
@@ -336,21 +365,26 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode=0)
     
     switch(iEPSErr){
         case AntennaNoError:
+        {
             if (tPBSError[iAntenna].ErrNo < 0) {
                 sCmd = "03";
                 sErrMsg = "Antenna OK";
             }
             tPBSError[iAntenna].ErrNo = 0;
             break;
+        }
         case AntennaError:
+        {
             tPBSError[iAntenna].ErrNo = -1;
             tPBSError[iAntenna].ErrCode = iErrCode;
             tPBSError[iAntenna].ErrMsg = "Antenna Error: " + iErrCode;
             sErrMsg = tPBSError[iAntenna].ErrMsg;
             sCmd = "03";
             break;
+        }
         case AntennaPowerOnOff:
-            if (iErrCode = 1) {
+        {
+            if (iErrCode == 1) {
                 tPBSError[iAntenna].ErrNo = 0;
                 tPBSError[iAntenna].ErrCode = 1;
                 tPBSError[iAntenna].ErrMsg = "Antenna: Power ON";
@@ -364,108 +398,149 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode=0)
             sErrMsg = tPBSError[iAntenna].ErrMsg;
             sCmd = "03";
             break;
-        case PrinterNoError:      
+        }
+        case PrinterNoError:
+        {   
             if (tPBSError[1].ErrNo < 0){
                 sCmd = "04";
                 sErrMsg = "Printer OK";
             }
             tPBSError[1].ErrNo = 0;
             break;
+        }
         case PrinterError:
+        {
             tPBSError[1].ErrNo = -1;
             tPBSError[1].ErrMsg = "Printer Error";
             sCmd = "04";
             sErrMsg = tPBSError[1].ErrMsg;
             break;
+        }
         case PrinterNoPaper:
+        {
             tPBSError[1].ErrNo = -2;
             tPBSError[1].ErrMsg = "Printer Paper Low";
             sCmd = "04";
             sErrMsg = tPBSError[1].ErrMsg;
             break;
+        }
         case DBNoError:
+        {
             tPBSError[2].ErrNo = 0;
             break;
+        }
         case DBFailed:
+        {
             tPBSError[2].ErrNo = -1;
             break;
-        case DBUpdateFail:    
+        }
+        case DBUpdateFail:
+        {
             tPBSError[2].ErrNo = -2;
             break;
+        }
         case UPOSNoError:
+        {
             if (tPBSError[4].ErrNo < 0){
                 sCmd = "06";
                 sErrMsg = "UPOS OK";
             }
             tPBSError[4].ErrNo = 0;
             break;
+        }
         case UPOSError:
+        {
             tPBSError[4].ErrNo = -1;
             tPBSError[4].ErrMsg = "UPOS Error";
             sCmd = "06";
             sErrMsg = tPBSError[4].ErrMsg;
             break;
+        }
         case TariffError:
+        {
             tPBSError[5].ErrNo = -1;     
             sCmd = "08";
             sErrMsg = "5Tariff Error";
             break;
+        }
         case TariffOk:
+        {
             tPBSError[5].ErrNo = 0 ;    
             sCmd = "08";
             sErrMsg = "5Tariff OK";
             break;
+        }
         case HolidayError:
+        {
             tPBSError[5].ErrNo = -2;
             sCmd = "08";
             sErrMsg = "5No Holiday Set";
             break;
+        }
         case HolidayOk:
+        {
             tPBSError[5].ErrNo = 0;    
             sCmd = "08";
             sErrMsg = "5Holiday OK";
             break;
+        }
         case DIOError:
+        {
             tPBSError[6].ErrNo = -1;
             sCmd = "08";
             sErrMsg = "6DIO Error";
             break;
+        }
         case DIOOk:
+        {
             tPBSError[6].ErrNo = 0;
             sCmd = "08";
             sErrMsg = "6DIO OK";
             break;
+        }
         case LoopAHang:
+        {
             tPBSError[7].ErrNo = -1;
             sCmd = "08";
             sErrMsg = "7Loop A Hang";
             break;
+        }
         case LoopAOk:
+        {
             tPBSError[7].ErrNo = 0;
             sCmd = "08";
             sErrMsg = "7Loop A OK";
             break;
+        }
         case LCSCNoError:
+        {
             if (tPBSError[10].ErrNo < 0){
                 sCmd = "70";
                 sErrMsg = "LCSC OK";
             }
             tPBSError[10].ErrNo = 0;
             break;
+        }
         case LCSCError:
+        {
             tPBSError[10].ErrNo = -1;
             tPBSError[10].ErrMsg = "LCSC Error";
             sCmd = "70";
             sErrMsg = tPBSError[10].ErrMsg;
             break;
+        }
         case SDoorError:
+        {
            sCmd = "71";
             sErrMsg = tPBSError[11].ErrMsg;
             break;
+        }
         case BDoorError:
+        {
             sCmd = "72";
             sErrMsg = tPBSError[12].ErrMsg;
             break;
+        }
         default:
             break;
     }

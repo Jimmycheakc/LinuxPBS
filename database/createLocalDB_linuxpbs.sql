@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
 CREATE TABLE IF NOT EXISTS season_mst (
     season_id INT AUTO_INCREMENT PRIMARY KEY,
     season_no VARCHAR(20),
-    season_type INT,
-    s_status INT,
+    season_type INT DEFAULT 0,
+    s_status INT DEFAULT 0,
     date_from DATETIME,
     date_to DATETIME,
     vehicle_no VARCHAR(100),
@@ -40,25 +40,25 @@ CREATE TABLE IF NOT EXISTS season_mst (
     pay_date DATETIME,
     multi_season_no VARCHAR(100),
     zone_id VARCHAR(100),
-    redeem_amt DECIMAL(10,2),
-    redeem_time INT,
-    holder_type INT,
+    redeem_amt DECIMAL(10,2) DEFAULT 0,
+    redeem_time INT DEFAULT 0,
+    holder_type INT DEFAULT 0,
     sub_zone_id VARCHAR(100)
 );
 
 -- Create a Station_Setup table in database
 CREATE TABLE IF NOT EXISTS Station_Setup (
-    StationID INT,
+    StationID INT DEFAULT 0,
     StationName VARCHAR(100),
-    StationType INT,
-    Status INT,
+    StationType INT DEFAULT 0,
+    Status INT DEFAULT 0,
     PCName VARCHAR(100),
-    CHUPort INT,
-    AntID INT,
+    CHUPort INT DEFAULT 0,
+    AntID INT DEFAULT 0,
     ZoneID INT DEFAULT 0,
-    IsVirtual INT,
-    SubType INT,
-    VirtualID INT,
+    IsVirtual INT DEFAULT 0,
+    SubType INT DEFAULT 0,
+    VirtualID INT DEFAULT 0,
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS message_mst (
     msg_id VARCHAR(100),
     descrip VARCHAR(100),
     msg_body VARCHAR(100),
-    m_status INT,
+    m_status INT DEFAULT 0,
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME
 );
@@ -85,8 +85,8 @@ CREATE TABLE IF NOT EXISTS message_mst (
 -- Create Vehicle_type table in database
 CREATE TABLE IF NOT EXISTS Vehicle_type (
     VTypeID INT AUTO_INCREMENT PRIMARY KEY,
-    IUCode INT,
-    TransType INT,
+    IUCode INT DEFAULT 0,
+    TransType INT DEFAULT 0,
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME
 );

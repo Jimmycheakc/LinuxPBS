@@ -8,7 +8,7 @@ class LCD
 public:
     static const int MAXIMUM_CHARACTER_PER_ROW  = 20;
     static const int MAXIMUM_LCD_LINES          = 2;
-    static const char BLOCK                     = '�';
+    static const char BLOCK                     = 219;
 
     static LCD* getInstance();
     void FnLCDInit();

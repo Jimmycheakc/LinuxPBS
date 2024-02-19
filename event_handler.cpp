@@ -105,7 +105,7 @@ bool EventHandler::handleAntennaPower(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
-        operation:: getInstance()->HandlePBSError(AntennaPowerOnOff,int(boolEvent->data));
+        operation::getInstance()->HandlePBSError(AntennaPowerOnOff,int(boolEvent->data));
     }
     else
     {

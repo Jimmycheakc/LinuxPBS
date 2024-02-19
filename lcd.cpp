@@ -160,13 +160,28 @@ void LCD::FnLCDDisplayScreen(char* str)
     memset(&sub_string_row_1, 0, sizeof(sub_string_row_1));
     memset(&sub_string_row_2, 0, sizeof(sub_string_row_2));
 
-    strncpy(sub_string_row_1, str, 20);
-    sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW + 1] = '\0';
-    FnLCDDisplayRow(1, sub_string_row_1);
+    std::string text(str);
+    std::size_t found = text.find("^");
+    if (found != std::string::npos)
+    {
+        strncpy(sub_string_row_1, str, found);
+        sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW] = '\0';
+        FnLCDDisplayRow(1, sub_string_row_1);
 
-    strncpy(sub_string_row_2, (str + 20), 20);
-    sub_string_row_2[MAXIMUM_CHARACTER_PER_ROW + 1] = '\0';
-    FnLCDDisplayRow(2, sub_string_row_2);
+        strncpy(sub_string_row_2, (str + found + 1), (text.length() - found - 1));
+        sub_string_row_2[MAXIMUM_CHARACTER_PER_ROW] = '\0';
+        FnLCDDisplayRow(2, sub_string_row_2);
+    }
+    else
+    {
+        strncpy(sub_string_row_1, str, 20);
+        sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW] = '\0';
+        FnLCDDisplayRow(1, sub_string_row_1);
+
+        //strncpy(sub_string_row_2, (str + 20), 20);
+        sub_string_row_2[MAXIMUM_CHARACTER_PER_ROW] = '\0';
+        FnLCDDisplayRow(2, sub_string_row_2);
+    }
 
     if (MAXIMUM_LCD_LINES == 4)
     {
@@ -177,11 +192,11 @@ void LCD::FnLCDDisplayScreen(char* str)
         memset(&sub_string_row_4, 0, sizeof(sub_string_row_4));
 
         strncpy(sub_string_row_3, (str + 40), 20);
-        sub_string_row_3[MAXIMUM_CHARACTER_PER_ROW + 1] = '\0';
+        sub_string_row_3[MAXIMUM_CHARACTER_PER_ROW] = '\0';
         FnLCDDisplayRow(3, sub_string_row_3);
 
         strncpy(sub_string_row_4, (str + 60), 20);
-        sub_string_row_4[MAXIMUM_CHARACTER_PER_ROW + 1] = '\0';
+        sub_string_row_4[MAXIMUM_CHARACTER_PER_ROW] = '\0';
         FnLCDDisplayRow(4, sub_string_row_4);
     }
 }

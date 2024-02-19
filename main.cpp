@@ -24,6 +24,21 @@
 #include "operation.h"
 #include "udp.h"
 
+void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::io_context* io)
+{
+    auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
+
+    Logger::getInstance()->FnLog("Timer expired!");
+
+    usleep(2000000);
+
+    auto end = std::chrono::steady_clock::now(); // Measure the end time of the handler execution
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start); // Calculate the duration of the handler execution
+
+    timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(1) + duration);
+    timer->async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, timer, io));
+}
+
 int main (int agrc, char* argv[])
 {
     // Initialization
@@ -36,6 +51,10 @@ int main (int agrc, char* argv[])
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
     EventManager::getInstance()->FnStartEventThread();
     operation::getInstance()->OperationInit(ioContext);
+
+    boost::asio::steady_timer dailyProcessTimer(ioContext, boost::asio::chrono::seconds(1));
+    dailyProcessTimer.async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, &dailyProcessTimer, &ioContext));
+
     ioContext.run();
     
 #ifdef BUILD_TEST

@@ -70,6 +70,7 @@ private:
         delete m_udp;
         delete m_db;
         delete operation_;
-    }
+    };
+    std::string getSerialPort(const std::string& key);
 
 };

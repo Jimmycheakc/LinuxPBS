@@ -185,10 +185,8 @@ int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
 	float m_sAdminFee=0,m_sAppFee=0, m_sRedeemAmt=0;
 	std::string  m_dtValidTo="", m_dtValidFrom="";
 	
-	//unsigned int mZID=2;
 	std::string  m_AllowedHolderType="";
 
-	//const std::string m_sSeasonNo="1060000000";//
 	const std::string m_sBlank="";
 	int retcode;
 	string msg;
@@ -207,10 +205,6 @@ int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
 
 	if(retcode!=-1)
 	{
-		//printf("retcode %d",retcode);
-		//msg= std::to_string(retcode);
-		//printf("String: %s\n", m_dtValidFrom);
-		//printf("String: %s\n", m_dtValidTo);
 		if (retcode != 8) 
 		{
 			dbss.str("");  // Set the underlying string to an empty string
@@ -336,7 +330,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 
 	//sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee";
 	//sqlStmt = sqlStmt + ",gst_amt";
-	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpn";
+	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpr";
 
 	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid + "',convert(datetime,'" + tEntry.sEntryTime+ "',120),'" + tEntry.sIUTKNo;
 	sqlStmt = sqlStmt +  "','" + std::to_string(tEntry.iTransType);
@@ -1278,7 +1272,7 @@ void db::downloadstationsetup()
 	}
 	if (selResult.size()<1){
 		//no record
-		r=-1; //should raise error, //2018.11.23 QC
+		r=-1;
 	}
 	return;
 }
@@ -1519,16 +1513,6 @@ DBError db::loadParam()
 		{
 			if (readerItem.getDataSize() == 2)
 			{
-				if (readerItem.GetDataItem(0) == "DBName")
-				{
-					operation::getInstance()->tParas.gsCentralDBName = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "DBServer")
-				{
-					operation::getInstance()->tParas.gsCentralDBServer = readerItem.GetDataItem(1);
-				}
-
 				if (readerItem.GetDataItem(0) == "CommPortAntenna")
 				{
 					operation::getInstance()->tParas.giCommPortAntenna = std::stoi(readerItem.GetDataItem(1));
