@@ -13,5 +13,5 @@ cmake .. -DBUILD_TEST=ON -DENABLE_CONSOLE_LOG=ON
 make -j4
 
 # Copy the built binaries and configuration file to the remote server
-scp linuxpbs root@192.168.2.150:/home/root/LinuxPBSSourceCode/LatestSourceCode/build/
-scp LinuxPBS.ini root@192.168.2.150:/home/root/LinuxPBSSourceCode/LatestSourceCode/build/
+scp linuxpbs root@192.168.2.151:/home/root/LinuxPBSSourceCode/LatestSourceCode/build/
+scp LinuxPBS.ini root@192.168.2.151:/home/root/LinuxPBSSourceCode/LatestSourceCode/build/

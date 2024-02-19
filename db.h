@@ -43,9 +43,9 @@ public:
                       std::string &dtValidTo,
                       std::string &dtValidFrom);
 
-	int local_isvalidseason(string L_sSeasonNo);
+	int local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID);
 
-	int isvalidseason(string m_sSeasonNo);
+	int isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID);
     void synccentraltime ();
     void downloadseason();
     int writeseason2local(tseason_struct& v);
@@ -69,6 +69,14 @@ public:
      DBError loadvehicletype();
 
     int FnGetVehicleType(std::string IUCode);
+    string GetPartialSeasonMsg(int iTransType);
+
+    void moveOfflineTransToCentral();
+	int insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter);
+	int insertTransToCentralExitTransTmp(tExitTrans_Struct tex);
+	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
+    int clearseason();
+
 
     /**
      * Singleton db should not be cloneable.
@@ -86,7 +94,7 @@ private:
     string CentralConnStr;
     string central_IP;
     float PingTimeOut;
-    int clearseason();
+   
 
     template <typename T>
         string ToString(T a);

@@ -7,19 +7,19 @@ USE linux_pbs;
 -- Create a Entry_Trans table in database
 CREATE TABLE IF NOT EXISTS Entry_Trans (
     EntryID INT AUTO_INCREMENT PRIMARY KEY,
-    Station_id INT,
+    Station_id INT DEFAULT 0,
     Entry_Time DATETIME,
     iu_tk_no VARCHAR(20),
-    trans_type INT,
+    trans_type INT DEFAULT 0,
     paid_amt DECIMAL(10,2),
-    TK_SerialNo INT,
-    Status INT,
+    TK_SerialNo INT DEFAULT 0,
+    Status INT DEFAULT 0,
     Send_Status BOOLEAN,
     card_no VARCHAR(20),
-    parking_fee DECIMAL(10,2),
-    gst_amt DECIMAL(10, 2),
+    parking_fee DECIMAL(10,2) DEFAULT 0,
+    gst_amt DECIMAL(10, 2) DEFAULT 0,
     Card_Type INT DEFAULT 0,
-    Owe_Amt DECIMAL(10,2),
+    Owe_Amt DECIMAL(10,2) DEFAULT 0,
     lpr VARCHAR(20),
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

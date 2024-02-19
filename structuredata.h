@@ -79,6 +79,62 @@ typedef enum {
 	iXwithVEPay = 2
 }eSubType;
 
+typedef enum {
+  iAntenna = 0,     
+  iPrinter = 1,   
+  iDB = 2,
+  iReader = 3, 
+  iUPOS = 4,
+  iParam = 5,
+  iDIO = 6,
+  iLOOPAhang = 7,
+  iCHU = 8,
+  iUPS = 9,
+  iNCSC = 10,
+  iLCSC = 11,
+  iStatinDoor = 12,
+  iBarrierDoor = 13,
+  iTGDController = 14,
+  iTGDSensor = 15,
+  iArmDrop = 16,
+  iBarrierStauts = 17,
+  iTicketStatus = 18
+
+}eErrorDevice;
+
+typedef enum 
+{
+	NoError = 0,
+    AntennaNoError = 1,
+    AntennaError = 2,
+    PrinterNoError = 3,
+    PrinterError = 4,
+    PrinterNoPaper = 5,
+    DBNoError = 6,
+    DBFailed = 7,
+    DBUpdateFail = 8,
+    ReaderNoError = 9,
+    ReaderError = 10,
+    UPOSNoError = 11,
+    UPOSError = 12,
+ //   CPTBatchFull = 13,
+    AntennaPowerOnOff = 14,
+    TariffError = 15,
+    TariffOk = 16,
+    HolidayError = 17,
+    HolidayOk = 18,
+    DIOError = 19,
+    DIOOk = 20,
+    LoopAHang = 21,
+    LoopAOk = 22,
+    NCSCNoError = 23,
+    NCSCError = 24,
+    LCSCNoError = 26,
+    LCSCError = 27,
+    SDoorError = 28,
+    BDoorError = 29
+} EPSError;  
+
 class trans_info {
 public:
 	string TrxTime;
@@ -232,48 +288,19 @@ struct  tExitTrans_Struct
 
 struct  tProcess_Struct
 {
-	int m_enable_read_antenna_timer;
-	int AntTOFlag;
-	int m_en_AntTO_Tmr;
-	int m_AntTOCnt;
-	bool wrNAKlogFlag;
-	int CardTOFlag;
-	int canUseCard;
-	int rotate;
-	int combi_state;
-	int iu_readed;
-	int waitcard_readed;
-	int bar_open=0;
-	int bar_open_ok=0;
+	
 	int save_trans=0;
-	int processflag=0;
 	bool gbcarparkfull;
-	int giStationID;
 	long glNoofOfflineData;
 	string fsLastIUNo;
-	string CardNo;
-	int readksm1_state;
-	int readflag;
+	string fsLastCardNo;
 	int is_season;
 	int online_status;
 	int offline_status;
-	int Balance=0;
-	int trs_fee=0;
-	string firstcan;
-	int first_balance;
-	int process_debited=0;
-	int fiLastCHUCmd;
-	int fiReadIUfromAnt;
-	int fiCHUStatus;
-	int fiNoIURetried=0;
 	string fsLastPaidIU;
 	string fsLastReadCard;
-	float fsCardBal;
-	int fiCardType;
-	int fiCHUDebitRetried;
-	int fiIsDoingDebitOk;
-	int ficepasdebit;
-	string sCHUDebitTime;
+	string gsDefaultIU; 
+	string gsBroadCastIP; 
 };
 
 
@@ -354,8 +381,6 @@ struct  tParas_Struct
 	int not_allow_hourly; //not in current central DB
 	int cepas_enable; //not in current central DB
 
-	string gsDefaultIU; 
-	string gsBroadCastIP; 
 
 	//int giCommPortPrinter;
 	//int giCommPortLED2;
@@ -464,15 +489,9 @@ struct  tMsg_Struct
 	std::string MsgEntry_AltDefaultLED2[2];
 	std::string MsgEntry_AltDefaultLED3[2];
 	std::string MsgEntry_AltDefaultLED4[2];
-	std::string MsgEntry_ATMCancelPin[2];
-	std::string MsgEntry_ATMDebitFail[2];
-	std::string MsgEntry_ATMDebitOK[2];
+
 	std::string MsgEntry_authorizedvehicle[2];
-	std::string MsgEntry_Card4Complimentary[2];
-	std::string MsgEntry_CardDebitDB[2];
-	std::string MsgEntry_CardDebitFail[2];
 	std::string MsgEntry_CardReadingError[2];
-	std::string MsgEntry_CardSoldOut[2];
 	std::string MsgEntry_CardTaken[2];
 	std::string MsgEntry_CarFullLED[2];
 	std::string MsgEntry_CarParkFull2LED[2];
@@ -482,34 +501,21 @@ struct  tMsg_Struct
 	std::string MsgEntry_DefaultLED2[2];
 	std::string MsgEntry_DefaultMsg2LED[2];
 	std::string MsgEntry_DefaultMsgLED[2];
-	std::string MsgEntry_DispenseCardFail[2];
-	std::string MsgEntry_DispenseCardOk[2];
-	std::string MsgEntry_DispenserError[2];
-	std::string MsgEntry_DispensingCard[2];
 	std::string MsgEntry_EenhancedMCParking[2];
 	std::string MsgEntry_ESeasonWithinAllowance[2];
 	std::string MsgEntry_ESPT3Parking[2];
-	std::string MsgEntry_ESSCancel[2];
-	std::string MsgEntry_ESSOK[2];
 	std::string MsgEntry_EVIPHolderParking[2];
 	std::string MsgEntry_ExpiringSeason[2];
-	std::string MsgEntry_FlashLED[2];
 	std::string MsgEntry_FullLED[2];
 	std::string MsgEntry_Idle[2];
-	std::string MsgEntry_InsertATM[2];
 	std::string MsgEntry_InsertCashcard[2];
 	std::string MsgEntry_IUProblem[2];
-	std::string MsgEntry_KeyinLPN[2];
-	std::string MsgEntry_KeyInPwd[2];
 	std::string MsgEntry_LockStation[2];
 	std::string MsgEntry_LoopA[2];
 	std::string MsgEntry_LoopAFull[2];
 	std::string MsgEntry_LorryFullLED[2];
 	std::string MsgEntry_LotAdjustmentMsg[2];
 	std::string MsgEntry_LowBal[2];
-	std::string MsgEntry_MaxPinRetried[2];
-	std::string MsgEntry_NoCard[2];
-	std::string MsgEntry_NoCHU[2];
 	std::string MsgEntry_NoIU[2];
 	std::string MsgEntry_NoNightParking2LED[2];
 	std::string MsgEntry_Offline[2];
@@ -518,7 +524,6 @@ struct  tMsg_Struct
 	std::string MsgEntry_Processing[2];
 	std::string MsgEntry_ReaderCommError[2];
 	std::string MsgEntry_ReaderError[2];
-	std::string MsgEntry_ReKeyInPWD[2];
 	std::string MsgEntry_SameLastIU[2];
 	std::string MsgEntry_ScanEntryTicket[2];
 	std::string MsgEntry_ScanValTicket[2];
@@ -529,35 +534,16 @@ struct  tMsg_Struct
 	std::string MsgEntry_SeasonMultiFound[2];
 	std::string MsgEntry_SeasonNotFound[2];
 	std::string MsgEntry_SeasonNotStart[2];
+	std::string MsgEntry_SeasonTerminated[2];
 	std::string MsgEntry_SeasonNotValid[2];
 	std::string MsgEntry_SeasonOnly[2];
 	std::string MsgEntry_SeasonPassback[2];
-	std::string MsgEntry_SeasonRenewFail[2];
-	std::string MsgEntry_SeasonRenewOK[2];
-	std::string MsgEntry_SeasonTerminated[2];
-	std::string MsgEntry_SelectTopupValue[2];
-	std::string MsgEntry_SetPeriod[2];
+	
 	std::string MsgEntry_SystemError[2];
-	std::string MsgEntry_TakeATM[2];
-	std::string MsgEntry_TakeReceipt[2];
-	std::string MsgEntry_TakeTicket[2];
-	std::string MsgEntry_TicketByCashier[2];
-	std::string MsgEntry_TicketLocked[2];
-	std::string MsgEntry_TopupExceedMax[2];
-	std::string MsgEntry_TopupFail[2];
-	std::string MsgEntry_TopupOK[2];
 	std::string MsgEntry_ValidSeason[2];
-	std::string MsgEntry_VMCommError[2];
-	std::string MsgEntry_VMError[2];
-	std::string MsgEntry_VMHostProblem[2];
-	std::string MsgEntry_VMLineProblem[2];
-	std::string MsgEntry_VMLogon[2];
-	std::string MsgEntry_VMLogonCard[2];
-	std::string MsgEntry_VMTimeout[2];
 	std::string MsgEntry_VVIP[2];
 	std::string MsgEntry_WholeDayParking[2];
 	std::string MsgEntry_WithIU[2];
-	std::string MsgEntry_WrongATM[2];
 	std::string MsgEntry_E1enhancedMCParking[2];
 };
 
@@ -583,6 +569,8 @@ struct tseason_struct {
 
 struct tPBSError_struct {
 	int ErrNo;
-	int Errcode;
+	int ErrCode;
 	string ErrMsg;
 };
+
+

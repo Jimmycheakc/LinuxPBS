@@ -48,9 +48,11 @@ public:
     void startsend(const std::string& message) {
         socket_.async_send_to(buffer(message), serverEndpoint_, [this](const boost::system::error_code& error, std::size_t /*bytes_sent*/) {
             if (!error) {
-                std::cout << "Message sent successfully." << std::endl;
+              //  std::cout << "Message sent successfully." << std::endl;
             } else {
-                std::cerr << "Error sending message: " << error.message() << std::endl;
+                    std::stringstream dbss;
+                    dbss << "Error for sending message: " << error.message() ;
+                    Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
             }
         });
     }
@@ -58,9 +60,9 @@ public:
     void startreceive() {
         socket_.async_receive_from(buffer(data_, max_length), senderEndpoint_, [this](const boost::system::error_code& error, std::size_t bytes_received) {
             if (!error) {
-                std::stringstream dbss;
-	            dbss << "Received response from " << senderEndpoint_ << ": " << std::string(data_, bytes_received) ;
-                Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
+                //std::stringstream dbss;
+	            //dbss << "Received response from " << senderEndpoint_ << ": " << std::string(data_, bytes_received) ;
+                //Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
                 processdata(data_, bytes_received);
             } else {
                 std::stringstream dbss;

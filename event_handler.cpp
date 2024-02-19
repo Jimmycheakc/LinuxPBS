@@ -78,6 +78,7 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
+        operation:: getInstance()->HandlePBSError(AntennaError,value);
     }
     else
     {
@@ -86,7 +87,7 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         Logger::getInstance()->FnLog(ss.str());
         ret = false;
     }
-
+    
     return ret;
 }
 
@@ -104,6 +105,7 @@ bool EventHandler::handleAntennaPower(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
+        operation:: getInstance()->HandlePBSError(AntennaPowerOnOff,int(boolEvent->data));
     }
     else
     {
@@ -130,7 +132,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
-        operation::getInstance()->IUcome(value);
+        operation::getInstance()->VehicleCome(value);
     }
     else
     {
@@ -235,6 +237,8 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
         Logger::getInstance()->FnLog(ss.str());
+
+        operation::getInstance()->VehicleCome(std::to_string(intEvent->data));
     }
     else
     {

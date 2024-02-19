@@ -132,14 +132,13 @@ std::string &dtValidFrom)
 
 }
 
-int db::local_isvalidseason(string L_sSeasonNo)
+int db::local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID)
 {
 	std::string sqlStmt;
 	std::string tbName="season_mst";
 	std::string sValue;
 	vector<ReaderItem> selResult;
 	int r,j,k,i;
-	unsigned int lZID=0;
 
 	try
 	{
@@ -148,31 +147,21 @@ int db::local_isvalidseason(string L_sSeasonNo)
 		sqlStmt="Select season_type,s_status,date_from,date_to,vehicle_no,rate_type,multi_season_no,zone_id,redeem_amt,redeem_time,holder_type,sub_zone_id ";
 		sqlStmt= sqlStmt +  " FROM " + tbName + " where season_no='";
 		sqlStmt=sqlStmt + L_sSeasonNo;
-		sqlStmt=sqlStmt + "' AND date_from < now() AND date_to >= now()";
+		sqlStmt=sqlStmt + "' AND date_from < now() AND date_to >= now() AND zone_id = "+ to_string(iZoneID);
 
-		//r=clsObj.SelectQueryLocal(localConnStr,sqlStmt,&selResult ,true);
+		//operation::getInstance()->writelog(sqlStmt,"db");
 
 		r=localdb->SQLSelect(sqlStmt,&selResult,false);
 		if (r!=0) return iLocalFail;
 
 		if (selResult.size()>0){
-			//if (m->gtStation.iType==tientry)
-			//{
-				//m->tEntry.iTransType=std::stoi(selResult[0].GetDataItem(0));
-				//m->tEntry.iStatus=std::stoi(selResult[0].GetDataItem(1));
-			//	m->tEntry.iRateType=std::stoi(selResult[0].GetDataItem(5));
-			//	printf("entry trans type %d and rate type %d date %s\n",m->tEntry.iTransType,m->tEntry.iRateType,m->tExit.sWDFrom.c_str());
-			//}				
-			//else 
-			//{
-				//m->tExit.iTransType=std::stoi(selResult[0].GetDataItem(0));
-				//m->tExit.iStatus=std::stoi(selResult[0].GetDataItem(1));
-				// m->tExit.sWDFrom=selResult[0].GetDataItem(2);
-				// m->tExit.sWDTo=selResult[0].GetDataItem(3);
-				// m->tExit.iRateType=std::stoi(selResult[0].GetDataItem(5));
-				// m->tExit.sRedeemAmt=std::stof(selResult[0].GetDataItem(8));
-				// m->tExit.iRedeemTime=std::stoi(selResult[0].GetDataItem(9));
-			//};
+				operation::getInstance()->tSeason.SeasonType =std::stoi(selResult[0].GetDataItem(0));
+				operation::getInstance()->tSeason.s_status=std::stoi(selResult[0].GetDataItem(1));
+				operation::getInstance()->tSeason.date_from=selResult[0].GetDataItem(2);
+				operation::getInstance()->tSeason.date_to=selResult[0].GetDataItem(3);
+				operation::getInstance()->tSeason.rate_type=std::stoi(selResult[0].GetDataItem(5));
+				operation::getInstance()->tSeason.redeem_amt=std::stof(selResult[0].GetDataItem(8));
+				operation::getInstance()->tSeason.redeem_time=std::stoi(selResult[0].GetDataItem(9));
 			return iDBSuccess;
 		}
 		else
@@ -187,7 +176,7 @@ int db::local_isvalidseason(string L_sSeasonNo)
 
 }
 
-int db::isvalidseason(string m_sSeasonNo)
+int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
 {
 	string sSerialNo="";
 	float sFee=0;
@@ -207,7 +196,7 @@ int db::isvalidseason(string m_sSeasonNo)
 	dbss << "Check Season on Central DB for IU/card: " << m_sSeasonNo;
     Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 
-	retcode=sp_isvalidseason(m_sSeasonNo, 1,1,sSerialNo,iRateType,
+	retcode=sp_isvalidseason(m_sSeasonNo,iInOut,iZoneID,sSerialNo,iRateType,
 	sFee,m_sAdminFee,m_sAppFee,m_iExpireDays,m_iRedeemTime, m_sRedeemAmt,
 	m_AllowedHolderType,m_dtValidTo,m_dtValidFrom );
 
@@ -233,16 +222,16 @@ int db::isvalidseason(string m_sSeasonNo)
 			dbss << "ValidTo = " << m_dtValidTo;
     		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 		}
-		return(retcode);
 	}
 	else
 	{
-		//int l_ret=local_isvalidseason(m_sSeasonNo);
-		//if(l_ret==iDBSuccess) return(1);
-		//else 
-		return(0);
+		int l_ret=local_isvalidseason(m_sSeasonNo,iZoneID);
+		if(l_ret==iDBSuccess) retcode = 1;
+		else 
+		retcode = 8;
+		operation::getInstance()->writelog ("Check Local Season Return = "+ std::to_string(retcode), "db");
 	}
-
+	return(retcode);
 }
 
 DBError db::insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype)
@@ -517,9 +506,11 @@ void db::downloadseason()
 	std::string sqlStmt;
 	int w=-1;
 	std::stringstream dbss;
+	int giStnid;
+	giStnid = operation::getInstance()->gtStation.iSID;
 
 	sqlStmt="SELECT SUM(A) FROM (";
-	sqlStmt=sqlStmt+ "SELECT count(season_no) as A FROM season_mst WHERE s"+to_string(1)+"_fetched = 0 ";
+	sqlStmt=sqlStmt+ "SELECT count(season_no) as A FROM season_mst WHERE s"+to_string(giStnid)+"_fetched = 0 ";
 	sqlStmt=sqlStmt + ") as B ";
 
 	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
@@ -647,12 +638,11 @@ int db::writeseason2local(tseason_struct& v)
 			if(r!=0)  
 			{
 				m_local_db_err_flag=1;
-				printf("update season failed \n");
+				operation::getInstance()->writelog("update season failed.", "db");
 			}
 			else  
 			{
 				m_local_db_err_flag=0;
-				printf("update season success \n");
 			}
 		}
 		else
@@ -946,7 +936,6 @@ void db::downloadledmessage()
 			//---------------------------------------
 			
 		}
-		//m->initStnParameters();
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Downloading Msg Records: End";
@@ -1112,7 +1101,6 @@ void db::downloadparameter()
 			}			
 			
 		}
-		//m->initStnParameters();
 		//LoadParam();
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
@@ -1798,44 +1786,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_AltDefaultLED4[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "ATMCancelPin")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CATMCancelPin")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ATMCancelPin[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "ATMDebitFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CATMDebitFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitFail[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "ATMDebitOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CATMDebitOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ATMDebitOK[1] = readerItem.GetDataItem(1);
-				}
 
 				if (readerItem.GetDataItem(0) == "authorizedvehicle")
 				{
@@ -1843,44 +1793,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_authorizedvehicle[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "Card4Complimentary")
-				{
-					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCard4Complimentary")
-				{
-					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_Card4Complimentary[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "CardDebitDB")
-				{
-					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardDebitDB")
-				{
-					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_CardDebitDB[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "CardDebitFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardDebitFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_CardDebitFail[1] = readerItem.GetDataItem(1);
-				}
 
 				if (readerItem.GetDataItem(0) == "CardReadingError")
 				{
@@ -1895,19 +1807,7 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_CardReadingError[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "CardSoldOut")
-				{
-					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardSoldOut")
-				{
-					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_CardSoldOut[1] = readerItem.GetDataItem(1);
-				}
-
+			
 				if (readerItem.GetDataItem(0) == "CardTaken")
 				{
 					operation::getInstance()->tMsg.MsgEntry_CardTaken[0] = readerItem.GetDataItem(1);
@@ -1939,12 +1839,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_DBError[1] = readerItem.GetDataItem(1);
 				}
 
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDBError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DBError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DBError[1] = readerItem.GetDataItem(1);
-				}
 
 				if (readerItem.GetDataItem(0) == "DefaultIU")
 				{
@@ -1997,58 +1891,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_DefaultMsgLED[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "DispenseCardFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDispenseCardFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardFail[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "DispenseCardOk")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDispenseCardOk")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DispenseCardOk[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "DispenserError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispenserError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_DispenserError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDispenserError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispenserError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DispenserError[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "DispensingCard")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispensingCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_DispensingCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDispensingCard")
-				{
-					operation::getInstance()->tMsg.MsgEntry_DispensingCard[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DispensingCard[1] = readerItem.GetDataItem(1);
-				}
-
 				if (readerItem.GetDataItem(0) == "EenhancedMCParking")
 				{
 					operation::getInstance()->tMsg.MsgEntry_EenhancedMCParking[0] = readerItem.GetDataItem(1);
@@ -2074,32 +1916,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_ESPT3Parking[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "ESSCancel")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ESSCancel[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_ESSCancel[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CESSCancel")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ESSCancel[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ESSCancel[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "ESSOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ESSOK[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_ESSOK[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CESSOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ESSOK[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ESSOK[1] = readerItem.GetDataItem(1);
-				}
-
 				if (readerItem.GetDataItem(0) == "EVIPHolderParking")
 				{
 					operation::getInstance()->tMsg.MsgEntry_EVIPHolderParking[0] = readerItem.GetDataItem(1);
@@ -2117,19 +1933,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				{
 					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1].clear();
 					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "FlashLED")
-				{
-					operation::getInstance()->tMsg.MsgEntry_FlashLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_FlashLED[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CFlashLED")
-				{
-					operation::getInstance()->tMsg.MsgEntry_FlashLED[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_FlashLED[1] = readerItem.GetDataItem(1);
 				}
 
 				if (readerItem.GetDataItem(0) == "FullLED")
@@ -2158,19 +1961,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_Idle[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "InsertATM")
-				{
-					operation::getInstance()->tMsg.MsgEntry_InsertATM[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_InsertATM[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CInsertATM")
-				{
-					operation::getInstance()->tMsg.MsgEntry_InsertATM[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_InsertATM[1] = readerItem.GetDataItem(1);
-				}
-
 				if (readerItem.GetDataItem(0) == "InsertCashcard")
 				{
 					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[0] = readerItem.GetDataItem(1);
@@ -2197,32 +1987,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_IUProblem[1] = readerItem.GetDataItem(1);
 				}
 				
-				if (readerItem.GetDataItem(0) == "KeyinLPN")
-				{
-					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CKeyinLPN")
-				{
-					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_KeyinLPN[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "KeyInPwd")
-				{
-					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CKeyInPwd")
-				{
-					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_KeyInPwd[1] = readerItem.GetDataItem(1);
-				}
-
 				if (readerItem.GetDataItem(0) == "LockStation")
 				{
 					operation::getInstance()->tMsg.MsgEntry_LockStation[0] = readerItem.GetDataItem(1);
@@ -2285,45 +2049,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				{
 					operation::getInstance()->tMsg.MsgEntry_LowBal[1].clear();
 					operation::getInstance()->tMsg.MsgEntry_LowBal[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "MaxPinRetried")
-				{
-					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CMaxPinRetried")
-				{
-					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_MaxPinRetried[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "NoCard")
-				{
-					operation::getInstance()->tMsg.MsgEntry_NoCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_NoCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CNoCard")
-				{
-					operation::getInstance()->tMsg.MsgEntry_NoCard[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_NoCard[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "NoCHU")
-				{
-					operation::getInstance()->tMsg.MsgEntry_NoCHU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_NoCHU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CNoCHU")
-				{
-					operation::getInstance()->tMsg.MsgEntry_NoCHU[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_NoCHU[1] = readerItem.GetDataItem(1);
 				}
 
 				if (readerItem.GetDataItem(0) == "NoIU")
@@ -2421,19 +2146,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				{
 					operation::getInstance()->tMsg.MsgEntry_ReaderError[1].clear();
 					operation::getInstance()->tMsg.MsgEntry_ReaderError[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "ReKeyInPWD")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CReKeyInPWD")
-				{
-					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ReKeyInPWD[1] = readerItem.GetDataItem(1);
 				}
 
 				if (readerItem.GetDataItem(0) == "SameLastIU")
@@ -2605,32 +2317,7 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "SeasonRenewFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonRenewFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewFail[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonRenewOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonRenewOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonRenewOK[1] = readerItem.GetDataItem(1);
-				}
-
+				
 				if (readerItem.GetDataItem(0) == "SeasonTerminated")
 				{
 					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[0] = readerItem.GetDataItem(1);
@@ -2644,32 +2331,7 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "SelectTopupValue")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSelectTopupValue")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SelectTopupValue[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "SetPeriod")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SetPeriod[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_SetPeriod[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSetPeriod")
-				{
-					operation::getInstance()->tMsg.MsgEntry_SetPeriod[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SetPeriod[1] = readerItem.GetDataItem(1);
-				}
-
+				
 				if (readerItem.GetDataItem(0) == "SystemError")
 				{
 					operation::getInstance()->tMsg.MsgEntry_SystemError[0] = readerItem.GetDataItem(1);
@@ -2683,110 +2345,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					operation::getInstance()->tMsg.MsgEntry_SystemError[1] = readerItem.GetDataItem(1);
 				}
 
-				if (readerItem.GetDataItem(0) == "TakeATM")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TakeATM[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TakeATM[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTakeATM")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TakeATM[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TakeATM[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TakeReceipt")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTakeReceipt")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TakeReceipt[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TakeTicket")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TakeTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TakeTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTakeTicket")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TakeTicket[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TakeTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TicketByCashier")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTicketByCashier")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TicketByCashier[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TicketLocked")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TicketLocked[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TicketLocked[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTicketLocked")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TicketLocked[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TicketLocked[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TopupExceedMax")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTopupExceedMax")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TopupExceedMax[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TopupFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TopupFail[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TopupFail[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTopupFail")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TopupFail[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TopupFail[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "TopupOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TopupOK[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_TopupOK[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTopupOK")
-				{
-					operation::getInstance()->tMsg.MsgEntry_TopupOK[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_TopupOK[1] = readerItem.GetDataItem(1);
-				}
-
 				if (readerItem.GetDataItem(0) == "ValidSeason")
 				{
 					operation::getInstance()->tMsg.MsgEntry_ValidSeason[0] = readerItem.GetDataItem(1);
@@ -2798,97 +2356,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				{
 					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1].clear();
 					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMCommError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMCommError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMCommError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMCommError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMCommError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMCommError[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMError")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMError[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMHostProblem")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMHostProblem")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMHostProblem[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMLineProblem")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMLineProblem")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMLineProblem[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMLogon")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMLogon[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMLogon[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMLogon")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMLogon[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMLogon[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMLogonCard")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMLogonCard")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMLogonCard[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "VMTimeout")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMTimeout[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_VMTimeout[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVMTimeout")
-				{
-					operation::getInstance()->tMsg.MsgEntry_VMTimeout[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VMTimeout[1] = readerItem.GetDataItem(1);
 				}
 
 				if (readerItem.GetDataItem(0) == "VVIP")
@@ -2915,32 +2382,6 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				{
 					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1].clear();
 					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "WithIU")
-				{
-					operation::getInstance()->tMsg.MsgEntry_WithIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_WithIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CWithIU")
-				{
-					operation::getInstance()->tMsg.MsgEntry_WithIU[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_WithIU[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "WrongATM")
-				{
-					operation::getInstance()->tMsg.MsgEntry_WrongATM[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgEntry_WrongATM[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CWrongATM")
-				{
-					operation::getInstance()->tMsg.MsgEntry_WrongATM[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_WrongATM[1] = readerItem.GetDataItem(1);
 				}
 
 				if (readerItem.GetDataItem(0) == "E1enhancedMCParking")
@@ -2989,5 +2430,346 @@ DBError db::loadmessage()
 	}
 
 	return retErr;
+}
+
+string  db::GetPartialSeasonMsg(int iTransType)
+{
+    int r = -1;
+	vector<ReaderItem> tResult;
+
+	r = localdb->SQLSelect("SELECT Description FROM trans_type where trans_type =" + iTransType, &tResult, true);
+	if (r != 0)
+	{
+		return "";
+	}
+
+	if (tResult.size()>0)
+	{
+		return std::string (tResult[0].GetDataItem(0));
+	}
+	return "";
+}
+
+void db::moveOfflineTransToCentral()
+{
+	time_t vfdate,vtdate;
+	CE_Time vfdt,vtdt;
+	int r=-1;// success flag
+	std::string tableNm="";
+	tEntryTrans_Struct ter;
+	tExitTrans_Struct tex;
+	int s=-1;
+	Ctrl_Type ctrl;
+	vector<ReaderItem> selResult;
+	vector<ReaderItem> tResult;
+	std::string sqlStmt;
+	int j;
+	int d=-1;
+	int k;
+
+	operation::getInstance()->tProcess.offline_status=0;
+	
+	if(operation::getInstance()->gtStation.iType==tientry)
+	{
+		
+		r = localdb->SQLSelect("SELECT count(iu_tk_no) FROM Entry_Trans",&tResult,false);
+		if(r!=0) m_local_db_err_flag=1;
+		else 
+		{
+			m_local_db_err_flag=0;
+			k=std::stoi(tResult[0].GetDataItem(0));
+			operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Entry trans to be upload.","DB");
+			if(k > 0) operation::getInstance()->tProcess.offline_status=1;
+		}
+	}
+	else if(operation::getInstance()->gtStation.iType==tiExit)
+	{
+		
+		r= localdb->SQLSelect("SELECT count(iu_tk_no) FROM Exit_Trans",&tResult,false);
+		if(r!=0) m_local_db_err_flag=1;
+		else 
+		{
+			m_local_db_err_flag=0;
+			k=std::stoi(tResult[0].GetDataItem(0));
+			operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Enxit trans to be upload.", "DB");
+			if(k > 0)  operation::getInstance()->tProcess.offline_status=1;
+		}
+	}
+	
+	if (operation::getInstance()->tProcess.offline_status ==0) {return;}
+
+	try {
+		if(operation::getInstance()->gtStation.iType==tientry)
+		{
+			tableNm="Entry_Trans";
+			ctrl=s_Entry;
+			std::string dtFormat= std::string(1, '"')+ "%Y-%m-%d %H:%i:%s" + std::string(1, '"') ;
+			sqlStmt= "SELECT Station_ID,Entry_Time,iu_tk_No,";
+			sqlStmt=sqlStmt + "trans_type,Status";
+			sqlStmt=sqlStmt + ",TK_SerialNo";
+			sqlStmt=sqlStmt + ",Card_Type";
+			sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
+			sqlStmt=sqlStmt +  ",gst_amt";
+			sqlStmt = sqlStmt + ",lpr";
+			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Entry_Time desc limit 10";
+		}
+		else if(operation::getInstance()->gtStation.iType==tiExit)
+		{
+			tableNm="Exit_Trans";
+			ctrl=s_Exit;
+			std::string dtFormat= std::string(1, '"')+ "%Y-%m-%d %H:%i:%s" + std::string(1, '"') ;
+
+			sqlStmt= "SELECT Station_ID,Exit_Time,iu_tk_No,";
+			sqlStmt=sqlStmt + "card_mc_no,trans_type,status,";
+			sqlStmt=sqlStmt + "parked_time,Parking_Fee,Paid_Amt,Receipt_No,";
+			sqlStmt=sqlStmt + "Redeem_amt,Redeem_time,Redeem_no";
+			sqlStmt=sqlStmt +  ",gst_amt,chu_debit_code,Card_Type,Top_Up_Amt";
+			sqlStmt = sqlStmt + ",lpr";
+			
+			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Exit_Time desc limit 10";
+		}
+		
+		r = localdb->SQLSelect(sqlStmt,&selResult,true);
+		if(r!=0) m_local_db_err_flag=1;
+		else  m_local_db_err_flag=0;
+
+		if (selResult.size()>0){
+			operation::getInstance()->writelog("uploading  " + std::to_string (selResult.size()) + " Records: Started", "DB");
+			for(j=0;j<selResult.size();j++){
+				
+				if(operation::getInstance()->gtStation.iType==tientry)
+				{
+					ter.esid=selResult[j].GetDataItem(0);
+					ter.sEntryTime=selResult[j].GetDataItem(1);
+					ter.sIUTKNo=selResult[j].GetDataItem(2);
+					ter.iTransType=std::stoi(selResult[j].GetDataItem(3));
+					ter.iStatus=std::stoi(selResult[j].GetDataItem(4));
+					ter.sSerialNo=selResult[j].GetDataItem(5);
+					ter.iCardType=std::stoi(selResult[j].GetDataItem(6));
+					ter.sCardNo=selResult[j].GetDataItem(7);
+					ter.sPaidAmt=std::stof(selResult[j].GetDataItem(8));
+					ter.sFee=std::stof(selResult[j].GetDataItem(9));
+					ter.sGSTAmt=std::stof(selResult[j].GetDataItem(10));
+					ter.sLPN[0] = selResult[j].GetDataItem(11);
+					
+					s=insertTransToCentralEntryTransTmp(ter);
+				}
+				else if(operation::getInstance()->gtStation.iType==tiExit) 
+				{
+					tex.xsid=selResult[j].GetDataItem(0);
+					tex.sExitTime=selResult[j].GetDataItem(1);
+					tex.sIUNo=selResult[j].GetDataItem(2);
+					tex.sCardNo=selResult[j].GetDataItem(3);
+					tex.iTransType=std::stoi(selResult[j].GetDataItem(4));
+					tex.iStatus=std::stoi(selResult[j].GetDataItem(5));
+					tex.lParkedTime=std::stoi(selResult[j].GetDataItem(6));
+					tex.sFee=std::stof(selResult[j].GetDataItem(7));
+					tex.sPaidAmt=std::stof(selResult[j].GetDataItem(8));
+					tex.sReceiptNo=selResult[j].GetDataItem(9);
+					tex.sRedeemAmt=std::stof(selResult[j].GetDataItem(10));
+					tex.iRedeemTime=std::stoi(selResult[j].GetDataItem(11));
+					tex.sRedeemNo=selResult[j].GetDataItem(12);
+					tex.sGSTAmt=std::stof(selResult[j].GetDataItem(13));
+					tex.sCHUDebitCode=selResult[j].GetDataItem(14);
+					tex.iCardType=std::stoi(selResult[j].GetDataItem(15));
+					tex.sTopupAmt=std::stof(selResult[j].GetDataItem(16));
+					
+					s=insertTransToCentralExitTransTmp(tex);
+				}
+				
+				//insert record into central DB
+
+				if (s==0)
+				{
+					if(operation::getInstance()->gtStation.iType==tientry)
+					d=deleteLocalTrans (ter.sIUTKNo,ter.sEntryTime,ctrl);
+					else if(operation::getInstance()->gtStation.iType==tientry)
+					d=deleteLocalTrans (tex.sIUNo,tex.sExitTime,ctrl);
+					if (d==0) m_local_db_err_flag=0;
+					else m_local_db_err_flag=1;
+
+
+					//-----------------------
+					m_remote_db_err_flag=0;
+				}
+				else m_remote_db_err_flag=1;        
+			}
+			operation::getInstance()->writelog("uploading trans Records: End","DB");
+		}       
+	}
+	catch (const std::exception &e)
+	{
+		r=-1;// success flag
+		// cout << "ERROR: " << err << endl;
+		operation::getInstance()->writelog("DB: moveOfflineTransToCentral error: " + std::string(e.what()),"DB");
+		m_local_db_err_flag=1;
+	} 
+
+}
+
+int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
+{
+
+	int r=0;
+	CE_Time dt;
+	string sqstr="";
+	string tbName="";
+	tbName="Entry_Trans_tmp";
+	
+	//operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Started","DB");
+
+	// insert into Central trans tmp table
+	sqstr="INSERT INTO " + tbName +" (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
+	sqstr=sqstr + ",card_no,paid_amt,parking_fee";        
+	sqstr=sqstr + ",gst_amt";
+	sqstr=sqstr + ") Values ('" + ter.esid+ "',convert(datetime,'" + ter.sEntryTime+ "',120),'" + ter.sIUTKNo;
+	sqstr = sqstr +  "','" + std::to_string(ter.iTransType);
+	sqstr = sqstr + "','" + std::to_string(ter.iStatus) + "','" + ter.sSerialNo;
+	sqstr = sqstr + "','" + std::to_string(ter.iCardType);
+	sqstr = sqstr + "','" + ter.sCardNo + "','" + std::to_string(ter.sPaidAmt) + "','" + std::to_string(ter.sFee);
+	sqstr = sqstr + "','" + std::to_string(ter.sGSTAmt)+"'";
+	sqstr = sqstr +  ")";
+
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	//operation::getInstance()->writelog(sqstr,"db");
+	
+	if (r==0) operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime   + " INTO "+ tbName +" : Success","DB");
+	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Fail","DB");
+
+
+	if(r!=0) m_remote_db_err_flag=1;
+	else m_remote_db_err_flag=0;
+
+	return r;
+}
+
+
+int db::insertTransToCentralExitTransTmp(tExitTrans_Struct tex)
+{
+
+	int r=0;
+	CE_Time dt;
+	string sqstr="";
+	string tbName="";
+	tbName="Exit_Trans_tmp";
+	
+	
+	operation::getInstance()->writelog("Central DB: INSERT IUNo= " + tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName +" : Started","DB");
+
+	// insert into Central trans tmp table
+	sqstr="INSERT INTO " + tbName +" (Station_ID,Exit_Time,IU_Tk_No,card_mc_no,trans_type,parked_time,parking_fee,paid_amt,receipt_no,status";
+	sqstr=sqstr + ",redeem_amt,redeem_time,redeem_no";        
+	sqstr=sqstr + ",gst_amt,chu_debit_code,card_type,top_up_amt";
+	sqstr=sqstr + ") Values ('" + tex.xsid+ "',convert(datetime,'" + tex.sExitTime+ "',120),'" + tex.sIUNo;
+	sqstr = sqstr +  "','" +tex.sCardNo+  "','" +std::to_string(tex.iTransType);
+	sqstr = sqstr +  "','" +std::to_string(tex.lParkedTime) + "','"+ std::to_string(tex.sFee);
+	sqstr = sqstr +  "','" +std::to_string(tex.sPaidAmt) + "','"+tex.sReceiptNo +  "','" + std::to_string(tex.iStatus);
+	sqstr = sqstr +  "','" +std::to_string(tex.sRedeemAmt) + "','"+std::to_string(tex.iRedeemTime) + "','"+tex.sRedeemNo;
+	sqstr = sqstr +  "','" +std::to_string(tex.sGSTAmt) + "','"+tex.sCHUDebitCode + "','"+std::to_string(tex.iCardType);
+	sqstr = sqstr +  "','" +std::to_string(tex.sTopupAmt)+"'";
+	sqstr = sqstr +  ")";
+
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+	
+	if (r==0) operation::getInstance()->writelog("Central DB: INSERT IUNo= " + tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName +" : Success","DB");
+	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " +  tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName  +" : Fail","DB");
+
+
+	if(r!=0) m_remote_db_err_flag=1;
+	else m_remote_db_err_flag=0;
+
+	return r;
+}
+
+int db:: deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl)
+{
+
+	std::string sqlStmt;
+	std::string tbName="";
+	vector<ReaderItem> selResult;
+	int r=-1;// success flag
+
+	try {
+
+		switch (ctrl)
+		{
+		case s_Entry:
+			tbName="Entry_Trans";
+			//operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Entry_Trans: Started","DB");
+			sqlStmt="Delete from " +tbName +" WHERE iu_tk_no='"+ iuno + "' AND Entry_Time='" + trantime  +"'" ;
+			break;
+		case s_Exit:
+			tbName="Exit_Trans";
+			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Exit_Trans: Started","DB");
+			sqlStmt="Delete from " +tbName +" WHERE iu_tk_no='"+ iuno + "' AND exit_time='" + trantime  +"'" ;
+			break;
+
+		}
+		
+		r= localdb->SQLExecutNoneQuery(sqlStmt);
+		//----------------------------------------------
+
+		if(r==0)
+		{
+			m_local_db_err_flag=0;
+			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From " + tbName + ": Success","DB");
+		}
+
+		else
+		{
+			m_local_db_err_flag=1;
+			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From " + tbName + ": Fail","DB");
+		}
+		
+		
+
+	}
+	catch (const std::exception &e) //const mysqlx::Error &err
+	{
+		
+		switch (ctrl)
+		{
+		case s_Entry:
+			
+			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Entry_Trans: Fail","DB");
+			break;
+		case s_Exit:
+			
+			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Exit_Trans: Fail","DB");
+			break;
+
+		}
+		
+		operation::getInstance()->writelog("Local DB: deleteLocalTrans error: " + std::string(e.what()),"db"); 
+		r=-1;
+		m_local_db_err_flag=1;
+	} 
+	return r;
+}
+
+int db::clearseason()
+{
+	std::string tableNm="season_mst";
+	
+	std::string sqlStmt;
+	
+	int r=-1;// success flag
+	try {
+
+		sqlStmt="truncate table " + tableNm;
+
+		r=localdb->SQLExecutNoneQuery(sqlStmt);
+
+		if(r==0) m_local_db_err_flag=0;
+		else m_local_db_err_flag=1;
+	}
+	catch (const std::exception &e)
+	{
+		operation::getInstance()->writelog("DB: local db error in clearing: " + std::string(e.what()),"DB");
+		r=-1;
+		m_local_db_err_flag=1;
+	} 
+	return r;
 }
 
