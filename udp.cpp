@@ -79,14 +79,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 	case CmdCarparkfull:
 		operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 		i=stoi(pField.Field(3));
-		if(i==0)
-		{
-			operation::getInstance()->tProcess.gbcarparkfull = 0;
-		}
-		else if(i==1)
-		{
-			operation::getInstance()->tProcess.gbcarparkfull = 1;
-		}
+		operation::getInstance()->tProcess.gbcarparkfull = i;
 		break;
 	case CmdClearSeason:
 		operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -105,7 +98,6 @@ void udpclient::processdata (const char* data, std::size_t length)
 		operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 		sData = pField.Field(3);
 		operation::getInstance()->ShowTotalLots(sData);
-		//display??
 		break;
 	default:
 		break;

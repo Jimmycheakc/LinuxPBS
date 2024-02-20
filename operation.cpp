@@ -40,10 +40,6 @@ void operation::OperationInit(io_context& ioContext)
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
     tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
     tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
-    tProcess.gbLoopAIsOn = false;
-    tProcess.gbLoopBIsOn = false;
-    tProcess.gbLoopCIsOn = false;
-
     //
     Setdefaultparameter();
     //
@@ -70,9 +66,7 @@ void operation::OperationInit(io_context& ioContext)
     m_db->loadParam();
     m_db->loadvehicletype();
     //
-    tProcess.gsBroadCastIP = "192.168.2.255";//getIPAddress();
-    std::cout << "tProcess.gsBroadCastIP = " << tProcess.gsBroadCastIP << std::endl;
-
+    tProcess.gsBroadCastIP = getIPAddress();
     try {
         m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
         m_udp->socket_.set_option(socket_base::broadcast(true));
@@ -84,7 +78,7 @@ void operation::OperationInit(io_context& ioContext)
    
     Initdevice(ioContext);
     
-    ShowLEDMsg("EPS in OPeration^have a nice day!", "EPS in OPeration^Have a nice day!");
+    ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
 
     iRet= m_db->FnGetVehicleType("001");
 
@@ -320,6 +314,9 @@ void operation:: Setdefaultparameter()
         tPBSError[i].ErrCode =0;
 	    tPBSError[i].ErrMsg = "";
     }
+    tProcess.gbLoopAIsOn = false;
+    tProcess.gbLoopBIsOn = false;
+    tProcess.gbLoopCIsOn = false;
 
 }
 
@@ -605,8 +602,8 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
 
 int operation::GetVTypeFromLoop()
 {
-    int ret = 0;
-
+    //car: 1 M/C: 7 Lorry: 4
+    int ret = 1;
     if (operation::getInstance()->tProcess.gbLoopAIsOn == true && operation::getInstance()->tProcess.gbLoopBIsOn == true)
     {
         ret = 1;
@@ -615,8 +612,7 @@ int operation::GetVTypeFromLoop()
     {
         ret = 7;
     }
-   // 0: car  2: M/C  1: Lorry 
-    
+   
     return ret;
 
 }
