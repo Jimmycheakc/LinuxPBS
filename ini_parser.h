@@ -28,12 +28,6 @@ public:
     std::string FnGetLPRErrorCount() const;
     std::string FnGetBlockIUPrefix() const;
 
-    // Confirm [setting]
-    int FnGetAntennaId() const;
-    int FnGetAntennaMaxRetry() const;
-    int FnGetAntennaInqTO() const;
-    int FnGetAntennaMinOKtimes() const;
-
     // Confirm [DI]
     int FnGetLoopA() const;
     int FnGetLoopC() const;
@@ -76,13 +70,6 @@ private:
     std::string LPRErrorTime_;
     std::string LPRErrorCount_;
     std::string BlockIUPrefix_;
-
-
-    // Confirm [setting]
-    int AntennaID_;
-    int AntennaMaxRetry_;
-    int AntennaInqTO_;
-    int AntennaMinOKtimes_;
 
     // Confirm [DI]
     int LoopA_;

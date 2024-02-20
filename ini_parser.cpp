@@ -41,12 +41,6 @@ void IniParser::FnReadIniFile()
     LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");
     LPRErrorCount_                  = pt.get<std::string>("setting.LPRErrorCount", "");
     BlockIUPrefix_                  = pt.get<std::string>("setting.BlockIUPrefix", "");
-    
-    // Confirm [setting]
-    AntennaID_                      = pt.get<int>("setting.AntennaId");
-    AntennaMaxRetry_                = pt.get<int>("setting.AntennaMaxRetry");
-    AntennaInqTO_                   = pt.get<int>("setting.AntennaInqTO");
-    AntennaMinOKtimes_              = pt.get<int>("setting.AntennaMinOKtimes");
 
     // Confirm [DI]
     LoopA_                          = pt.get<int>("DI.LoopA");
@@ -157,28 +151,6 @@ std::string IniParser::FnGetLPRErrorCount() const
 std::string IniParser::FnGetBlockIUPrefix() const
 {
     return BlockIUPrefix_;
-}
-
-// Confirm [setting]
-int IniParser::FnGetAntennaId() const
-{
-    return AntennaID_;
-}
-
-
-int IniParser::FnGetAntennaMaxRetry() const
-{
-    return AntennaMaxRetry_;
-}
-
-int IniParser::FnGetAntennaInqTO() const
-{
-    return AntennaInqTO_;
-}
-
-int IniParser::FnGetAntennaMinOKtimes() const
-{
-    return AntennaMinOKtimes_;
 }
 
 // Confirm [DI]
