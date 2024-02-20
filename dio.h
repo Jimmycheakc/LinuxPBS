@@ -26,7 +26,9 @@ public:
         BARRIER_DOOR_OPEN_EVENT = 10,
         BARRIER_DOOR_CLOSE_EVENT = 11,
         BARRIER_STATUS_ON_EVENT = 12,
-        BARRIER_STATUS_OFF_EVENT = 13
+        BARRIER_STATUS_OFF_EVENT = 13,
+        MANUAL_OPEN_BARRIED_ON_EVENT = 14,
+        MANUAL_OPEN_BARRIED_OFF_EVENT = 15
     };
 
     static DIO* getInstance();
@@ -44,6 +46,7 @@ public:
     int FnGetStationDoorStatus() const;
     int FnGetBarrierDoorStatus() const;
     int FnGetBarrierStatusStatus() const;
+    int FnGetManualOpenBarrierStatus() const;
 
     /**
      * Singleton DIO should not be cloneable.
@@ -65,6 +68,7 @@ private:
     int station_door_open_di_;
     int barrier_door_open_di_;
     int barrier_status_di_;
+    int manual_open_barrier_di_;
     int loop_a_di_last_val_;
     int loop_b_di_last_val_;
     int loop_c_di_last_val_;
@@ -72,6 +76,7 @@ private:
     int station_door_open_di_last_val_;
     int barrier_door_open_di_last_val_;
     int barrier_status_di_last_val_;
+    int manual_open_barrier_di_last_val_;
     int open_barrier_do_;
     int lcd_backlight_do_;
     bool isDIOMonitoringThreadRunning_;

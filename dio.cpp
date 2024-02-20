@@ -17,6 +17,7 @@ DIO::DIO()
     station_door_open_di_(0),
     barrier_door_open_di_(0),
     barrier_status_di_(0),
+    manual_open_barrier_di_(0),
     open_barrier_do_(0),
     lcd_backlight_do_(0),
     loop_a_di_last_val_(0),
@@ -26,6 +27,7 @@ DIO::DIO()
     station_door_open_di_last_val_(0),
     barrier_door_open_di_last_val_(0),
     barrier_status_di_last_val_(0),
+    manual_open_barrier_di_last_val_(0),
     isDIOMonitoringThreadRunning_(false)
 {
     logFileName_ = "dio";
@@ -50,6 +52,7 @@ void DIO::FnDIOInit()
     station_door_open_di_ = getInputPinNum(IniParser::getInstance()->FnGetStationDooropen());
     barrier_door_open_di_ = getInputPinNum(IniParser::getInstance()->FnGetBarrierDooropen());
     barrier_status_di_ = getInputPinNum(IniParser::getInstance()->FnGetBarrierStatus());
+    manual_open_barrier_di_ = getInputPinNum(IniParser::getInstance()->FnGetManualOpenBarrier());
     open_barrier_do_ = getOutputPinNum(IniParser::getInstance()->FnGetOpenbarrier());
     lcd_backlight_do_ = getOutputPinNum(IniParser::getInstance()->FnGetLCDbacklight());
 
@@ -91,6 +94,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         int station_door_open_curr_val = GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_)->FnGetValue();
         int barrier_door_open_curr_val = GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue();
         int barrier_status_curr_value = GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue();
+        int manual_open_barrier_status_curr_value = GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue();
         
         // Case : Loop A on, Loop B off 
         if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
@@ -189,6 +193,15 @@ void DIO::monitoringDIOChangeThreadFunction()
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_STATUS_OFF_EVENT));
         }
 
+        if (manual_open_barrier_status_curr_value == GPIOManager::GPIO_HIGH && manual_open_barrier_di_last_val_ == GPIOManager::GPIO_LOW)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT));
+        }
+        else if (manual_open_barrier_status_curr_value == GPIOManager::GPIO_LOW && manual_open_barrier_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT));
+        }
+
         loop_a_di_last_val_ = loop_a_curr_val;
         loop_b_di_last_val_ = loop_b_curr_val;
         loop_c_di_last_val_ = loop_c_curr_val;
@@ -196,6 +209,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         station_door_open_di_last_val_ = station_door_open_curr_val;
         barrier_door_open_di_last_val_ = barrier_door_open_curr_val;
         barrier_status_di_last_val_ = barrier_status_curr_value;
+        manual_open_barrier_di_last_val_ = manual_open_barrier_status_curr_value;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
@@ -276,6 +290,13 @@ int DIO::FnGetBarrierStatusStatus() const
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
     return GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue();
+}
+
+int DIO::FnGetManualOpenBarrierStatus() const
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue();
 }
 
 int DIO::getInputPinNum(int pinNum)

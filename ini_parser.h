@@ -36,6 +36,7 @@ public:
     int FnGetStationDooropen() const;
     int FnGetBarrierDooropen() const;
     int FnGetBarrierStatus() const;
+    int FnGetManualOpenBarrier() const;
 
     // Confirm [DO]
     int FnGetOpenbarrier() const;
@@ -79,6 +80,7 @@ private:
     int StationDooropen_;
     int BarrierDooropen_;
     int BarrierStatus_;
+    int ManualOpenBarrier_;
 
     // Confirm [DO]
     int Openbarrier_;

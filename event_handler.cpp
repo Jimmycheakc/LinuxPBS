@@ -75,9 +75,9 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         int value = intEvent->data;
         // Temp: Add handling in future
         
-        std::stringstream ss;
-        ss << __func__ << " Successfully, Data : " << value;
-        Logger::getInstance()->FnLog(ss.str());
+        //std::stringstream ss;
+        //ss << __func__ << " Successfully, Data : " << value;
+        //Logger::getInstance()->FnLog(ss.str());
         operation:: getInstance()->HandlePBSError(AntennaError,value);
     }
     else
@@ -102,9 +102,9 @@ bool EventHandler::handleAntennaPower(const BaseEvent* event)
         bool value = boolEvent->data;
         // Temp: Add handling in future
 
-        std::stringstream ss;
-        ss << __func__ << " Successfully, Data : " << value;
-        Logger::getInstance()->FnLog(ss.str());
+        //std::stringstream ss;
+        //ss << __func__ << " Successfully, Data : " << value;
+        //Logger::getInstance()->FnLog(ss.str());
         operation::getInstance()->HandlePBSError(AntennaPowerOnOff,int(boolEvent->data));
     }
     else
@@ -423,34 +423,40 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
+                operation::getInstance()->tProcess.gbLoopAIsOn = true;
                 operation::getInstance()->LoopACome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
+                operation::getInstance()->tProcess.gbLoopAIsOn = false;
                 operation::getInstance()->LoopAGone();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_B_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_ON_EVENT");
+                operation::getInstance()->tProcess.gbLoopBIsOn = true;
                 break;
             }
             case DIO::DIO_EVENT::LOOP_B_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_OFF_EVENT");
+                operation::getInstance()->tProcess.gbLoopBIsOn = false;
                 break;
             }
             case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_ON_EVENT");
+                operation::getInstance()->tProcess.gbLoopCIsOn = true;
                 operation::getInstance()->LoopCCome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_OFF_EVENT");
+                operation::getInstance()->tProcess.gbLoopCIsOn = false;
                 operation::getInstance()->LoopCGone();
                 break;
             }
@@ -492,6 +498,16 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT");
                 break;
             }
             default:

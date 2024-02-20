@@ -28,10 +28,12 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
 {
     auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
 
-    Logger::getInstance()->FnLog("Timer expired!");
+    //Logger::getInstance()->FnLog("Timer expired!");
 
-    usleep(2000000);
+   //------ timer process start
 
+
+   //--------
     auto end = std::chrono::steady_clock::now(); // Measure the end time of the handler execution
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start); // Calculate the duration of the handler execution
 

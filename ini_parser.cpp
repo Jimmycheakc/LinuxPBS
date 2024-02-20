@@ -50,6 +50,7 @@ void IniParser::FnReadIniFile()
     StationDooropen_                = pt.get<int>("DI.StationDooropen");
     BarrierDooropen_                = pt.get<int>("DI.BarrierDooropen");
     BarrierStatus_                  = pt.get<int>("DI.BarrierStatus");
+    ManualOpenBarrier_              = pt.get<int>("DI.ManualOpenBarrier");
 
     // Confirm [DO]
     Openbarrier_                    = pt.get<int>("DO.Openbarrier");
@@ -187,6 +188,11 @@ int IniParser::FnGetBarrierDooropen() const
 int IniParser::FnGetBarrierStatus() const
 {
     return BarrierStatus_;
+}
+
+int IniParser::FnGetManualOpenBarrier() const
+{
+    return ManualOpenBarrier_;
 }
 
 // Confirm [DO]

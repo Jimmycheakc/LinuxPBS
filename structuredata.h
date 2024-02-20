@@ -300,7 +300,10 @@ struct  tProcess_Struct
 	string fsLastPaidIU;
 	string fsLastReadCard;
 	string gsDefaultIU; 
-	string gsBroadCastIP; 
+	string gsBroadCastIP;
+	bool gbLoopAIsOn;
+	bool gbLoopBIsOn;
+	bool gbLoopCIsOn;
 };
 
 

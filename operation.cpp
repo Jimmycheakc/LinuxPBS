@@ -10,6 +10,7 @@
 #include "ini_parser.h"
 #include "structuredata.h"
 #include "db.h"
+#include "led.h"
 #include "lcd.h"
 #include "log.h"
 #include "udp.h"
@@ -39,6 +40,10 @@ void operation::OperationInit(io_context& ioContext)
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
     tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
     tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
+    tProcess.gbLoopAIsOn = false;
+    tProcess.gbLoopBIsOn = false;
+    tProcess.gbLoopCIsOn = false;
+
     //
     Setdefaultparameter();
     //
@@ -79,7 +84,7 @@ void operation::OperationInit(io_context& ioContext)
    
     Initdevice(ioContext);
     
-    ShowLEDMsg("EPS in OPeration^have a nice day!","Please Insert CashCard");
+    ShowLEDMsg("EPS in OPeration^have a nice day!", "EPS in OPeration^Have a nice day!");
 
     iRet= m_db->FnGetVehicleType("001");
 
@@ -189,14 +194,14 @@ std::string operation::getSerialPort(const std::string& key)
 {
     std::map<std::string, std::string> serial_port_map = 
     {
-        {"COM1", "/dev/ttyCH9344USB7"}, // J3
-        {"COM2", "/dev/ttyCH9344USB6"}, // J4
-        {"COM3", "/dev/ttyCH9344USB5"}, // J5
-        {"COM4", "/dev/ttyCH9344USB4"}, // J6
-        {"COM5", "/dev/ttyCH9344USB3"}, // J7
-        {"COM6", "/dev/ttyCH9344USB2"}, // J8
-        {"COM7", "/dev/ttyCH9344USB1"}, // J9
-        {"COM8", "/dev/ttyCH9344USB0"}  // J10
+        {"1", "/dev/ttyCH9344USB7"}, // J3
+        {"2", "/dev/ttyCH9344USB6"}, // J4
+        {"3", "/dev/ttyCH9344USB5"}, // J5
+        {"4", "/dev/ttyCH9344USB4"}, // J6
+        {"5", "/dev/ttyCH9344USB3"}, // J7
+        {"6", "/dev/ttyCH9344USB2"}, // J8
+        {"7", "/dev/ttyCH9344USB1"}, // J9
+        {"8", "/dev/ttyCH9344USB0"}  // J10
     };
 
     auto it = serial_port_map.find(key);
@@ -214,14 +219,13 @@ std::string operation::getSerialPort(const std::string& key)
 void operation::Initdevice(io_context& ioContext)
 {
     LCD::getInstance()->FnLCDInit();
-    Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort("COM3"));
-    LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort("COM4"));
-  //LED401 giCommportLED401
-  //LED226 giCommPortLED
-  //LCD
+    Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
+    LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
+    LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortLED)), LED::LED614_MAX_CHAR_PER_ROW);
+    LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED226_MAX_CHAR_PER_ROW);
     LCD::getInstance()->FnLCDInit();
     GPIOManager::getInstance()->FnGPIOInit();
-    DIO::getInstance()-> FnDIOInit();
+    DIO::getInstance()->FnDIOInit();
 }
 
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
@@ -233,28 +237,38 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 
     char* sLCDMsg = const_cast<char*>(LCDMsg.data());
     LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
+    LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
 }
 
 void operation::PBSEntry(string sIU)
 {
     int iRet;
+    int iEntryOK=0;
 
     if(sIU.length()==10) 
 	    tEntry.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
 	else {
         tEntry.iTransType=GetVTypeFromLoop();
     }
-    
+
     iRet = CheckSeason(sIU,1);
 
-   
-
-    if (tProcess.gbcarparkfull ==1 and tEntry.iTransType != 9)
+    if (tProcess.gbcarparkfull ==1 and tEntry.iTransType != 9 and tParas.giFullAction > iNoAct)
     {
 
     } 
-    SaveEntry();
-    Openbarrier();
+    if (iEntryOK == 1) {
+        //------
+        CE_Time dt;
+	    string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
+	    tEntry.sEntryTime=dtStr;
+        tEntry.sIUTKNo = sIU;
+        tEntry.iStatus = 0;
+        //---------
+        SaveEntry();
+        Openbarrier();
+    }
+    
 
 }
 
@@ -344,8 +358,14 @@ void operation::SendMsg2Server(string cmdcode,string dstr)
 int operation::CheckSeason(string sIU,int iInOut)
 {
    int iRet;
+   string sMsg;
+   string sLCD;
    iRet = db::getInstance()->isvalidseason(sIU,iInOut,gtStation.iZoneID);
    //showLED message
+   if (iRet != 8 ) {
+        FormatSeasonMsg(iRet, sIU, sMsg, sLCD);
+        ShowLEDMsg(sMsg,sLCD);
+   } 
    return iRet;
 }
 
@@ -357,7 +377,7 @@ void operation::writelog(string sMsg, string soption)
 
 }
 
-void operation::HandlePBSError(EPSError iEPSErr, int iErrCode=0)
+void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
 {
 
     string sErrMsg = "";
@@ -554,22 +574,39 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode=0)
 
 int operation::GetVTypeFromLoop()
 {
-    
+    int ret = 0;
+
+    if (operation::getInstance()->tProcess.gbLoopAIsOn == true && operation::getInstance()->tProcess.gbLoopBIsOn == true)
+    {
+        ret = 1;
+    }
+    else if (operation::getInstance()->tProcess.gbLoopAIsOn == true || operation::getInstance()->tProcess.gbLoopBIsOn == true)
+    {
+        ret = 7;
+    }
    // 0: car  2: M/C  1: Lorry 
     
-    return 0;
+    return ret;
 
 }
 
 void operation::SaveEntry()
 {
+    int iRet;
     
     if (tEntry.sIUTKNo== "") return;
 
-    SendMsg2Server("90","Entry OK");
+    iRet = db::getInstance()->insertentrytrans(tEntry);
 
-    db::getInstance()->insertentrytrans(tEntry);
+    tPBSError[iDB].ErrNo = (iRet == iDBSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
 
+    std::string sMsg2Send = (iRet == iDBSuccess) ? "Entry OK" : (iRet == iCentralFail) ? "Entry Central Failed" : "Entry Local Failed";
+
+    sMsg2Send = tEntry.sIUTKNo + ",,,,,"+sMsg2Send;
+
+    if (tEntry.iStatus == 0) {
+        SendMsg2Server("90", sMsg2Send);
+    }
 
 }
 
@@ -578,4 +615,49 @@ void operation::ShowTotalLots(string totallots)
 
 }
 
+void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires)
+ {
+    
+    std::string sExp;
+    int i;
 
+    std::string sMsgPartialSeason;
+
+    if (gtStation.iType == tientry && tEntry.iTransType > 49) {
+        sMsgPartialSeason = db::getInstance()->GetPartialSeasonMsg(tEntry.iTransType);
+    } 
+
+    if (sMsgPartialSeason.empty()) {
+        sMsgPartialSeason = "Season";
+    }
+
+    writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(tEntry.iTransType),"opr");
+
+        switch (iReturn) {
+            case -1: 
+                writelog("DB error when Check season", "opr");
+                break;
+            case 0:  
+                sMsg = tMsg.MsgEntry_SeasonInvalid[0];
+                sLCD = tMsg.MsgEntry_SeasonInvalid[1];
+                break;
+            case 1:  
+                if (gtStation.iType == tientry) {
+                    sMsg = tMsg.MsgEntry_ValidSeason[0];
+                    sLCD = tMsg.MsgEntry_ValidSeason[1];
+                } 
+                break;
+            case 2: 
+                sMsg = tMsg.MsgEntry_SeasonExpired[0];
+                sLCD = tMsg.MsgEntry_SeasonExpired[1];
+                writelog("Season Expired", "opr");
+                break;
+            
+            default:
+                break;
+        }
+
+       // sMsg = Replace(sMsg, "Season", sMsgPartialSeason);
+       // sLCD = Replace(sLCD, "Season", sMsgPartialSeason);
+
+}

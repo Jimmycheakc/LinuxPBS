@@ -25,31 +25,32 @@ public:
     std::vector<struct tVType_Struct> tVType;
 
 
-     void OperationInit(io_context& ioContext);
-     void LoopACome();
-     void LoopAGone();
-     void LoopCCome();
-     void LoopCGone();
-     void VehicleCome(string sNo);
-     void Initdevice(io_context& ioContext);
-     void ShowLEDMsg(string LEDMsg, string LCDMsg);
-     void PBSEntry(string sIU);
-     void PBSExit(string sIU);
-     void Setdefaultparameter();
-     string getIPAddress(); 
-     void Sendmystatus();
-     void SendMsg2Server(string cmdcode,string dstr);
-     int  CheckSeason(string sIU,int iInOut);
-     void writelog(string sMsg, string soption);
-     void HandlePBSError(EPSError iEPSErr, int iErrCode);
-     int  GetVTypeFromLoop();
-     void SaveEntry();
-     void ShowTotalLots(string totallots);
+    void OperationInit(io_context& ioContext);
+    void LoopACome();
+    void LoopAGone();
+    void LoopCCome();
+    void LoopCGone();
+    void VehicleCome(string sNo);
+    void Initdevice(io_context& ioContext);
+    void ShowLEDMsg(string LEDMsg, string LCDMsg);
+    void PBSEntry(string sIU);
+    void PBSExit(string sIU);
+    void Setdefaultparameter();
+    string getIPAddress(); 
+    void Sendmystatus();
+    void SendMsg2Server(string cmdcode,string dstr);
+    int  CheckSeason(string sIU,int iInOut);
+    void writelog(string sMsg, string soption);
+    void HandlePBSError(EPSError iEPSErr, int iErrCode=0);
+    int  GetVTypeFromLoop();
+    void SaveEntry();
+    void ShowTotalLots(string totallots);
+    void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
 
 
-     void Openbarrier();
+    void Openbarrier();
 
-     void Clearme();
+    void Clearme();
 
      /**
      * Singleton opertation should not be cloneable.
