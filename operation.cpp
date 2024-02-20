@@ -219,10 +219,37 @@ std::string operation::getSerialPort(const std::string& key)
 void operation::Initdevice(io_context& ioContext)
 {
     LCD::getInstance()->FnLCDInit();
-    Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
-    LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
-    LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortLED)), LED::LED614_MAX_CHAR_PER_ROW);
-    LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED226_MAX_CHAR_PER_ROW);
+
+    if (tParas.giCommPortAntenna > 0)
+    {
+        Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
+    }
+
+    if (tParas.giCommPortLCSC > 0)
+    {
+        LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
+    }
+
+    if (tParas.giCommPortLED > 0)
+    {
+        int max_char_per_row = 0;
+
+        if (tParas.giLEDMaxChar < 20)
+        {
+            max_char_per_row =  LED::LED216_MAX_CHAR_PER_ROW;
+        }
+        else
+        {
+            max_char_per_row =  LED::LED226_MAX_CHAR_PER_ROW;
+        }
+        LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortLED)), max_char_per_row);
+    }
+
+    if (tParas.giCommportLED401 > 0)
+    {
+        LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
+    }
+
     LCD::getInstance()->FnLCDInit();
     GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
@@ -237,7 +264,11 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 
     char* sLCDMsg = const_cast<char*>(LCDMsg.data());
     LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
-    LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
+
+    if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED))) != nullptr)
+    {
+        LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
+    }
 }
 
 void operation::PBSEntry(string sIU)
@@ -610,9 +641,12 @@ void operation::SaveEntry()
 
 }
 
-void operation::ShowTotalLots(string totallots)
+void operation::ShowTotalLots(std::string totallots, std::string LEDId)
 {
-
+    if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401))) != nullptr)
+    {
+        LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401)))->FnLEDSendLEDMsg(LEDId, totallots, LED::Alignment::RIGHT);
+    }
 }
 
 void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires)

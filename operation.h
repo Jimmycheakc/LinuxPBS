@@ -44,7 +44,7 @@ public:
     void HandlePBSError(EPSError iEPSErr, int iErrCode=0);
     int  GetVTypeFromLoop();
     void SaveEntry();
-    void ShowTotalLots(string totallots);
+    void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
 
 

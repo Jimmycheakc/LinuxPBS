@@ -104,12 +104,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 	case CmdAvailableLots:
 		operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 		sData = pField.Field(3);
-		if (sData != "FULL"){
-			n = sData.length();
-			for (i = 4;  i<=n; --i ) {
-				sData=""+sData;
-			}
-		}
+		operation::getInstance()->ShowTotalLots(sData);
 		//display??
 		break;
 	default:
