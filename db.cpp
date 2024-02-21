@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <sstream>
 #include <sys/time.h>
+#include <boost/algorithm/string.hpp>
 #include "db.h"
 #include "log.h"
 #include "operation.h"
@@ -1787,8 +1788,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CCardReadingError")
 				{
-					operation::getInstance()->tMsg.MsgEntry_CardReadingError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_CardReadingError[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_CardReadingError[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_CardReadingError[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 			
@@ -1801,8 +1805,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CCardTaken")
 				{
-					operation::getInstance()->tMsg.MsgEntry_CardTaken[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_CardTaken[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_CardTaken[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_CardTaken[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "CarFullLED")
@@ -1833,8 +1840,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CDefaultIU")
 				{
-					operation::getInstance()->tMsg.MsgEntry_DefaultIU[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DefaultIU[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_DefaultIU[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_DefaultIU[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "DefaultLED")
@@ -1846,8 +1856,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CDefaultLED")
 				{
-					operation::getInstance()->tMsg.MsgEntry_DefaultLED[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DefaultLED[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_DefaultLED[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_DefaultLED[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "DefaultLED2")
@@ -1859,8 +1872,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CDefaultLED2")
 				{
-					operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_DefaultLED2[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "DefaultMsg2LED")
@@ -1890,8 +1906,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CESeasonWithinAllowance")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ESeasonWithinAllowance[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "ESPT3Parking")
@@ -1915,8 +1934,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CExpiringSeason")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ExpiringSeason[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "FullLED")
@@ -1928,8 +1950,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CFullLED")
 				{
-					operation::getInstance()->tMsg.MsgEntry_FullLED[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_FullLED[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_FullLED[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_FullLED[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "Idle")
@@ -1941,8 +1966,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CIdle")
 				{
-					operation::getInstance()->tMsg.MsgEntry_Idle[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_Idle[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_Idle[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_Idle[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "InsertCashcard")
@@ -1954,8 +1982,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CInsertCashcard")
 				{
-					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_InsertCashcard[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "IUProblem")
@@ -1967,8 +1998,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CIUProblem")
 				{
-					operation::getInstance()->tMsg.MsgEntry_IUProblem[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_IUProblem[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_IUProblem[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_IUProblem[1] = readerItem.GetDataItem(1);
+					}
 				}
 				
 				if (readerItem.GetDataItem(0) == "LockStation")
@@ -1980,8 +2014,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CLockStation")
 				{
-					operation::getInstance()->tMsg.MsgEntry_LockStation[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_LockStation[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_LockStation[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_LockStation[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "LoopA")
@@ -1993,8 +2030,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CLoopA")
 				{
-					operation::getInstance()->tMsg.MsgEntry_LoopA[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_LoopA[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_LoopA[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_LoopA[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "LoopAFull")
@@ -2006,8 +2046,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CLoopAFull")
 				{
-					operation::getInstance()->tMsg.MsgEntry_LoopAFull[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_LoopAFull[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_LoopAFull[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_LoopAFull[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "LorryFullLED")
@@ -2031,8 +2074,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CLowBal")
 				{
-					operation::getInstance()->tMsg.MsgEntry_LowBal[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_LowBal[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_LowBal[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_LowBal[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "NoIU")
@@ -2044,8 +2090,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CNoIU")
 				{
-					operation::getInstance()->tMsg.MsgEntry_NoIU[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_NoIU[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_NoIU[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_NoIU[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "NoNightParking2LED")
@@ -2063,8 +2112,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "COffline")
 				{
-					operation::getInstance()->tMsg.MsgEntry_Offline[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_Offline[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_Offline[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_Offline[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "PrinterError")
@@ -2076,8 +2128,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CPrinterError")
 				{
-					operation::getInstance()->tMsg.MsgEntry_PrinterError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_PrinterError[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_PrinterError[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_PrinterError[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "PrintingReceipt")
@@ -2089,8 +2144,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CPrintingReceipt")
 				{
-					operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_PrintingReceipt[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "Processing")
@@ -2102,8 +2160,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CProcessing")
 				{
-					operation::getInstance()->tMsg.MsgEntry_Processing[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_Processing[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_Processing[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_Processing[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "ReaderCommError")
@@ -2115,8 +2176,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CReaderCommError")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ReaderCommError[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "ReaderError")
@@ -2128,8 +2192,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CReaderError")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ReaderError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ReaderError[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ReaderError[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ReaderError[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SameLastIU")
@@ -2141,8 +2208,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSameLastIU")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SameLastIU[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SameLastIU[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SameLastIU[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SameLastIU[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "ScanEntryTicket")
@@ -2154,8 +2224,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CScanEntryTicket")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ScanEntryTicket[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "ScanValTicket")
@@ -2167,8 +2240,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CScanValTicket")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ScanValTicket[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonAsHourly")
@@ -2180,8 +2256,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonAsHourly")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonAsHourly[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonBlocked")
@@ -2193,8 +2272,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonBlocked")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonBlocked[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonExpired")
@@ -2206,8 +2288,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonExpired")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonExpired[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonInvalid")
@@ -2219,8 +2304,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonInvalid")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonInvalid[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonMultiFound")
@@ -2232,8 +2320,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonMultiFound")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonMultiFound[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonNotFound")
@@ -2245,8 +2336,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonNotFound")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonNotFound[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonNotStart")
@@ -2258,8 +2352,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonNotStart")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonNotStart[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonNotValid")
@@ -2271,8 +2368,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonNotValid")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonNotValid[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonOnly")
@@ -2284,8 +2384,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonOnly")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonOnly[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "SeasonPassback")
@@ -2297,8 +2400,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonPassback")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonPassback[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				
@@ -2311,8 +2417,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSeasonTerminated")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SeasonTerminated[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				
@@ -2325,8 +2434,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CSystemError")
 				{
-					operation::getInstance()->tMsg.MsgEntry_SystemError[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_SystemError[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_SystemError[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_SystemError[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "ValidSeason")
@@ -2338,8 +2450,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CValidSeason")
 				{
-					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_ValidSeason[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_ValidSeason[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_ValidSeason[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "VVIP")
@@ -2351,8 +2466,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CVVIP")
 				{
-					operation::getInstance()->tMsg.MsgEntry_VVIP[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_VVIP[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_VVIP[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_VVIP[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "WholeDayParking")
@@ -2364,8 +2482,11 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CWholeDayParking")
 				{
-					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1].clear();
-					operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1] = readerItem.GetDataItem(1);
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_WholeDayParking[1] = readerItem.GetDataItem(1);
+					}
 				}
 
 				if (readerItem.GetDataItem(0) == "E1enhancedMCParking")
