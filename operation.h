@@ -26,6 +26,7 @@ public:
 
 
     void OperationInit(io_context& ioContext);
+    bool FnIsOperationInitialized() const;
     void LoopACome();
     void LoopAGone();
     void LoopCCome();
@@ -38,6 +39,10 @@ public:
     void Setdefaultparameter();
     string getIPAddress(); 
     void Sendmystatus();
+    void FnSyncCentralDBTime();
+    void FnSendDIOInputStatusToMonitor(int pinNum, int pinValue);
+    void FnSendLogMessageToMonitor(std::string msg);
+    void FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg);
     void SendMsg2Server(string cmdcode,string dstr);
     int  CheckSeason(string sIU,int iInOut);
     void writelog(string sMsg, string soption);
@@ -73,5 +78,6 @@ private:
         delete operation_;
     };
     std::string getSerialPort(const std::string& key);
+    std::atomic<bool> isOperationInitialized_;
 
 };

@@ -22,7 +22,7 @@ operation* operation::operation_ = nullptr;
 
 operation::operation()
 {
-
+    isOperationInitialized_.store(false);
 }
 
 operation* operation::getInstance()
@@ -77,6 +77,8 @@ void operation::OperationInit(io_context& ioContext)
     }
    
     Initdevice(ioContext);
+
+    isOperationInitialized_.store(true);
     
     ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
 
@@ -85,7 +87,11 @@ void operation::OperationInit(io_context& ioContext)
     writelog ("Return Vehicle Type = "+ std::to_string(iRet), "opr");
 
     m_db->moveOfflineTransToCentral();
-   
+}
+
+bool operation::FnIsOperationInitialized() const
+{
+    return isOperationInitialized_.load();
 }
 
 void operation::LoopACome()
@@ -247,6 +253,7 @@ void operation::Initdevice(io_context& ioContext)
     LCD::getInstance()->FnLCDInit();
     GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
+    DIO::getInstance()->FnStartDIOMonitoring();
 }
 
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
@@ -372,6 +379,29 @@ void operation:: Sendmystatus()
 	str+="0;0,"+dt.DateTimeNumberOnlyString()+",";
 	SendMsg2Server("00",str);
 	
+}
+
+void operation::FnSyncCentralDBTime()
+{
+    m_db->synccentraltime();
+}
+
+void operation::FnSendDIOInputStatusToMonitor(int pinNum, int pinValue)
+{
+    std::string str = std::to_string(pinNum) + "," + std::to_string(pinValue);
+    SendMsg2Server("302", str);
+}
+
+void operation::FnSendLogMessageToMonitor(std::string msg)
+{
+    std::string str = "[" + gtStation.sName + "|" + std::to_string(gtStation.iSID) + "|" + "304" + "|" + msg + "|]";
+    m_udp->startsend(str);
+}
+
+void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg)
+{
+    std::string str = line1TextMsg + "," + line2TextMsg;
+    SendMsg2Server("305", str);
 }
 
 void operation::SendMsg2Server(string cmdcode,string dstr)

@@ -9,7 +9,7 @@
 using namespace boost::asio;
 using ip::udp;
 
-typedef enum {
+typedef enum : unsigned int{
 	CmdStatusEnquiry=13,
 	CmdUpdateSeason=20,
 	CmdDownloadMsg=22,
@@ -27,7 +27,8 @@ typedef enum {
 	CmdLockupbarrier=67,
 	CmdAvailableLots=68,
     CmdBroadcastSaveTrans=90,
-	CmdFeeTest=120
+	CmdFeeTest=120,
+    CmdSetDioOutput=303
 } udp_rx_command;
 
 class udpclient {

@@ -48,6 +48,8 @@ public:
     int FnGetBarrierStatusStatus() const;
     int FnGetManualOpenBarrierStatus() const;
 
+    int FnGetOutputPinNum(int pinNum);
+
     /**
      * Singleton DIO should not be cloneable.
      */

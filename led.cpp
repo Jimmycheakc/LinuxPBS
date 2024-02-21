@@ -1,5 +1,6 @@
 #include "led.h"
 #include "log.h"
+#include "operation.h"
 
 const char LED::STX1 = 0x02;
 const char LED::ETX1 = 0x0D;
@@ -99,6 +100,12 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
                 std::vector<char> msg_line2;
                 FnFormatDisplayMsg(LedId, LED::Line::SECOND, Line2Text, align, msg_line2);
                 boost::asio::write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()));
+
+                // Send LED Messages to Monitor
+                if (operation::getInstance()->FnIsOperationInitialized())
+                {
+                    operation::getInstance()->FnSendLEDMessageToMonitor(Line1Text, Line2Text);
+                }
             }
             else if (maxCharPerRow_ == LED614_MAX_CHAR_PER_ROW)
             {

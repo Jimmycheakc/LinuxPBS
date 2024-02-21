@@ -299,6 +299,13 @@ int DIO::FnGetManualOpenBarrierStatus() const
     return GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue();
 }
 
+int DIO::FnGetOutputPinNum(int pinNum)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
+
+    return getOutputPinNum(pinNum);
+}
+
 int DIO::getInputPinNum(int pinNum)
 {
     int ret = 0;

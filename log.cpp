@@ -4,6 +4,7 @@
 #include <boost/filesystem.hpp>
 #include "common.h"
 #include "ini_parser.h"
+#include "operation.h"
 #include "log.h"
 
 Logger* Logger::logger_ = nullptr;
@@ -129,6 +130,12 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
         {
             mainLogger->info(sLogMsg.str());
             mainLogger->flush();
+
+            // Send to Log Message to Monitor
+            if (operation::getInstance()->FnIsOperationInitialized())
+            {
+                operation::getInstance()->FnSendLogMessageToMonitor(sLogMsg.str());
+            }
         }
     }
 
