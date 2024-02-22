@@ -301,6 +301,7 @@ struct  tProcess_Struct
 	string fsLastReadCard;
 	string gsDefaultIU; 
 	string gsBroadCastIP;
+	bool gbLoopApresent;
 	bool gbLoopAIsOn;
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
@@ -548,6 +549,7 @@ struct  tMsg_Struct
 	std::string MsgEntry_WholeDayParking[2];
 	std::string MsgEntry_WithIU[2];
 	std::string MsgEntry_E1enhancedMCParking[2];
+	std::string MsgBlackList[2];
 };
 
 struct tseason_struct {
@@ -567,7 +569,7 @@ struct tseason_struct {
 	string redeem_time;
 	string holder_type;
 	string sub_zone_id;
-	 int found;
+	int found;
 };
 
 struct tPBSError_struct {

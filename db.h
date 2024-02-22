@@ -76,6 +76,7 @@ public:
 	int insertTransToCentralExitTransTmp(tExitTrans_Struct tex);
 	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
     int clearseason();
+    int IsBlackListIU(string sIU);
 
 
     /**

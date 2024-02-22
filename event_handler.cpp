@@ -423,139 +423,88 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
-                operation::getInstance()->tProcess.gbLoopAIsOn = true;
+                operation::getInstance()->tProcess.gbLoopApresent = true;
                 operation::getInstance()->LoopACome();
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopA(), 1);
                 break;
             }
             case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
-                operation::getInstance()->tProcess.gbLoopAIsOn = false;
                 operation::getInstance()->LoopAGone();
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopA(), 0);
                 break;
             }
             case DIO::DIO_EVENT::LOOP_B_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_ON_EVENT");
-                operation::getInstance()->tProcess.gbLoopBIsOn = true;
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopB(), 1);
                 break;
             }
             case DIO::DIO_EVENT::LOOP_B_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_B_OFF_EVENT");
-                operation::getInstance()->tProcess.gbLoopBIsOn = false;
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopB(), 0);
                 break;
             }
             case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_ON_EVENT");
-                operation::getInstance()->tProcess.gbLoopCIsOn = true;
                 operation::getInstance()->LoopCCome();
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopC(), 1);
                 break;
             }
             case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_OFF_EVENT");
-                operation::getInstance()->tProcess.gbLoopCIsOn = false;
                 operation::getInstance()->LoopCGone();
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopC(), 0);
                 break;
             }
             case DIO::DIO_EVENT::INTERCOM_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::INTERCOM_ON_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetIntercom(), 1);
                 break;
             }
             case DIO::DIO_EVENT::INTERCOM_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::INTERCOM_OFF_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetIntercom(), 0);
                 break;
             }
             case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetStationDooropen(), 1);
                 break;
             }
             case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetStationDooropen(), 0);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierDooropen(), 1);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierDooropen(), 0);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierStatus(), 1);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierStatus(), 0);
                 break;
             }
             case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT");
 
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetManualOpenBarrier(), 1);
+                operation::getInstance()->ManualOpenBarrier();
                 break;
             }
             case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT");
-
-                // Send to Input Pin Status to Monitor
-                operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetManualOpenBarrier(), 0);
                 break;
             }
             default:

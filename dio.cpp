@@ -6,6 +6,7 @@
 #include "gpio.h"
 #include "ini_parser.h"
 #include "log.h"
+#include "operation.h"
 
 DIO* DIO::dio_ = nullptr;
 
@@ -128,78 +129,124 @@ void DIO::monitoringDIOChangeThreadFunction()
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
         }
 
-        /*
+        // Start -- Check the input pin status for Loop A and Loop B and send to Monitor
         if (loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
+            operation::getInstance()->tProcess.gbLoopAIsOn = true;
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopA(), 1);
         }
         else if (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
+            operation::getInstance()->tProcess.gbLoopAIsOn = false;
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopA(), 0);
         }
 
         if (loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_B_ON_EVENT));
+            operation::getInstance()->tProcess.gbLoopBIsOn = true;
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopB(), 1);
         }
         else if (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
-            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_B_OFF_EVENT));
+            operation::getInstance()->tProcess.gbLoopBIsOn = false;
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopB(), 0);
         }
-        */
+        // End -- Check the input pin status for Loop A and Loop B and send to Monitor
         
         if (loop_c_curr_val == GPIOManager::GPIO_HIGH && loop_c_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_ON_EVENT));
+            
+            operation::getInstance()->tProcess.gbLoopCIsOn = true;
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopC(), 1);
         }
         else if (loop_c_curr_val == GPIOManager::GPIO_LOW && loop_c_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_OFF_EVENT));
+            
+            operation::getInstance()->tProcess.gbLoopCIsOn = false;
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopC(), 0);
         }
         
         if (intercom_curr_val == GPIOManager::GPIO_HIGH && intercom_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::INTERCOM_ON_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetIntercom(), 1);
         }
         else if (intercom_curr_val == GPIOManager::GPIO_LOW && intercom_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::INTERCOM_OFF_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetIntercom(), 0);
         }
         
         if (station_door_open_curr_val == GPIOManager::GPIO_HIGH && station_door_open_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::STATION_DOOR_OPEN_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetStationDooropen(), 1);
         }
         else if (station_door_open_curr_val == GPIOManager::GPIO_LOW && station_door_open_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::STATION_DOOR_CLOSE_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetStationDooropen(), 0);
         }
         
         if (barrier_door_open_curr_val == GPIOManager::GPIO_HIGH && barrier_door_open_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_DOOR_OPEN_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierDooropen(), 1);
         }
         else if (barrier_door_open_curr_val == GPIOManager::GPIO_LOW && barrier_door_open_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierDooropen(), 0);
         }
         
         if (barrier_status_curr_value == GPIOManager::GPIO_HIGH && barrier_status_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_STATUS_ON_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierStatus(), 1);
         }
         else if (barrier_status_curr_value == GPIOManager::GPIO_LOW && barrier_status_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_STATUS_OFF_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierStatus(), 0);
         }
 
         if (manual_open_barrier_status_curr_value == GPIOManager::GPIO_HIGH && manual_open_barrier_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetManualOpenBarrier(), 1);
         }
         else if (manual_open_barrier_status_curr_value == GPIOManager::GPIO_LOW && manual_open_barrier_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT));
+            
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetManualOpenBarrier(), 0);
         }
 
         loop_a_di_last_val_ = loop_a_curr_val;

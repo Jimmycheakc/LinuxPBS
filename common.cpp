@@ -44,6 +44,19 @@ std::string Common::FnGetDateTime()
     return oss.str();
 }
 
+std::string Common::FnGetDateTimeFormat_yyyymmddhhmm()
+{
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m%d%H%M");
+    return oss.str();
+}
+
 std::string Common::FnConvertDateTime(uint32_t seconds)
 {
     time_t epochSeconds = seconds;

@@ -14,6 +14,7 @@ public:
     static Common* getInstance();
     void FnLogExecutableInfo(const std::string& str);
     std::string FnGetDateTime();
+    std::string FnGetDateTimeFormat_yyyymmddhhmm();
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::time_t FnGetEpochSeconds();
     std::string FnGetDateTimeSpace();

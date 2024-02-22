@@ -30,14 +30,22 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
 
     //Logger::getInstance()->FnLog("Timer expired!");
 
-   //------ timer process start
+    //------ timer process start
+    if (operation::getInstance()->FnIsOperationInitialized()) {
 
+        if (operation::getInstance()->tProcess.gbLoopApresent == false) {
+           
+            db::getInstance()->moveOfflineTransToCentral();
+            db::getInstance()->downloadseason();
+        }             
+            
+    }
 
-   //--------
+    //--------
     auto end = std::chrono::steady_clock::now(); // Measure the end time of the handler execution
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start); // Calculate the duration of the handler execution
 
-    timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(1) + duration);
+    timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(10) + duration);
     timer->async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, timer, io));
 }
 

@@ -41,6 +41,7 @@ public:
     void Sendmystatus();
     void FnSyncCentralDBTime();
     void FnSendDIOInputStatusToMonitor(int pinNum, int pinValue);
+    void FnSendDateTimeToMonitor();
     void FnSendLogMessageToMonitor(std::string msg);
     void FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg);
     void SendMsg2Server(string cmdcode,string dstr);
@@ -51,6 +52,7 @@ public:
     void SaveEntry();
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
+    void ManualOpenBarrier();
 
 
     void Openbarrier();

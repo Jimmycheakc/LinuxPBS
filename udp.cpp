@@ -88,6 +88,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 		}
 		case CmdSetTime:
 		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->FnSyncCentralDBTime();
 			break;
 		}

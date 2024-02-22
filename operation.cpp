@@ -5,6 +5,7 @@
 #include <chrono>
 #include <thread>
 #include <cstdio>
+#include "common.h"
 #include "gpio.h"
 #include "operation.h"
 #include "ini_parser.h"
@@ -43,12 +44,22 @@ void operation::OperationInit(io_context& ioContext)
     //
     Setdefaultparameter();
     //
+    tProcess.gsBroadCastIP = getIPAddress();
+    try {
+        m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
+        m_udp->socket_.set_option(socket_base::broadcast(true));
+    }
+    catch (const std::exception& e) {
+        std::string cppString(e.what());
+        writelog ("Exception: "+ cppString,"OPR");
+    }
+    //
     int iRet = 0;
     m_db = db::getInstance();
 
     iRet = m_db->connectlocaldb("DSN={MariaDB-server};DRIVER={MariaDB ODBC 3.0 Driver};SERVER=127.0.0.1;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;",2,2,2);
     if (iRet != 1) {
-        writelog ("Unable to connect local DB.","opr");
+        writelog ("Unable to connect local DB.","OPR");
         exit(0); 
     }
     string m_connstring;
@@ -66,27 +77,18 @@ void operation::OperationInit(io_context& ioContext)
     m_db->loadParam();
     m_db->loadvehicletype();
     //
-    tProcess.gsBroadCastIP = getIPAddress();
-    try {
-        m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
-        m_udp->socket_.set_option(socket_base::broadcast(true));
-    }
-    catch (const std::exception& e) {
-        std::string cppString(e.what());
-        writelog ("Exception: "+ cppString,"opr");
-    }
-   
     Initdevice(ioContext);
 
     isOperationInitialized_.store(true);
     
     ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
+    usleep(2000000);
+    ShowLEDMsg(tMsg.MsgEntry_WithIU[0], tMsg.MsgEntry_WithIU[1]);
+    usleep(2000000);
+    ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
+    PBSEntry ("1122944019");
 
-    iRet= m_db->FnGetVehicleType("001");
 
-    writelog ("Return Vehicle Type = "+ std::to_string(iRet), "opr");
-
-    m_db->moveOfflineTransToCentral();
 }
 
 bool operation::FnIsOperationInitialized() const
@@ -96,43 +98,40 @@ bool operation::FnIsOperationInitialized() const
 
 void operation::LoopACome()
 {
-    writelog ("Loop A Come.","opr");
-
-    //if (tParas.giFullAction = iNoAct or tProcess.gbcarparkfull = 0)
-    //{
-        Clearme();
-        Antenna::getInstance()->FnAntennaSendReadIUCmd();
-        LCSCReader::getInstance()->FnSendGetCardIDCmd();
-    //}
+    writelog ("Loop A Come.","OPR");
+    ShowLEDMsg(tMsg.MsgEntry_LoopA[0], tMsg.MsgEntry_LoopA[1]);
+    Clearme();
+    Antenna::getInstance()->FnAntennaSendReadIUCmd();
+    LCSCReader::getInstance()->FnSendGetCardIDCmd();
 
 }
 
 void operation::LoopAGone()
 {
-    writelog ("Loop A End.","opr");
+    writelog ("Loop A End.","OPR");
 
 }
 void operation::LoopCCome()
 {
-    writelog ("Loop C Come.","opr");
+    writelog ("Loop C Come.","OPR");
 
 
 }
 void operation::LoopCGone()
 {
-    writelog ("Loop C End.","opr");
+    writelog ("Loop C End.","OPR");
 
 
 }
 void operation::VehicleCome(string sNo)
 {
 
-     writelog ("Received IU: "+sNo,"opr");
+     writelog ("Received IU: "+sNo,"OPR");
 
     if (sNo.length()==10 and sNo == tProcess.gsDefaultIU) {
 
         SendMsg2Server ("90",sNo+",,,,,Default IU");
-        writelog ("Default IU: "+sNo,"opr");
+        writelog ("Default IU: "+sNo,"OPR");
         //---------
         LCSCReader::getInstance()->FnSendGetCardIDCmd();
         return;
@@ -148,7 +147,7 @@ void operation::VehicleCome(string sNo)
 
 void operation::Openbarrier()
 {
-    writelog ("Station Open Barrier.","opr");
+    writelog ("Station Open Barrier.","OPR");
 
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
 
@@ -259,9 +258,9 @@ void operation::Initdevice(io_context& ioContext)
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 {
     
-    writelog ("LED Message:" + LEDMsg,"opr");
+    writelog ("LED Message:" + LEDMsg,"OPR");
     //-------
-    writelog ("LCD Message:" + LCDMsg,"opr");
+    writelog ("LCD Message:" + LCDMsg,"OPR");
 
     char* sLCDMsg = const_cast<char*>(LCDMsg.data());
     LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
@@ -276,32 +275,79 @@ void operation::PBSEntry(string sIU)
 {
     int iRet;
     int iEntryOK=0;
+    CE_Time dt;
+	string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
+
+    tEntry.sIUTKNo = sIU;
+    tEntry.sEntryTime=dtStr;
+    if (sIU != "")
+    {
+        //check blacklist
+        iRet = m_db->IsBlackListIU(sIU);
+        if (iRet >= 0){
+          //  ShowLEDMsg(tMsg.)
+            SendMsg2Server("90",sIU+",,,,,Blacklist IU");
+            if(iRet ==0) return;
+        }
+        //check block 
+        string gsBlockIUPrefix = IniParser::getInstance()->FnGetBlockIUPrefix();
+        writelog ("blockIUprfix =" +gsBlockIUPrefix, "OPR");
+        if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos and sIU.length() == 10)
+        {
+            ShowLEDMsg("Lorry No Entry^Pls Reverse","Lorry No Entry^Pls Reverse");
+            SendMsg2Server("90",sIU+",,,,,Block IU");
+            return;
+        }
+
+    }
 
     if(sIU.length()==10) 
 	    tEntry.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
 	else {
         tEntry.iTransType=GetVTypeFromLoop();
     }
-
+    if (tEntry.iTransType == 9) {
+        ShowLEDMsg(tMsg.MsgEntry_authorizedvehicle[0],tMsg.MsgEntry_authorizedvehicle[1]);
+        tEntry.iStatus = 0;
+        SaveEntry();
+        Openbarrier();
+        return;
+    }
+    if (tProcess.gbcarparkfull ==1 and tParas.giFullAction == iLock)
+    {   
+        ShowLEDMsg(tMsg.MsgEntry_LockStation[0], tMsg.MsgEntry_LockStation[1]);
+        writelog("Loop A while station Locked","OPR");
+        return;
+    } 
     iRet = CheckSeason(sIU,1);
 
-    if (tProcess.gbcarparkfull ==1 and tEntry.iTransType != 9 and tParas.giFullAction > iNoAct)
-    {
-
+    if (tProcess.gbcarparkfull ==1 and iRet == 1 and (std::stoi(tSeason.rate_type) !=0) and tParas.giFullAction ==iNoPartial )
+    {   
+        writelog ("VIP Season Only.", "OPR");
+        ShowLEDMsg("VIP Season Only", "VIP Season Only");
+        return;
     } 
-    if (iEntryOK == 1) {
-        //------
-        CE_Time dt;
-	    string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
-	    tEntry.sEntryTime=dtStr;
-        tEntry.sIUTKNo = sIU;
-        tEntry.iStatus = 0;
+    if (tProcess.gbcarparkfull ==1 and iRet != 1 )
+    {   
+        writelog ("Season Only.", "OPR");
+        ShowLEDMsg(tMsg.MsgEntry_SeasonOnly[0], tMsg.MsgEntry_SeasonOnly[1]);
+        return;
+    } 
+    if (iRet == 6 and sIU.length()>10)
+    {
+        writelog ("season passback","OPR");
+        SendMsg2Server("90",sIU+",,,,,Season Passback");
+        ShowLEDMsg(tMsg.MsgEntry_SeasonPassback[0],tMsg.MsgEntry_SeasonPassback[1]);
+        return;
+    }
+    if (iRet == 10) {
+        ShowLEDMsg(tMsg.MsgEntry_SeasonAsHourly[0],tMsg.MsgEntry_SeasonAsHourly[1]);
+    } else if (iRet == 8)  ShowLEDMsg(tMsg.MsgEntry_WithIU[0],tMsg.MsgEntry_WithIU[1]);
+
+        tEntry.iStatus = 0; 
         //---------
         SaveEntry();
         Openbarrier();
-    }
-    
-
 }
 
 void operation::PBSExit(string sIU)
@@ -321,6 +367,7 @@ void operation:: Setdefaultparameter()
         tPBSError[i].ErrCode =0;
 	    tPBSError[i].ErrMsg = "";
     }
+    tProcess.gbLoopApresent = false;
     tProcess.gbLoopAIsOn = false;
     tProcess.gbLoopBIsOn = false;
     tProcess.gbLoopCIsOn = false;
@@ -392,16 +439,22 @@ void operation::FnSendDIOInputStatusToMonitor(int pinNum, int pinValue)
     SendMsg2Server("302", str);
 }
 
+void operation::FnSendDateTimeToMonitor()
+{
+    std::string str = Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmm();
+    SendMsg2Server("304", str);
+}
+
 void operation::FnSendLogMessageToMonitor(std::string msg)
 {
-    std::string str = "[" + gtStation.sName + "|" + std::to_string(gtStation.iSID) + "|" + "304" + "|" + msg + "|]";
+    std::string str = "[" + gtStation.sName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
     m_udp->startsend(str);
 }
 
 void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg)
 {
     std::string str = line1TextMsg + "," + line2TextMsg;
-    SendMsg2Server("305", str);
+    SendMsg2Server("306", str);
 }
 
 void operation::SendMsg2Server(string cmdcode,string dstr)
@@ -410,7 +463,7 @@ void operation::SendMsg2Server(string cmdcode,string dstr)
 	str+=dstr+"|]";
 	m_udp->startsend(str);
     //----
-    writelog ("Message to PMS: " + str,"opr");
+    writelog ("Message to PMS: " + str,"OPR");
 }
 
 int operation::CheckSeason(string sIU,int iInOut)
@@ -691,11 +744,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
         sMsgPartialSeason = "Season";
     }
 
-    writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(tEntry.iTransType),"opr");
+    writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(tEntry.iTransType),"OPR");
 
         switch (iReturn) {
             case -1: 
-                writelog("DB error when Check season", "opr");
+                writelog("DB error when Check season", "OPR");
                 break;
             case 0:  
                 sMsg = tMsg.MsgEntry_SeasonInvalid[0];
@@ -710,7 +763,7 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
             case 2: 
                 sMsg = tMsg.MsgEntry_SeasonExpired[0];
                 sLCD = tMsg.MsgEntry_SeasonExpired[1];
-                writelog("Season Expired", "opr");
+                writelog("Season Expired", "OPR");
                 break;
             
             default:
@@ -720,4 +773,18 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
        // sMsg = Replace(sMsg, "Season", sMsgPartialSeason);
        // sLCD = Replace(sLCD, "Season", sMsgPartialSeason);
 
+}
+
+void operation::ManualOpenBarrier()
+{
+     writelog ("Manual open barrier.", "OPR");
+     if (gtStation.iType == tientry){
+        CE_Time dt;
+	    string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
+	    tEntry.sEntryTime=dtStr;
+        tEntry.iStatus = 4;
+        //---------
+        SaveEntry();
+        Openbarrier();
+     }
 }

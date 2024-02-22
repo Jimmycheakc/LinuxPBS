@@ -150,7 +150,7 @@ int db::local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID)
 		sqlStmt=sqlStmt + L_sSeasonNo;
 		sqlStmt=sqlStmt + "' AND date_from < now() AND date_to >= now() AND zone_id = "+ to_string(iZoneID);
 
-		//operation::getInstance()->writelog(sqlStmt,"db");
+		//operation::getInstance()->writelog(sqlStmt,"DB");
 
 		r=localdb->SQLSelect(sqlStmt,&selResult,false);
 		if (r!=0) return iLocalFail;
@@ -216,6 +216,12 @@ int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
     		dbss.clear();   // Clear the state of the stream
 			dbss << "ValidTo = " << m_dtValidTo;
     		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			//----
+			operation::getInstance()->tSeason.date_from=m_dtValidFrom;
+			operation::getInstance()->tSeason.date_to=m_dtValidTo;
+			operation::getInstance()->tSeason.rate_type=iRateType;
+			operation::getInstance()->tSeason.redeem_amt=m_sRedeemAmt;
+			operation::getInstance()->tSeason.redeem_time=m_iRedeemTime;
 		}
 	}
 	else
@@ -224,7 +230,7 @@ int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
 		if(l_ret==iDBSuccess) retcode = 1;
 		else 
 		retcode = 8;
-		operation::getInstance()->writelog ("Check Local Season Return = "+ std::to_string(retcode), "db");
+		operation::getInstance()->writelog ("Check Local Season Return = "+ std::to_string(retcode), "DB");
 	}
 	return(retcode);
 }
@@ -509,16 +515,17 @@ void db::downloadseason()
 	sqlStmt=sqlStmt + ") as B ";
 
 	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {m_remote_db_err_flag=1; return;}
 	else 
 	{
+		if (std::stoi(tResult[0].GetDataItem(0)) == 0){return;}
 		m_remote_db_err_flag=0;
 		dbss << "Total: " << std::string (tResult[0].GetDataItem(0)) << " Seasons to be download.";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 	}
-
+	
 	r=centraldb->SQLSelect("SELECT TOP 10 * FROM season_mst WHERE s"+to_string(1)+"_fetched = 0 ",&selResult,true);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {m_remote_db_err_flag=1; return;}
 	else m_remote_db_err_flag=0;
 
 	if (selResult.size()>0){
@@ -602,7 +609,11 @@ int db::writeseason2local(tseason_struct& v)
 	try 
 	{
 		r=localdb->SQLSelect("SELECT season_type FROM season_mst Where season_no= '" + v.season_no + "'",&selResult,false);
-		if(r!=0)  m_local_db_err_flag=1;
+		if(r!=0) {
+			 m_local_db_err_flag=1;
+			 operation::getInstance()->writelog("update season failed.", "DB");
+			 return r;
+		}
 		else  m_local_db_err_flag=0;
 
 		if (selResult.size()>0)
@@ -633,7 +644,7 @@ int db::writeseason2local(tseason_struct& v)
 			if(r!=0)  
 			{
 				m_local_db_err_flag=1;
-				operation::getInstance()->writelog("update season failed.", "db");
+				operation::getInstance()->writelog("update season failed.", "DB");
 			}
 			else  
 			{
@@ -722,7 +733,10 @@ void db::downloadvehicletype()
     //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 
 	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1; 
+		operation::getInstance()->writelog("download vehicle type fail.", "DB");
+		return;}
 	else 
 	{
 		m_remote_db_err_flag=0;
@@ -780,7 +794,11 @@ int db::writevehicletype2local(string iucode,string iutype)
 	try 
 	{
 		r=localdb->SQLSelect("SELECT IUCode FROM Vehicle_type Where IUCode= '" + iucode + "'",&selResult,false);
-		if(r!=0)  m_local_db_err_flag=1;
+		if(r!=0) {
+		   operation::getInstance()->writelog("update vehicle type to local fail.", "DB");
+		   m_local_db_err_flag=1;
+		   return r;
+		}
 		else  m_local_db_err_flag=0;
 
 		if (selResult.size()>0)
@@ -874,7 +892,11 @@ void db::downloadledmessage()
     //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 
 	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1;
+		operation::getInstance()->writelog("download LED message fail.", "DB");
+		return;
+	}
 	else 
 	{
 		m_remote_db_err_flag=0;
@@ -885,7 +907,11 @@ void db::downloadledmessage()
 	}
 
 	r=centraldb->SQLSelect("SELECT  * FROM message_mst WHERE s"+to_string(giStnid)+"_fetched = 0",&selResult,true);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1;
+		operation::getInstance()->writelog("download LED message fail.", "DB");
+		return;
+	}
 	else m_remote_db_err_flag=0;
 
 	if (selResult.size()>0){
@@ -952,7 +978,11 @@ int db::writeledmessage2local(string m_id,string m_body, string m_status)
 	try 
 	{
 		r=localdb->SQLSelect("SELECT msg_id FROM message_mst Where msg_id= '" + m_id + "'",&selResult,false);
-		if(r!=0)  m_local_db_err_flag=1;
+		if(r!=0) {
+		 m_local_db_err_flag=1;
+		 operation::getInstance()->writelog("update local LED Message failed.", "DB");
+		 return r;
+		}
 		else  m_local_db_err_flag=0;
 
 		if (selResult.size()>0)
@@ -1044,7 +1074,11 @@ void db::downloadparameter()
 
 
 	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1;
+		operation::getInstance()->writelog("download parameter fail.", "DB");
+		return;
+	}
 	else 
 	{
 		m_remote_db_err_flag=0;
@@ -1053,7 +1087,11 @@ void db::downloadparameter()
 	}
 
 	r=centraldb->SQLSelect("SELECT  * FROM parameter_mst WHERE s"+to_string(giStnid)+"_fetched = 0 and for_station=1",&selResult,true);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1;
+		operation::getInstance()->writelog("update parameter failed.", "DB");
+		return;
+	}
 	else m_remote_db_err_flag=0;
 
 	if (selResult.size()>0){
@@ -1119,7 +1157,11 @@ int db::writeparameter2local(string name,string value)
 	{
 		
 		r=localdb->SQLSelect("SELECT ParamName FROM Param_mst Where ParamName= '" + name + "'",&selResult,false);
-		if(r!=0)  m_local_db_err_flag=1;
+		if(r!=0)  {
+			m_local_db_err_flag=1;
+			operation::getInstance()->writelog("update parameter fail.", "DB");
+			return r;
+		}
 		else  m_local_db_err_flag=0;
 
 		if (selResult.size()>0)
@@ -1207,7 +1249,11 @@ void db::downloadstationsetup()
     //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 
 	r=centraldb->SQLSelect(sqlStmt,&tResult,false);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1;
+		operation::getInstance()->writelog("download station setup fail.", "DB");
+		return;
+	}
 	else 
 	{
 		m_remote_db_err_flag=0;
@@ -1219,7 +1265,11 @@ void db::downloadstationsetup()
 	}
 
 	r=centraldb->SQLSelect("SELECT  * FROM station_setup",&selResult,true);
-	if(r!=0) m_remote_db_err_flag=1;
+	if(r!=0) {
+		m_remote_db_err_flag=1;
+		operation::getInstance()->writelog("download station setup fail.", "DB");
+		return;
+	}
 	else m_remote_db_err_flag=0;
 
 	if (selResult.size()>0)
@@ -1291,7 +1341,11 @@ int db::writestationsetup2local(tstation_struct& v)
 	try 
 	{ 
 		r=localdb->SQLSelect("SELECT StationType FROM Station_Setup Where StationID= '" + std::to_string(v.iSID) + "'",&selResult,false);
-		if(r!=0)  m_local_db_err_flag=1;
+		if(r!=0){
+			m_local_db_err_flag=1;
+			operation::getInstance()->writelog("update station setup fail.", "DB");
+			return r;
+		}
 		else  m_local_db_err_flag=0;
 
 		if (selResult.size()>0)
@@ -1386,7 +1440,7 @@ DBError db::loadstationsetup()
 
 	if (r!=0)
 	{
-		//m_log->WriteAndPrint("Get Station Setup: fail");
+		operation::getInstance()->writelog("get station set up fail.", "DB");
 		return iLocalFail;
 	}
 
@@ -1504,7 +1558,7 @@ DBError db::loadParam()
 	r = localdb->SQLSelect("SELECT ParamName, ParamValue FROM Param_mst", &selResult, true);
 	if (r != 0)
 	{
-		//m_log->WriteAndPrint("Get Station Setup: fail");
+		operation::getInstance()->writelog("load parameter failed.", "DB");
 		return iLocalFail;
 	}
 
@@ -1705,7 +1759,7 @@ DBError db::loadvehicletype()
 	r = localdb->SQLSelect("SELECT IUCode, TransType FROM Vehicle_type", &selResult, true);
 	if (r != 0)
 	{
-		//m_log->WriteAndPrint("Get Station Setup: fail");
+		operation::getInstance()->writelog("load Trans Type failed.", "DB");
 		return iLocalFail;
 	}
 
@@ -2489,6 +2543,38 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 					}
 				}
 
+				if (readerItem.GetDataItem(0) == "WithIU")
+				{
+					operation::getInstance()->tMsg.MsgEntry_WithIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgEntry_WithIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CWithIU")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgEntry_WithIU[1].clear();
+						operation::getInstance()->tMsg.MsgEntry_WithIU[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "BlackList")
+				{
+					operation::getInstance()->tMsg.MsgBlackList[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tMsg.MsgBlackList[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CBlackList")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tMsg.MsgBlackList[1].clear();
+						operation::getInstance()->tMsg.MsgBlackList[1] = readerItem.GetDataItem(1);
+					}
+				}
+
 				if (readerItem.GetDataItem(0) == "E1enhancedMCParking")
 				{
 					operation::getInstance()->tMsg.MsgEntry_E1enhancedMCParking[0] = readerItem.GetDataItem(1);
@@ -2508,10 +2594,10 @@ DBError db::loadmessage()
 	vector<ReaderItem> ledSelResult;
 	vector<ReaderItem> lcdSelResult;
 
-	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status = 1 or m_status = 4 or m_status = 5", &ledSelResult, true);
+	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status = 1 or m_status = 2 or m_status = 4 or m_status = 5", &ledSelResult, true);
 	if (r != 0)
 	{
-		//m_log->WriteAndPrint("Get Station Setup: fail");
+		operation::getInstance()->writelog("load LED message failed.", "DB");
 		return iLocalFail;
 	}
 
@@ -2521,10 +2607,10 @@ DBError db::loadmessage()
 		return retErr;
 	}
 
-	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status = 11 or m_status = 14 or m_status = 15", &lcdSelResult, true);
+	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status = 11 or m_status = 12 or m_status = 14 or m_status = 15", &lcdSelResult, true);
 	if (r != 0)
 	{
-		//m_log->WriteAndPrint("Get Station Setup: fail");
+		operation::getInstance()->writelog("load LCD message failed.", "DB");
 		return iLocalFail;
 	}
 
@@ -2578,13 +2664,19 @@ void db::moveOfflineTransToCentral()
 	{
 		
 		r = localdb->SQLSelect("SELECT count(iu_tk_no) FROM Entry_Trans",&tResult,false);
-		if(r!=0) m_local_db_err_flag=1;
+		if(r!=0) {
+			m_local_db_err_flag=1;
+			operation::getInstance()->writelog("move offline data fail.","DB");
+			return;
+		}
 		else 
 		{
 			m_local_db_err_flag=0;
 			k=std::stoi(tResult[0].GetDataItem(0));
-			operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Entry trans to be upload.","DB");
-			if(k > 0) operation::getInstance()->tProcess.offline_status=1;
+			if (k>0){
+				operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Entry trans to be upload.","DB");
+				operation::getInstance()->tProcess.offline_status=1;
+			}
 		}
 	}
 	else if(operation::getInstance()->gtStation.iType==tiExit)
@@ -2596,8 +2688,10 @@ void db::moveOfflineTransToCentral()
 		{
 			m_local_db_err_flag=0;
 			k=std::stoi(tResult[0].GetDataItem(0));
-			operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Enxit trans to be upload.", "DB");
-			if(k > 0)  operation::getInstance()->tProcess.offline_status=1;
+			if(k > 0){
+				operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Enxit trans to be upload.", "DB");
+			  	operation::getInstance()->tProcess.offline_status=1;
+			}
 		}
 	}
 	
@@ -2737,7 +2831,7 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 
 	r = centraldb->SQLExecutNoneQuery(sqstr);
 
-	//operation::getInstance()->writelog(sqstr,"db");
+	//operation::getInstance()->writelog(sqstr,"DB");
 	
 	if (r==0) operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime   + " INTO "+ tbName +" : Success","DB");
 	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Fail","DB");
@@ -2846,7 +2940,7 @@ int db:: deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl)
 
 		}
 		
-		operation::getInstance()->writelog("Local DB: deleteLocalTrans error: " + std::string(e.what()),"db"); 
+		operation::getInstance()->writelog("Local DB: deleteLocalTrans error: " + std::string(e.what()),"DB"); 
 		r=-1;
 		m_local_db_err_flag=1;
 	} 
@@ -2878,3 +2972,21 @@ int db::clearseason()
 	return r;
 }
 
+int db::IsBlackListIU(string sIU)
+{
+	int r = -1;
+	vector<ReaderItem> tResult;
+
+	r = centraldb->SQLSelect("SELECT type FROM BlackList where status = 0 and CAN =" + sIU, &tResult, true);
+	if (r != 0)
+	{
+		return -1;
+	}
+
+	if (tResult.size()>0)
+	{
+		return std::stoi(tResult[0].GetDataItem(0));
+	}
+	return -1;
+
+}
