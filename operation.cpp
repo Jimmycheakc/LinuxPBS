@@ -63,6 +63,7 @@ void operation::OperationInit(io_context& ioContext)
         exit(0); 
     }
     string m_connstring;
+    writelog ("Connect Central DB:"+tParas.gsCentralDBName,"OPR");
     for (int i = 0 ; i < 5; ++i ) {
         m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
         iRet = m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,2);
@@ -70,7 +71,10 @@ void operation::OperationInit(io_context& ioContext)
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
     // sync central time
-    if (iRet == 1) m_db->synccentraltime();
+    if (iRet == 1) {
+        m_db->synccentraltime();
+        m_db->downloadseason();
+    }
     //
     m_db->loadstationsetup();
     m_db->loadmessage();
@@ -82,12 +86,8 @@ void operation::OperationInit(io_context& ioContext)
     isOperationInitialized_.store(true);
     
     ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
-    usleep(2000000);
-    ShowLEDMsg(tMsg.MsgEntry_WithIU[0], tMsg.MsgEntry_WithIU[1]);
-    usleep(2000000);
-    ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
-    PBSEntry ("1122944019");
 
+    PBSEntry ("1122944019");
 
 }
 
@@ -285,7 +285,7 @@ void operation::PBSEntry(string sIU)
         //check blacklist
         iRet = m_db->IsBlackListIU(sIU);
         if (iRet >= 0){
-          //  ShowLEDMsg(tMsg.)
+            ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
             SendMsg2Server("90",sIU+",,,,,Blacklist IU");
             if(iRet ==0) return;
         }
@@ -371,6 +371,8 @@ void operation:: Setdefaultparameter()
     tProcess.gbLoopAIsOn = false;
     tProcess.gbLoopBIsOn = false;
     tProcess.gbLoopCIsOn = false;
+    //--------
+    tProcess.giSyncTimeCnt = 0;
 
 }
 
@@ -475,7 +477,6 @@ int operation::CheckSeason(string sIU,int iInOut)
    //showLED message
    if (iRet != 8 ) {
         FormatSeasonMsg(iRet, sIU, sMsg, sLCD);
-        ShowLEDMsg(sMsg,sLCD);
    } 
    return iRet;
 }
@@ -724,6 +725,9 @@ void operation::ShowTotalLots(std::string totallots, std::string LEDId)
 {
     if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401))) != nullptr)
     {
+        writelog ("Comm Port:"+std::to_string(tParas.giCommportLED401),"OPR");
+        writelog ("Total Lot:"+ totallots,"OPR");
+       
         LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401)))->FnLEDSendLEDMsg(LEDId, totallots, LED::Alignment::RIGHT);
     }
 }
@@ -765,13 +769,66 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sLCD = tMsg.MsgEntry_SeasonExpired[1];
                 writelog("Season Expired", "OPR");
                 break;
-            
+            case 3: 
+                sMsg = tMsg.MsgEntry_SeasonTerminated[0];
+                sLCD = tMsg.MsgEntry_SeasonTerminated[1];
+                writelog ("Season terminated", "OPR");
+                break;
+            case 4:  
+                sMsg = tMsg.MsgEntry_SeasonBlocked[0];
+                sLCD = tMsg.MsgEntry_SeasonBlocked[1];
+                writelog ("Season Blocked", "OPR");
+                break;
+            case 5:  
+                sMsg = tMsg.MsgEntry_SeasonInvalid[0];
+                sLCD = tMsg.MsgEntry_SeasonInvalid[1];
+                writelog ("Season Lost", "OPR");
+                break;
+            case 6:
+                sMsg = tMsg.MsgEntry_SeasonPassback[0];
+                sLCD = tMsg.MsgEntry_SeasonPassback[1];
+                writelog ("Season Passback", "OPR");
+                break;
+            case 7:  
+                sMsg = tMsg.MsgEntry_SeasonNotStart[0];
+                sLCD = tMsg.MsgEntry_SeasonNotStart[1];
+                writelog ("Season Not Start", "OPR");
+                break;
+            case 8: 
+                sMsg = "Wrong Season Type";
+                sLCD = "Wrong Season Type";
+                writelog ("Wrong Season Type", "OPR");
+                break;
+            case 10:     
+                sMsg = tMsg.MsgEntry_SeasonAsHourly[0];
+                sLCD = tMsg.MsgEntry_SeasonAsHourly[1];
+                writelog ("Season As Hourly", "OPR");
+                break;
+            case 11:     
+                sMsg = tMsg.MsgEntry_ESeasonWithinAllowance[0];
+                sLCD = tMsg.MsgEntry_ESeasonWithinAllowance[1];
+                writelog ("Season within allowance", "OPR");
+                break;
+            case 12:
+               // sMsg = gsMsgMasterSeason
+               // sLCD = gscMsgMasterSeason
+                writelog ("Master Season", "OPR");
+                break;
+            case 13:     
+                sMsg = tMsg.MsgEntry_WholeDayParking[0];
+                sLCD = tMsg.MsgEntry_WholeDayParking[1];
+                writelog ("Whole Day Season", "OPR");
+                break;
             default:
                 break;
         }
 
-       // sMsg = Replace(sMsg, "Season", sMsgPartialSeason);
-       // sLCD = Replace(sLCD, "Season", sMsgPartialSeason);
+        size_t pos = sMsg.find("Season");
+        if (pos != std::string::npos) sMsg.replace(pos, 6, sMsgPartialSeason);
+        pos=sLCD.find("Season");
+        if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
+        
+        ShowLEDMsg(sMsg,sLCD);
 
 }
 
@@ -784,7 +841,10 @@ void operation::ManualOpenBarrier()
 	    tEntry.sEntryTime=dtStr;
         tEntry.iStatus = 4;
         //---------
+        m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tEntry.sIUTKNo);
         SaveEntry();
         Openbarrier();
      }
 }
+
+

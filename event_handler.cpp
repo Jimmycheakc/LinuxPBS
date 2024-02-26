@@ -478,6 +478,7 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT");
+                db::getInstance()->AddSysEvent("Barrier up");
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:

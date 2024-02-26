@@ -305,6 +305,7 @@ struct  tProcess_Struct
 	bool gbLoopAIsOn;
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
+	int giSyncTimeCnt;
 };
 
 

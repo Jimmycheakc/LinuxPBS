@@ -77,6 +77,8 @@ public:
 	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
     int clearseason();
     int IsBlackListIU(string sIU);
+    int AddRemoteControl(string sTID,string sAction, string sRemarks);
+    int AddSysEvent(string sEvent); 
 
 
     /**

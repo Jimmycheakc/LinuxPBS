@@ -144,7 +144,15 @@ void LED::FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string te
     // Msg Text
     std::string formattedText;
     int replaceTextIdx = 0;
-    formattedText.resize(maxCharPerRow_, 0x20);
+    if (maxCharPerRow_ == LED614_MAX_CHAR_PER_ROW)
+    {
+        formattedText.resize(maxCharPerRow_ + 1, 0x20);
+    }
+    else
+    {
+        formattedText.resize(maxCharPerRow_, 0x20);
+    }
+
     if (text.length() > maxCharPerRow_)
     {
         text.resize(maxCharPerRow_);

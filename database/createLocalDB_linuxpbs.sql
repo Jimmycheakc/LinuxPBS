@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
     Entry_Time DATETIME,
     iu_tk_no VARCHAR(20),
     trans_type INT DEFAULT 0,
-    paid_amt DECIMAL(10,2),
+    paid_amt DECIMAL(10,2) DEFAULT 0,
     TK_SerialNo INT DEFAULT 0,
     Status INT DEFAULT 0,
     Send_Status BOOLEAN,

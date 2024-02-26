@@ -314,8 +314,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 		{
 			dbss << "Insert Entry_trans to Central: fail1" ;
     		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			return iCentralFail;
-			//goto processLocal;
+			goto processLocal;
 		}
 	}
 
@@ -378,7 +377,7 @@ processLocal:
 		{
 			dbss.str("");  // Set the underlying string to an empty string
         	dbss.clear();   // Clear the state of the stream
-			dbss << "Insert Entry_trans to Central: fail1" ;
+			dbss << "Insert Entry_trans to Local: fail1" ;
     		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 			return iLocalFail;
 		}
@@ -2989,4 +2988,60 @@ int db::IsBlackListIU(string sIU)
 	}
 	return -1;
 
+}
+
+int db::AddRemoteControl(string sTID,string sAction, string sRemarks) 
+{
+
+	int r=0;
+	CE_Time dt;
+	string sqstr="";
+	string tbName="";
+	tbName="remote_control_history";
+	
+	// insert into Central trans tmp table
+	sqstr="INSERT INTO " + tbName +" (station_id,action_dt,action_name,operator,remarks)";
+	sqstr=sqstr + " Values ('" + sTID + "',getdate(),'" + sAction + "','auto','" +sRemarks + "')";
+	
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	//operation::getInstance()->writelog(sqstr,"DB");
+	
+	if (r==0) {
+		operation::getInstance()->writelog("Success insert: " + sAction,"DB");
+		m_remote_db_err_flag=0;
+	}
+	else {
+		operation::getInstance()->writelog("fail to insert: " + sAction,"DB");
+		 m_remote_db_err_flag=1;
+	}
+	return r;
+}
+
+int db::AddSysEvent(string sEvent) 
+{
+
+	int r=0;
+	CE_Time dt;
+	string sqstr="";
+	string tbName="";
+	tbName="sys_event_log";
+	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
+	
+	// insert into Central trans tmp table
+	sqstr="Insert into sys_event_log (station_id,event)";
+	sqstr=sqstr + " Values ('" + giStationID + "','" + sEvent + "')";
+	
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	
+	if (r==0) {
+		operation::getInstance()->writelog("Success insert sys event log: " + sEvent,"DB");
+		m_remote_db_err_flag=0;
+	}
+	else {
+		operation::getInstance()->writelog("fail to insert sys event log: " + sEvent,"DB");
+		 m_remote_db_err_flag=1;
+	}
+	return r;
 }

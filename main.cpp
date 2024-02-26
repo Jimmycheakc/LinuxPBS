@@ -24,19 +24,25 @@
 #include "operation.h"
 #include "udp.h"
 
+
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::io_context* io)
 {
     auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
 
-    //Logger::getInstance()->FnLog("Timer expired!");
-
+    //Sync PMS time counter
+     operation:: getInstance()->tProcess.giSyncTimeCnt = operation:: getInstance()->tProcess.giSyncTimeCnt+ 1;
     //------ timer process start
     if (operation::getInstance()->FnIsOperationInitialized()) {
 
         if (operation::getInstance()->tProcess.gbLoopApresent == false) {
            
             db::getInstance()->moveOfflineTransToCentral();
-            db::getInstance()->downloadseason();
+           
+            // Sysnc time from PMS per hour
+            if (operation::getInstance()->tProcess.giSyncTimeCnt > 6 * 60 ) {
+                db::getInstance()->synccentraltime();
+                operation::getInstance()->tProcess.giSyncTimeCnt = 0;
+            } 
         }             
             
     }
