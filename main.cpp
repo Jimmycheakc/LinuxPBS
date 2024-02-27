@@ -36,7 +36,7 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
 
         if (operation::getInstance()->tProcess.gbLoopApresent == false) {
            
-            db::getInstance()->moveOfflineTransToCentral();
+          //  db::getInstance()->moveOfflineTransToCentral();
            
             // Sysnc time from PMS per hour
             if (operation::getInstance()->tProcess.giSyncTimeCnt > 6 * 60 ) {

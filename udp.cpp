@@ -11,6 +11,57 @@
 #include "db.h"
 #include "log.h"
 
+void udpclient::processmonitordata (const char* data, std::size_t length) 
+{
+	int rxcmd;
+	int n,i;
+	string sData;
+	//-------
+
+     ParseData pField('[',']','|');
+     n=pField.Parse(data);
+
+	 operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+	 
+	 if(n < 4){
+		//std::stringstream dbss;
+		//dbss << "URX: invalid number of arguments" ;
+    	//Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
+		return;
+	}
+	
+    rxcmd = std::stoi(pField.Field(2));
+    switch(rxcmd)
+    {
+		case CmdMonitorEnquiry:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->Sendmystatus();
+			break;
+		}
+    	case CmdMonitorSyncTime:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->FnSyncCentralDBTime();
+			break;
+		}
+		case CmdMonitorOutput:
+		break;
+		case CmdDownloadIni:
+		break;
+		case CmdDownloadParam:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->writelog("download Parameter","UDP");
+			operation::getInstance()->m_db->downloadparameter();
+			operation::getInstance()->m_db->loadParam();
+			break;
+		}
+		default:
+		break;
+	}
+
+}
 
 void udpclient::processdata (const char* data, std::size_t length) 
 {

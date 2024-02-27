@@ -14,6 +14,7 @@ public:
     static operation* getInstance();
     db *m_db;
     udpclient *m_udp;
+    udpclient *m_Monitorudp;
     struct  tstation_struct gtStation;
     struct  tEntryTrans_Struct tEntry; 
     struct  tProcess_Struct tProcess;

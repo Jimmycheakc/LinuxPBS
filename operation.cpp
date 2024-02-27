@@ -44,6 +44,7 @@ void operation::OperationInit(io_context& ioContext)
     //
     Setdefaultparameter();
     //
+    writelog ("Exception: 1","OPR");
     tProcess.gsBroadCastIP = getIPAddress();
     try {
         m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
@@ -52,6 +53,14 @@ void operation::OperationInit(io_context& ioContext)
     catch (const std::exception& e) {
         std::string cppString(e.what());
         writelog ("Exception: "+ cppString,"OPR");
+    }
+    writelog ("Exception: "+tParas.gsCentralDBServer ,"OPR");
+    try {
+        m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
+    }
+    catch (const std::exception& e) {
+        std::string cppString1(e.what());
+        writelog ("Exception: "+ cppString1,"OPR");
     }
     //
     int iRet = 0;
@@ -87,7 +96,7 @@ void operation::OperationInit(io_context& ioContext)
     
     ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
 
-    PBSEntry ("1122944019");
+   // PBSEntry ("1122944019");
 
 }
 
@@ -450,7 +459,7 @@ void operation::FnSendDateTimeToMonitor()
 void operation::FnSendLogMessageToMonitor(std::string msg)
 {
     std::string str = "[" + gtStation.sName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
-    m_udp->startsend(str);
+    m_Monitorudp->startsend(str);
 }
 
 void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg)

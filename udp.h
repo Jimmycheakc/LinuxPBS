@@ -31,6 +31,14 @@ typedef enum : unsigned int{
     CmdSetDioOutput=303
 } udp_rx_command;
 
+typedef enum : unsigned int{
+	CmdMonitorEnquiry=300,
+    CmdMonitorSyncTime = 301,
+	CmdMonitorOutput=303,
+	CmdDownloadIni=309,
+	CmdDownloadParam=310,
+} monitorudp_rx_command;
+
 class udpclient {
 public:
     udp::socket socket_;
@@ -39,6 +47,7 @@ public:
     enum { max_length = 1024 };
     char data_[max_length];
     void processdata(const char*data, std::size_t length);
+    void processmonitordata(const char*data, std::size_t length);
     void udpinit(const std::string ServerIP, unsigned short RemotePort, unsigned short LocalPort);
 
 public:
@@ -61,10 +70,11 @@ public:
     void startreceive() {
         socket_.async_receive_from(buffer(data_, max_length), senderEndpoint_, [this](const boost::system::error_code& error, std::size_t bytes_received) {
             if (!error) {
-                //std::stringstream dbss;
-	            //dbss << "Received response from " << senderEndpoint_ << ": " << std::string(data_, bytes_received) ;
-                //Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
-                processdata(data_, bytes_received);
+                 if (socket_.local_endpoint().port() == 2001) {
+                    processdata(data_, bytes_received);
+                } else if (socket_.local_endpoint().port() == 2008) {
+                    processmonitordata(data_, bytes_received);
+                }
             } else {
                 std::stringstream dbss;
                 dbss << "Error receiving message: " << error.message() ;

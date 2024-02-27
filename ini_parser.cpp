@@ -30,7 +30,7 @@ void IniParser::FnReadIniFile()
     LogFolder_                      = pt.get<std::string>("setting.LogFolder", "");
     LocalDB_                        = pt.get<std::string>("setting.LocalDB", "");
     CentralDBName_                  = pt.get<std::string>("setting.CentralDBName", "");
-    CentralDBServer_                = pt.get<std::string>("setting.CentralDBServer_", "");
+    CentralDBServer_                = pt.get<std::string>("setting.CentralDBServer", "");
     LocalUDPPort_                   = pt.get<std::string>("setting.LocalUDPPort", "");
     RemoteUDPPort_                  = pt.get<std::string>("setting.RemoteUDPPort", "");
     SeasonOnly_                     = pt.get<std::string>("setting.SeasonOnly", "");
