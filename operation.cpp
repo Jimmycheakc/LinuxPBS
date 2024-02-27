@@ -439,6 +439,22 @@ void operation:: Sendmystatus()
 	
 }
 
+void operation::FnSendMyStatusToMonitor()
+{
+    //EPS error index:  0=antenna,     1=printer,   2=DB, 3=Reader, 4=UPOS
+    //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10=NCSC, 11= LCSC
+    //12= station door status, 13 = barrier door status, 14= TGD controll status
+    //15 = TGD sensor status 16=Arm drop status,17=barrier status,18=ticket status d DateTime
+    CE_Time dt;
+	string str="";
+    //-----
+    for (int i= 0; i< Errsize; ++i){
+        str += std::to_string(tPBSError[i].ErrNo) + ",";
+    }
+	str+="0;0,"+dt.DateTimeNumberOnlyString()+",";
+	SendMsg2Monitor("00",str);
+}
+
 void operation::FnSyncCentralDBTime()
 {
     m_db->synccentraltime();
@@ -447,13 +463,13 @@ void operation::FnSyncCentralDBTime()
 void operation::FnSendDIOInputStatusToMonitor(int pinNum, int pinValue)
 {
     std::string str = std::to_string(pinNum) + "," + std::to_string(pinValue);
-    SendMsg2Server("302", str);
+    SendMsg2Monitor("302", str);
 }
 
 void operation::FnSendDateTimeToMonitor()
 {
     std::string str = Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmm();
-    SendMsg2Server("304", str);
+    SendMsg2Monitor("304", str);
 }
 
 void operation::FnSendLogMessageToMonitor(std::string msg)
@@ -465,7 +481,16 @@ void operation::FnSendLogMessageToMonitor(std::string msg)
 void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg)
 {
     std::string str = line1TextMsg + "," + line2TextMsg;
-    SendMsg2Server("306", str);
+    SendMsg2Monitor("306", str);
+}
+
+void operation::SendMsg2Monitor(string cmdcode,string dstr)
+{
+	string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
+	str+=dstr+"|]";
+	m_Monitorudp->startsend(str);
+    //----
+    writelog ("Message to Monitor: " + str,"OPR");
 }
 
 void operation::SendMsg2Server(string cmdcode,string dstr)

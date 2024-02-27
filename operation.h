@@ -40,11 +40,13 @@ public:
     void Setdefaultparameter();
     string getIPAddress(); 
     void Sendmystatus();
+    void FnSendMyStatusToMonitor();
     void FnSyncCentralDBTime();
     void FnSendDIOInputStatusToMonitor(int pinNum, int pinValue);
     void FnSendDateTimeToMonitor();
     void FnSendLogMessageToMonitor(std::string msg);
     void FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg);
+    void SendMsg2Monitor(string cmdcode,string dstr);
     void SendMsg2Server(string cmdcode,string dstr);
     int  CheckSeason(string sIU,int iInOut);
     void writelog(string sMsg, string soption);

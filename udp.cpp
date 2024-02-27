@@ -20,8 +20,6 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 
      ParseData pField('[',']','|');
      n=pField.Parse(data);
-
-	 operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 	 
 	 if(n < 4){
 		//std::stringstream dbss;
@@ -36,7 +34,7 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 		case CmdMonitorEnquiry:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
-			operation::getInstance()->Sendmystatus();
+			operation::getInstance()->FnSendMyStatusToMonitor();
 			break;
 		}
     	case CmdMonitorSyncTime:
@@ -46,9 +44,29 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			break;
 		}
 		case CmdMonitorOutput:
-		break;
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			int pinNum = std::stoi(pField.Field(3));
+			int pinValue = std::stoi(pField.Field(4));
+			int actualDIOPinNum = DIO::getInstance()->FnGetOutputPinNum(pinNum);
+
+			if ((actualDIOPinNum != 0) && (pinValue == 0 || pinValue == 1))
+			{
+				GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+			}
+			else
+			{
+				operation::getInstance()->writelog("Invalid DIO", "UDP");
+			}
+			break;
+		}
 		case CmdDownloadIni:
-		break;
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->writelog("download INI file","UDP");
+			// Temp: Need to revisit and complete it
+			break;
+		}
 		case CmdDownloadParam:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -58,7 +76,7 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			break;
 		}
 		default:
-		break;
+			break;
 	}
 
 }
