@@ -44,7 +44,9 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 operation::getInstance()->tProcess.giSyncTimeCnt = 0;
             } 
         }             
-            
+
+        // Send DateTime to Monitor
+        operation::getInstance()->FnSendDateTimeToMonitor();
     }
 
     //--------

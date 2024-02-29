@@ -151,6 +151,11 @@ public:
     double FnGetCardBalance();
     std::string FnGetReaderTime();
 
+    bool FnMoveCDAckFile();
+    bool FnGenerateCDAckFile();
+    bool FnDownloadCDFiles();
+    void FnUploadLCSCCDFiles();
+
     /**
      * Singleton LCSCReader should not be cloneable.
      */
@@ -197,6 +202,11 @@ private:
     std::string card_application_num_;
     double card_balance_;
     std::string reader_time_;
+    bool WaitForLCSCReturn_;
+    bool HasCDFileToUpload_;
+    int LastCDUploadDate_;
+    int LastCDUploadTime_;
+    int CDUploadTimeOut_;
     LCSCReader();
     std::string lcscCmdToString(LcscCmd cmd);
     int lcscCmd(LcscCmd cmd);
@@ -230,4 +240,5 @@ private:
     int getTxNum();
     int getRxNum();
     void encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge);
+    std::string calculateSHA256(const std::string& data);
 };

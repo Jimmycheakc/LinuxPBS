@@ -32,11 +32,12 @@ typedef enum : unsigned int{
 } udp_rx_command;
 
 typedef enum : unsigned int{
-	CmdMonitorEnquiry=300,
-    CmdMonitorSyncTime = 301,
-	CmdMonitorOutput=303,
-	CmdDownloadIni=309,
-	CmdDownloadParam=310,
+	CmdMonitorEnquiry = 300,
+    CmdMonitorFeeTest = 301,
+	CmdMonitorOutput = 303,
+	CmdDownloadIni = 309,
+	CmdDownloadParam = 310,
+    CmdMonitorSyncTime = 311
 } monitorudp_rx_command;
 
 class udpclient {

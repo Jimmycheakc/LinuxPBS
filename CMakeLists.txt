@@ -56,6 +56,8 @@ set(SOURCE_FILES
     db.cpp
     dio.cpp
     operation.cpp
+    tcp.cpp
+    lpr.cpp
     main.cpp
 )
 

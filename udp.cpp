@@ -37,26 +37,39 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			operation::getInstance()->FnSendMyStatusToMonitor();
 			break;
 		}
-    	case CmdMonitorSyncTime:
+		case CmdMonitorFeeTest:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
-			operation::getInstance()->FnSyncCentralDBTime();
 			break;
 		}
 		case CmdMonitorOutput:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
-			int pinNum = std::stoi(pField.Field(3));
-			int pinValue = std::stoi(pField.Field(4));
-			int actualDIOPinNum = DIO::getInstance()->FnGetOutputPinNum(pinNum);
+			std::vector<std::string> dataTokens;
+			std::stringstream ss(pField.Field(3));
+			std::string token;
 
-			if ((actualDIOPinNum != 0) && (pinValue == 0 || pinValue == 1))
+			while (std::getline(ss, token, ','))
 			{
-				GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+				dataTokens.push_back(token);
 			}
-			else
+
+			if (dataTokens.size() == 2)
 			{
-				operation::getInstance()->writelog("Invalid DIO", "UDP");
+				std::cout << "pinNum : " << dataTokens[0] << std::endl;
+				std::cout << "pinValue : " << dataTokens[1] << std::endl;
+				int pinNum = std::stoi(dataTokens[0]);
+				int pinValue = std::stoi(dataTokens[1]);
+				int actualDIOPinNum = DIO::getInstance()->FnGetOutputPinNum(pinNum);
+
+				if ((actualDIOPinNum != 0) && (pinValue == 0 || pinValue == 1))
+				{
+					GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+				}
+				else
+				{
+					operation::getInstance()->writelog("Invalid DIO", "UDP");
+				}
 			}
 			break;
 		}
@@ -73,6 +86,12 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("download Parameter","UDP");
 			operation::getInstance()->m_db->downloadparameter();
 			operation::getInstance()->m_db->loadParam();
+			break;
+		}
+		case CmdMonitorSyncTime:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->FnSyncCentralDBTime();
 			break;
 		}
 		default:

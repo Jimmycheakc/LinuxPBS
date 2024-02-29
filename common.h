@@ -14,10 +14,14 @@ public:
     static Common* getInstance();
     void FnLogExecutableInfo(const std::string& str);
     std::string FnGetDateTime();
+    std::string FnGetDateTimeFormat_yyyymmddhhmmss();
+    std::string FnGetDateTimeFormat_yyyymmdd_hhmmss();
     std::string FnGetDateTimeFormat_yyyymmddhhmm();
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::time_t FnGetEpochSeconds();
     std::string FnGetDateTimeSpace();
+    int FnGetCurrentHour();
+    int FnGetCurrentDay();
     std::string FnGetFileName(const std::string& str);
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
@@ -27,6 +31,8 @@ public:
     std::string FnGetDisplayVectorCharToHexString(const std::vector<uint8_t>& data);
     bool FnIsNumeric(const std::vector<char>& data);
     bool FnIsStringNumeric(const std::string& str);
+    std::string FnPadRightSpace(int length, const std::string& str);
+    std::string FnPadLeft0(int width, int count);
 
     /**
      * Singleton Common should not be cloneable.

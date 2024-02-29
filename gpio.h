@@ -45,10 +45,10 @@ public:
     static const int PIN_DO6               = 354;
 
     // Define PINOUT J2 (Output 5v)
-    static const int PIN_DO7               = 504;   // J2 07
-    static const int PIN_DO8               = 503;   // J2 08
-    static const int PIN_DO9               = 502;   // J2 09
-    static const int PIN_DO10              = 501;   // J2 10
+    static const int PIN_DO7               = 507;   // J2 01
+    static const int PIN_DO8               = 506;   // J2 03
+    static const int PIN_DO9               = 505;   // J2 07
+    static const int PIN_DO10              = 504;   // J2 09
 
     // Define PININ
     static const int PIN_DI1               = 362;
@@ -65,10 +65,10 @@ public:
     static const int PIN_DI12              = 331;
 
     // Define PININ J2 (Input 5v)
-    static const int PIN_DI13              = 507;   // J2 01
-    static const int PIN_DI14              = 508;   // J2 02
-    static const int PIN_DI15              = 505;   // J2 03
-    static const int PIN_DI16              = 506;   // J2 04
+    static const int PIN_DI13              = 508;   // J2 02
+    static const int PIN_DI14              = 502;   // J2 04
+    static const int PIN_DI15              = 503;   // J2 08
+    static const int PIN_DI16              = 501;   // J2 010
 
     static GPIOManager* getInstance();
     void FnGPIOInit();

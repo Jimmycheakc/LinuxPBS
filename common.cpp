@@ -44,6 +44,30 @@ std::string Common::FnGetDateTime()
     return oss.str();
 }
 
+std::string Common::FnGetDateTimeFormat_yyyymmddhhmmss()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m%d%H%M%S");
+    return oss.str();
+}
+
+std::string Common::FnGetDateTimeFormat_yyyymmdd_hhmmss()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m%d_%H%M%S");
+    return oss.str();
+}
+
 std::string Common::FnGetDateTimeFormat_yyyymmddhhmm()
 {
     auto now = std::chrono::system_clock::now();
@@ -84,6 +108,22 @@ std::string Common::FnGetDateTimeSpace()
     std::ostringstream oss;
     oss << std::setfill(' ') << std::setw(DATE_TIME_FORMAT_SPACE) << "";
     return oss.str();
+}
+
+int Common::FnGetCurrentHour()
+{
+    auto now = std::chrono::system_clock::now();
+    auto now_time = std::chrono::system_clock::to_time_t(now);
+    auto local_now = *std::localtime(&now_time);
+    return local_now.tm_hour;
+}
+
+int Common::FnGetCurrentDay()
+{
+    auto now = std::chrono::system_clock::now();
+    auto now_time = std::chrono::system_clock::to_time_t(now);
+    auto local_now = *std::localtime(&now_time);
+    return local_now.tm_mday; // Returns the day of the month (1-31)
 }
 
 std::string Common::FnGetFileName(const std::string& str)
@@ -192,4 +232,25 @@ bool Common::FnIsStringNumeric(const std::string& str)
         }
     }
     return true;
+}
+
+std::string Common::FnPadRightSpace(int length, const std::string& str)
+{
+    if (str.length() >= length) {
+        return str; // No padding needed if string is already longer or equal to desired length
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << str;
+        oss << std::string(length - str.length(), ' '); // Append spaces to reach desired length
+        return oss.str();
+    }
+}
+
+std::string Common::FnPadLeft0(int width, int count)
+{
+    std::stringstream ss;
+    ss << std::setw(width) << std::setfill('0') << count;
+    return ss.str();
 }

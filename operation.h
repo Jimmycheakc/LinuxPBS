@@ -46,6 +46,8 @@ public:
     void FnSendDateTimeToMonitor();
     void FnSendLogMessageToMonitor(std::string msg);
     void FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg);
+    bool CopyIniFile();
+    bool CopyCdFiles();
     void SendMsg2Monitor(string cmdcode,string dstr);
     void SendMsg2Server(string cmdcode,string dstr);
     int  CheckSeason(string sIU,int iInOut);
@@ -84,5 +86,6 @@ private:
     };
     std::string getSerialPort(const std::string& key);
     std::atomic<bool> isOperationInitialized_;
-
+    bool copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
+                    const std::string& username, const std::string& password, const std::string& outputFolderPath);
 };

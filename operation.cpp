@@ -1,9 +1,13 @@
 
+#include <sys/mount.h>
 #include <iostream>
 #include <string>
 #include <memory>
 #include <chrono>
 #include <thread>
+#include <filesystem>
+#include <cstdlib>
+#include <fstream>
 #include <cstdio>
 #include "common.h"
 #include "gpio.h"
@@ -452,7 +456,7 @@ void operation::FnSendMyStatusToMonitor()
         str += std::to_string(tPBSError[i].ErrNo) + ",";
     }
 	str+="0;0,"+dt.DateTimeNumberOnlyString()+",";
-	SendMsg2Monitor("00",str);
+	SendMsg2Monitor("300",str);
 }
 
 void operation::FnSyncCentralDBTime()
@@ -482,6 +486,119 @@ void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string 
 {
     std::string str = line1TextMsg + "," + line2TextMsg;
     SendMsg2Monitor("306", str);
+}
+
+bool operation::copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
+                        const std::string& username, const std::string& password, const std::string& outputFolderPath)
+{
+    // Create the mount poin directory if doesn't exist
+    if (!std::filesystem::exists(mountPoint))
+    {
+        std::error_code ec;
+        if (!std::filesystem::create_directories(mountPoint, ec))
+        {
+            Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), "", "OPR");
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), "", "OPR");
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), "", "OPR");
+    }
+
+    // Mount the shared folder
+    std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
+                                " -o username=" + username + ",password=" + password;
+    int mountStatus = std::system(mountCommand.c_str());
+    if (mountStatus != 0)
+    {
+        Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), "", "OPR");
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
+    }
+
+    // Create the output folder if it doesn't exist
+    if (!std::filesystem::exists(outputFolderPath))
+    {
+        std::error_code ec;
+        if (!std::filesystem::create_directories(outputFolderPath, ec))
+        {
+            Logger::getInstance()->FnLog(("Failed to create " + outputFolderPath + " directory : " + ec.message()), "", "OPR");
+            umount(mountPoint.c_str()); // Unmount if folder creation fails
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to create " + outputFolderPath + " directory."), "", "OPR");
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Output folder directory : " + outputFolderPath + " exists."), "", "OPR");
+    }
+
+    // Iterate over files in the mounted directory and copy them to the local directory
+    for (const auto& entry : std::filesystem::directory_iterator(mountPoint))
+    {
+        const std::string& filePath = entry.path().string();
+
+        // Extract the file name from the full path
+        std::string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
+
+        // Create the output file path
+        std::string outputFilePath = outputFolderPath + "/" + fileName;
+
+        // Copy the file
+        std::ifstream inFile(filePath, std::ios::binary);
+        std::ofstream outFile(outputFilePath, std::ios::binary);
+        if (!inFile || !outFile || !(outFile << inFile.rdbuf()))
+        {
+            Logger::getInstance()->FnLog("Failed to copy file: " + fileName, "", "OPR");
+            inFile.close();
+            outFile.close();
+            umount(mountPoint.c_str()); // Unmount if folder creation fails
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("Successfully to copy file: " + fileName, "", "OPR");
+        }
+
+        inFile.close();
+        outFile.close();
+    }
+
+    // Unmount the shared folder
+    std::string unmountCommand = "sudo umount " + mountPoint;
+    int unmountStatus = std::system(unmountCommand.c_str());
+    if (unmountStatus != 0)
+    {
+        Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+    }
+
+    return true;
+}
+
+bool operation::CopyIniFile()
+{
+    return copyFiles("/mnt/windows_share", "//192.168.2.141/Test", "sunpark", "Tdxh638*", "/home/root/LinuxPBSSourceCode/LatestSourceCode/Testing");
+}
+
+bool operation::CopyCdFiles()
+{
+    return copyFiles("/mnt/windows_share_cd", "//192.168.2.141/carpark/CSCR01/ftp/out/cdf", "sunpark", "Tdxh638*", "/home/root/LinuxPBSSourceCode/LatestSourceCode/Testing");
 }
 
 void operation::SendMsg2Monitor(string cmdcode,string dstr)

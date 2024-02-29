@@ -1,3 +1,4 @@
+#include <sys/mount.h>
 #include <cstdint>
 #include <iostream>
 #include <iomanip>
@@ -6,6 +7,7 @@
 #include <openssl/aes.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/sha.h>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -14,6 +16,8 @@
 #include "lcsc.h"
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
+#include "boost/algorithm/string.hpp"
+#include "operation.h"
 #include "log.h"
 
 LCSCReader* LCSCReader::lcscReader_ = nullptr;
@@ -44,7 +48,12 @@ LCSCReader::LCSCReader()
     card_balance_(0.00),
     reader_time_(""),
     continueReadFlag_(false),
-    isCmdExecuting_(false)
+    isCmdExecuting_(false),
+    WaitForLCSCReturn_(false),
+    HasCDFileToUpload_(false),
+    LastCDUploadDate_(0),
+    LastCDUploadTime_(0),
+    CDUploadTimeOut_(0)
 {
     memset(txBuff, 0, sizeof(txBuff));
     memset(rxBuff, 0, sizeof(rxBuff));
@@ -1920,4 +1929,549 @@ std::string LCSCReader::FnGetReaderTime()
 void LCSCReader::FnLCSCReaderStopRead()
 {
     continueReadFlag_.store(false);
+}
+
+std::string LCSCReader::calculateSHA256(const std::string& data)
+{
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256;
+    SHA256_Init(&sha256);
+    SHA256_Update(&sha256, data.c_str(), data.length());
+    SHA256_Final(hash, &sha256);
+
+    std::stringstream ss;
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
+    {
+        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+    }
+    return ss.str();
+}
+
+bool LCSCReader::FnMoveCDAckFile()
+{
+    std::string folderPath = operation::getInstance()->tParas.gsCSCRcdackFolder;
+    std::replace(folderPath.begin(), folderPath.end(), '\\', '/');
+
+    std::string mountPoint = "/mnt/cdack";
+    std::string sharedFolderPath = folderPath;
+    std::string username = "sunpark";
+    std::string password = "Tdxh638*";
+    std::string cdAckFilePath = operation::getInstance()->tParas.gsLocalLCSC;
+
+    // Create the mount point directory if doesn't exist
+    if (!std::filesystem::exists(mountPoint))
+    {
+        std::error_code ec;
+        if (!std::filesystem::create_directories(mountPoint, ec))
+        {
+            Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), logFileName_, "LCSC");
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), logFileName_, "LCSC");
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), logFileName_, "LCSC");
+    }
+
+    // Mount the shared folder
+    std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
+                                " -o username=" + username + ",password=" + password;
+    int mountStatus = std::system(mountCommand.c_str());
+    if (mountStatus != 0)
+    {
+        Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), logFileName_, "LCSC");
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), logFileName_, "LCSC");
+    }
+    
+    // Copy files to mount point
+    std::filesystem::path folder(cdAckFilePath);
+    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            std::string filename = entry.path().filename().string();
+
+            if (std::filesystem::is_regular_file(entry)
+                && (filename.size() >= 6) && (filename.substr(filename.size() - 6) == ".cdack"))
+            {
+                std::filesystem::path dest_file = mountPoint / entry.path().filename();
+                std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
+                std::filesystem::remove(entry.path());
+
+                std::stringstream ss;
+                ss << "Move " << entry.path() << " to " << dest_file << " successfully";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+            }
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", logFileName_, "LCSC");
+        umount(mountPoint.c_str());
+        return false;
+    }
+
+    // Unmount the shared folder
+    std::string unmountCommand = "sudo umount " + mountPoint;
+    int unmountStatus = std::system(unmountCommand.c_str());
+    if (unmountStatus != 0)
+    {
+        Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), logFileName_, "LCSC");
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), logFileName_, "LCSC");
+    }
+
+    return true;
+}
+
+bool LCSCReader::FnGenerateCDAckFile()
+{
+    FnSendGetStatusCmd();
+
+    std::string cdAckFilePath = operation::getInstance()->tParas.gsLocalLCSC;
+
+    // Create cd ack file path
+    if (!std::filesystem::exists(cdAckFilePath))
+    {
+        std::error_code ec;
+        if (!std::filesystem::create_directories(cdAckFilePath, ec))
+        {
+            Logger::getInstance()->FnLog(("Failed to create " + cdAckFilePath + " directory : " + ec.message()), logFileName_, "LCSC");
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to create " + cdAckFilePath + " directory."), logFileName_, "LCSC");
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("CD Ack directory: " + cdAckFilePath + " exists."), logFileName_, "LCSC");
+    }
+
+    // Construct cd ack file name
+    std::string terminalID;
+    std::size_t terminalIDLen = FnGetSerialNumber().length();
+    if (terminalIDLen < 6)
+    {
+        terminalID = "000000";
+    }
+    else
+    {
+        terminalID = FnGetSerialNumber().substr(terminalIDLen - 6);
+    }
+
+    std::string ackFileName = boost::algorithm::trim_copy(operation::getInstance()->tParas.gsCPOID) + "_" + operation::getInstance()->tParas.gsCPID + "_CR"
+                                + "0" + terminalID + "_" + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd_hhmmss() + ".cdack";
+    std::string sAckFile = cdAckFilePath + "/" + ackFileName;
+    
+    // Construct data contents
+    std::string sHeader;
+    std::string sData;
+    std::string sDataO;
+
+    sHeader = "H" + Common::getInstance()->FnPadRightSpace(53, ackFileName) + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() + FnGetFirmwareVersion();
+    sDataO = sHeader;
+    sData = sHeader + '\n';
+
+    std::string tmp;
+    int count = 0;
+
+    tmp = "";
+    if (FnGetBL1Version() != "FFFF")
+    {
+        tmp = std::string("C") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("netscsc2.blk")) + ",$" + FnGetBL1Version();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    tmp = "";
+    if (FnGetBL2Version() != "FFFF")
+    {
+        tmp = std::string("C") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("ezlkcsc2.blk")) + ",$" + FnGetBL2Version();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    tmp = "";
+    if (FnGetBL3Version() != "FFFF")
+    {
+        tmp = std::string("C") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("fut3csc2.blk")) + ",$" + FnGetBL3Version();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    tmp = "";
+    if (FnGetCIL1Version() != "FFFF")
+    {
+        tmp = std::string("C") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("netsiss2.sys")) + ",$" + FnGetCIL1Version();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    tmp = "";
+    if (FnGetCIL2Version() != "FFFF")
+    {
+        tmp = std::string("C") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("ezlkiss2.sys")) + ",$" + FnGetCIL2Version();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    tmp = "";
+    if (FnGetCIL3Version() != "FFFF")
+    {
+        tmp = std::string("C") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("fut3iss2.sys")) + ",$" + FnGetCIL3Version();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    tmp = "";
+    if (FnGetCFGVersion() != "FFFF")
+    {
+        tmp = std::string("D") + "$" + "0" + terminalID + "," + boost::algorithm::to_lower_copy(std::string("device.zip")) + ",$" + FnGetCFGVersion();
+        sDataO = sDataO + tmp;
+        sData = sData + tmp + '\n';
+        count = count + 1;
+    }
+
+    // Open ack file and write binary data to it
+    std::ofstream outFile(sAckFile, std::ios::binary);
+
+    sData = sData + "T" + Common::getInstance()->FnPadLeft0(6, count);
+
+    std::string hash = calculateSHA256(sDataO);
+    sData = sData + hash + '\n';
+
+    if (!(outFile << sData))
+    {
+        Logger::getInstance()->FnLog(("Failed to write data into " + sAckFile), logFileName_, "LCSC");
+        outFile.close();
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully write data into " + sAckFile), logFileName_, "LCSC");
+    }
+
+    outFile.close();
+
+    return true;
+}
+
+bool LCSCReader::FnDownloadCDFiles()
+{
+    std::string folderPath = operation::getInstance()->tParas.gsCSCRcdfFolder;
+    std::replace(folderPath.begin(), folderPath.end(), '\\', '/');
+
+    std::string mountPoint = "/mnt/cd";
+    std::string sharedFolderPath = folderPath;
+    std::string username = "sunpark";
+    std::string password = "Tdxh638*";
+    std::string outputFolderPath = operation::getInstance()->tParas.gsLocalLCSC;
+
+    // Create the mount point directory if doesn't exist
+    if (!std::filesystem::exists(mountPoint))
+    {
+        std::error_code ec;
+        if (!std::filesystem::create_directories(mountPoint, ec))
+        {
+            Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), logFileName_, "LCSC");
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), logFileName_, "LCSC");
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), logFileName_, "LCSC");
+    }
+
+    // Mount the shared folder
+    std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
+                                " -o username=" + username + ",password=" + password;
+    int mountStatus = std::system(mountCommand.c_str());
+    if (mountStatus != 0)
+    {
+        Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), logFileName_, "LCSC");
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), logFileName_, "LCSC");
+    }
+
+    // Check Folder exist or not
+    std::filesystem::path folder(mountPoint);
+
+    int fileCount = 0;
+    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            if (std::filesystem::is_regular_file(entry))
+            {
+                fileCount++;
+            }
+        }
+    }
+
+    if (fileCount == 0)
+    {
+        Logger::getInstance()->FnLog("No CD file to download.", logFileName_, "LCSC");
+        umount(mountPoint.c_str());
+        return false;
+    }
+
+    int downloadTotal = 0;
+    // Create the output folder if it doesn't exist
+    if (!std::filesystem::exists(outputFolderPath))
+    {
+        std::error_code ec;
+        if (!std::filesystem::create_directories(outputFolderPath, ec))
+        {
+            Logger::getInstance()->FnLog(("Failed to create " + outputFolderPath + " directory : " + ec.message()), logFileName_, "LCSC");
+            umount(mountPoint.c_str()); // Unmount if folder creation fails
+            return false;
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to create " + outputFolderPath + " directory."), logFileName_, "LCSC");
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Output folder directory : " + outputFolderPath + " exists."), logFileName_, "LCSC");
+    }
+
+    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            if (std::filesystem::is_regular_file(entry))
+            {
+                std::filesystem::path dest_file = outputFolderPath / entry.path().filename();
+                std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
+                std::filesystem::remove(entry.path());
+                downloadTotal++;
+
+                std::stringstream ss;
+                ss << "Download " << entry.path() << " to " << dest_file << " successfully";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+            }
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", logFileName_, "LCSC");
+        umount(mountPoint.c_str());
+        return false;
+    }
+
+    std::stringstream ss;
+    ss << "Total " << downloadTotal << " cd files downloaded";
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
+    // Unmount the shared folder
+    std::string unmountCommand = "sudo umount " + mountPoint;
+    int unmountStatus = std::system(unmountCommand.c_str());
+    if (unmountStatus != 0)
+    {
+        Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), logFileName_, "LCSC");
+        return false;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), logFileName_, "LCSC");
+    }
+
+    return true;
+}
+
+void LCSCReader::FnUploadLCSCCDFiles()
+{
+    if ((operation::getInstance()->tParas.giCommPortLCSC > 0)
+        && (!operation::getInstance()->tProcess.gbLoopApresent)
+        && (WaitForLCSCReturn_ == false)
+        && (Common::getInstance()->FnGetCurrentHour() < 20))
+    {
+        if ((HasCDFileToUpload_ == false)
+            && (LastCDUploadDate_ != Common::getInstance()->FnGetCurrentDay())
+            && (LastCDUploadTime_ != Common::getInstance()->FnGetCurrentHour()))
+        {
+            LastCDUploadTime_ = Common::getInstance()->FnGetCurrentHour();
+            if (FnDownloadCDFiles())
+            {
+                std::cout << "Completed Download CD files" << std::endl;
+                HasCDFileToUpload_ = true;
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        if ((HasCDFileToUpload_ == true) || (LastCDUploadDate_ == 0))
+        {
+            std::cout << "Case 1" << std::endl;
+            std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+            std::filesystem::path folder(localLCSCFolder);
+            LastCDUploadDate_ = 1;
+            bool uploadCDFilesRet = false;
+            int fileCount = 0;
+            std::string cdFileName;
+
+            for (const auto& entry : std::filesystem::directory_iterator(folder))
+            {
+                std::string filename = entry.path().filename().string();
+
+                if (((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".lcs"))
+                    && ((filename.size() >= 6) && (filename.substr(filename.size() - 6) != ".cdack"))
+                    && ((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".cfg")))
+                {
+                    fileCount = fileCount + 1;
+                    cdFileName = entry.path();
+                }
+            }
+
+            if (fileCount > 0)
+            {
+                HasCDFileToUpload_ = true;
+                //uploadCDFilesRet = FnUploadCDFile2()
+                WaitForLCSCReturn_ = true;
+                CDUploadTimeOut_ = 0;
+
+                std::stringstream ss;
+                ss << "Call upload CD file: " << cdFileName;
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+            }
+            else
+            {
+                std::cout << "Case 2" << std::endl;
+                if (HasCDFileToUpload_ == true)
+                {
+                    std::cout << "Case 3" << std::endl;
+                    if (FnGenerateCDAckFile() == true)
+                    {
+                        std::cout << "Case 4" << std::endl;
+                        HasCDFileToUpload_ = false;
+                        Logger::getInstance()->FnLog("Generate CD Ack file successfully", logFileName_, "LCSC");
+                        std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+                        std::filesystem::path folder(localLCSCFolder);
+                        LastCDUploadDate_ = 0;
+
+                        for (const auto& entry : std::filesystem::directory_iterator(folder))
+                        {
+                            std::string filename = entry.path().filename().string();
+
+                            if (((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".lcs"))
+                                && ((filename.size() >= 6) && (filename.substr(filename.size() - 6) != ".cdack")))
+                            {
+                                std::filesystem::remove(entry.path());
+                                std::stringstream ss;
+                                ss << "File " << filename << " deleted";
+                                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+                            }
+
+                            if ((filename.size() >= 6) && (filename.substr(filename.size() - 6) == ".cdack"))
+                            {
+                                if (FnMoveCDAckFile())
+                                {
+                                    LastCDUploadDate_ = Common::getInstance()->FnGetCurrentDay();
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        std::cout << "Case 5" << std::endl;
+                        Logger::getInstance()->FnLog("Generate CD Ack file failed", logFileName_, "LCSC");
+                    }
+                }
+                else
+                {
+                    std::cout << "Case 6" << std::endl;
+                    std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+                    std::filesystem::path folder(localLCSCFolder);
+
+                    for (const auto& entry : std::filesystem::directory_iterator(folder))
+                    {
+                        std::string filename = entry.path().filename().string();
+
+                        if (((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".lcs"))
+                            && ((filename.size() >= 6) && (filename.substr(filename.size() - 6) != ".cdack")))
+                        {
+                            std::filesystem::remove(entry.path());
+                            std::stringstream ss;
+                            ss << "File " << filename << " deleted";
+                            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+                        }
+
+                        if ((filename.size() >= 6) && (filename.substr(filename.size() - 6) == ".cdack"))
+                        {
+                            if (FnMoveCDAckFile())
+                            {
+                                LastCDUploadDate_ = Common::getInstance()->FnGetCurrentDay();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (WaitForLCSCReturn_ == true)
+    {
+        std::cout << "Case 7 CDUploadTimeOut_ : " << CDUploadTimeOut_ << std::endl;
+        if (CDUploadTimeOut_ > 6)
+        {
+            WaitForLCSCReturn_ = false;
+        }
+        else
+        {
+            CDUploadTimeOut_ = CDUploadTimeOut_ + 1;
+        }
+    }
+
+    if ((Common::getInstance()->FnGetCurrentHour() > 20)
+        && (HasCDFileToUpload_ || WaitForLCSCReturn_))
+    {
+        std::cout << "Case 8" << std::endl;
+        std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+        std::filesystem::path folder(localLCSCFolder);
+
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            std::string filename = entry.path().filename().string();
+
+            if (((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".lcs"))
+                && ((filename.size() >= 6) && (filename.substr(filename.size() - 6) != ".cdack")))
+            {
+                std::filesystem::remove(entry.path());
+                std::stringstream ss;
+                ss << "File " << filename << " deleted";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+            }
+        }
+        WaitForLCSCReturn_ = false;
+        HasCDFileToUpload_ = false;
+    }
 }
