@@ -45,6 +45,7 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
             } 
         }             
 
+        LCSCReader::getInstance()->FnUploadLCSCCDFiles();
         // Send DateTime to Monitor
         operation::getInstance()->FnSendDateTimeToMonitor();
     }

@@ -77,7 +77,15 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("download INI file","UDP");
-			// Temp: Need to revisit and complete it
+
+			if (operation::getInstance()->CopyIniFile())
+			{
+				operation::getInstance()->FnSendCmdDownloadIniAckToMonitor(true);
+			}
+			else
+			{
+				operation::getInstance()->FnSendCmdDownloadIniAckToMonitor(false);
+			}
 			break;
 		}
 		case CmdDownloadParam:
@@ -85,7 +93,16 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("download Parameter","UDP");
 			operation::getInstance()->m_db->downloadparameter();
-			operation::getInstance()->m_db->loadParam();
+
+			if (db::getInstance()->FnGetDatabaseErrorFlag() == 0)
+			{
+				operation::getInstance()->m_db->loadParam();
+				operation::getInstance()->FnSendCmdDownloadParamAckToMonitor(true);
+			}
+			else
+			{
+				operation::getInstance()->FnSendCmdDownloadParamAckToMonitor(false);
+			}
 			break;
 		}
 		case CmdMonitorSyncTime:

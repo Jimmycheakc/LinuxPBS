@@ -81,6 +81,7 @@ void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsign
     pMainIOContext_ = &mainIOContext;
     periodicSendGetCardIDCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     periodicSendGetCardBalanceCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
+    uploadCDFilesTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
     pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
@@ -210,7 +211,7 @@ void LCSCReader::FnSendSetTime()
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderSetTime", ret);
 }
 
-void LCSCReader::FnSendUploadCFGFile(const std::string& path)
+int LCSCReader::FnSendUploadCFGFile(const std::string& path)
 {
     int ret;
     const std::filesystem::path filePath(path);
@@ -254,6 +255,7 @@ void LCSCReader::FnSendUploadCFGFile(const std::string& path)
     }
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadCFGFile", ret);
+    return ret;
 }
 
 std::vector<unsigned char> LCSCReader::readFile(const std::filesystem::path& filePath)
@@ -394,7 +396,7 @@ int LCSCReader::uploadCFGComplete()
     return ret;
 }
 
-void LCSCReader::FnSendUploadCILFile(const std::string& path)
+int LCSCReader::FnSendUploadCILFile(const std::string& path)
 {
     int ret;
     const std::filesystem::path filePath(path);
@@ -440,6 +442,7 @@ void LCSCReader::FnSendUploadCILFile(const std::string& path)
     }
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadCILFile", ret);
+    return ret;
 }
 
 int LCSCReader::uploadCILSub(const std::vector<unsigned char>& data, bool isSubSequence)
@@ -539,7 +542,7 @@ int LCSCReader::uploadCILComplete()
     return ret;
 }
 
-void LCSCReader::FnSendUploadBLFile(const std::string& path)
+int LCSCReader::FnSendUploadBLFile(const std::string& path)
 {
     int ret;
     const std::filesystem::path filePath(path);
@@ -585,6 +588,7 @@ void LCSCReader::FnSendUploadBLFile(const std::string& path)
     }
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadBLFile", ret);
+    return ret;
 }
 
 int LCSCReader::uploadBLSub(const std::vector<unsigned char>& data, bool isSubSequence)
@@ -2320,7 +2324,6 @@ void LCSCReader::FnUploadLCSCCDFiles()
             LastCDUploadTime_ = Common::getInstance()->FnGetCurrentHour();
             if (FnDownloadCDFiles())
             {
-                std::cout << "Completed Download CD files" << std::endl;
                 HasCDFileToUpload_ = true;
             }
             else
@@ -2331,7 +2334,6 @@ void LCSCReader::FnUploadLCSCCDFiles()
 
         if ((HasCDFileToUpload_ == true) || (LastCDUploadDate_ == 0))
         {
-            std::cout << "Case 1" << std::endl;
             std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
             std::filesystem::path folder(localLCSCFolder);
             LastCDUploadDate_ = 1;
@@ -2355,7 +2357,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
             if (fileCount > 0)
             {
                 HasCDFileToUpload_ = true;
-                //uploadCDFilesRet = FnUploadCDFile2()
+                uploadCDFilesRet = FnUploadCDFile2(cdFileName);
                 WaitForLCSCReturn_ = true;
                 CDUploadTimeOut_ = 0;
 
@@ -2365,13 +2367,10 @@ void LCSCReader::FnUploadLCSCCDFiles()
             }
             else
             {
-                std::cout << "Case 2" << std::endl;
                 if (HasCDFileToUpload_ == true)
                 {
-                    std::cout << "Case 3" << std::endl;
                     if (FnGenerateCDAckFile() == true)
                     {
-                        std::cout << "Case 4" << std::endl;
                         HasCDFileToUpload_ = false;
                         Logger::getInstance()->FnLog("Generate CD Ack file successfully", logFileName_, "LCSC");
                         std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
@@ -2402,13 +2401,11 @@ void LCSCReader::FnUploadLCSCCDFiles()
                     }
                     else
                     {
-                        std::cout << "Case 5" << std::endl;
                         Logger::getInstance()->FnLog("Generate CD Ack file failed", logFileName_, "LCSC");
                     }
                 }
                 else
                 {
-                    std::cout << "Case 6" << std::endl;
                     std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
                     std::filesystem::path folder(localLCSCFolder);
 
@@ -2440,7 +2437,6 @@ void LCSCReader::FnUploadLCSCCDFiles()
 
     if (WaitForLCSCReturn_ == true)
     {
-        std::cout << "Case 7 CDUploadTimeOut_ : " << CDUploadTimeOut_ << std::endl;
         if (CDUploadTimeOut_ > 6)
         {
             WaitForLCSCReturn_ = false;
@@ -2454,7 +2450,6 @@ void LCSCReader::FnUploadLCSCCDFiles()
     if ((Common::getInstance()->FnGetCurrentHour() > 20)
         && (HasCDFileToUpload_ || WaitForLCSCReturn_))
     {
-        std::cout << "Case 8" << std::endl;
         std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
         std::filesystem::path folder(localLCSCFolder);
 
@@ -2474,4 +2469,60 @@ void LCSCReader::FnUploadLCSCCDFiles()
         WaitForLCSCReturn_ = false;
         HasCDFileToUpload_ = false;
     }
+}
+
+void LCSCReader::handleUploadCDFilesTimerTimeout()
+{
+    if (!CDFPath_.empty())
+    {
+        int ret = 0;
+        if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".zip"))
+        {
+            ret = FnSendUploadCFGFile(CDFPath_);
+            if ((ret == static_cast<int>(mCSCEvents::sCFGUploadSuccess)) || (ret == static_cast<int>(mCSCEvents::sWrongCDfileSize)))
+            {
+                std::filesystem::remove(CDFPath_.c_str());
+            }
+        }
+        else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".sys"))
+        {
+            ret = FnSendUploadCILFile(CDFPath_);
+            if ((ret == static_cast<int>(mCSCEvents::sCILUploadSuccess)) || (ret == static_cast<int>(mCSCEvents::sWrongCDfileSize)))
+            {
+                std::filesystem::remove(CDFPath_.c_str());
+            }
+        }
+        else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".blk"))
+        {
+            ret = FnSendUploadBLFile(CDFPath_);
+            if ((ret == static_cast<int>(mCSCEvents::sBLUploadSuccess)) || (ret == static_cast<int>(mCSCEvents::sWrongCDfileSize)))
+            {
+                std::filesystem::remove(CDFPath_.c_str());
+            }
+        }
+        else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".lbs"))
+        {
+            // Temp: Need to implement update FW
+        }
+        
+        CDFPath_ = "";
+
+        if (ret == static_cast<int>(mCSCEvents::sUnsupportedCmd)) // Re-login
+        {
+            FnSendGetLoginCmd();
+        }
+    }
+}
+
+bool LCSCReader::FnUploadCDFile2(std::string path)
+{
+    CDFPath_ = path;
+    uploadCDFilesTimer_->expires_from_now(boost::posix_time::milliseconds(10));
+    uploadCDFilesTimer_->async_wait([this](const boost::system::error_code& error) {
+            if (!error) {
+                handleUploadCDFilesTimerTimeout();
+            }
+    });
+
+    return true;
 }

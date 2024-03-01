@@ -46,8 +46,9 @@ public:
     void FnSendDateTimeToMonitor();
     void FnSendLogMessageToMonitor(std::string msg);
     void FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg);
+    void FnSendCmdDownloadParamAckToMonitor(bool success);
+    void FnSendCmdDownloadIniAckToMonitor(bool success);
     bool CopyIniFile();
-    bool CopyCdFiles();
     void SendMsg2Monitor(string cmdcode,string dstr);
     void SendMsg2Server(string cmdcode,string dstr);
     int  CheckSeason(string sIU,int iInOut);

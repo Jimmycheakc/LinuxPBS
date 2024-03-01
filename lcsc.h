@@ -129,9 +129,9 @@ public:
     void FnSendGetCardBalance();
     void FnSendGetTime();
     void FnSendSetTime();
-    void FnSendUploadCFGFile(const std::string& path);
-    void FnSendUploadCILFile(const std::string& path);
-    void FnSendUploadBLFile(const std::string& path);
+    int FnSendUploadCFGFile(const std::string& path);
+    int FnSendUploadCILFile(const std::string& path);
+    int FnSendUploadBLFile(const std::string& path);
     bool FnGetIsCmdExecuting() const;
 
     std::string FnGetSerialNumber();
@@ -155,6 +155,7 @@ public:
     bool FnGenerateCDAckFile();
     bool FnDownloadCDFiles();
     void FnUploadLCSCCDFiles();
+    bool FnUploadCDFile2(std::string path);
 
     /**
      * Singleton LCSCReader should not be cloneable.
@@ -171,6 +172,7 @@ private:
     boost::asio::io_context* pMainIOContext_;
     std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardIDCmdTimer_;
     std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardBalanceCmdTimer_;
+    std::unique_ptr<boost::asio::deadline_timer> uploadCDFilesTimer_;
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
@@ -207,6 +209,7 @@ private:
     int LastCDUploadDate_;
     int LastCDUploadTime_;
     int CDUploadTimeOut_;
+    std::string CDFPath_;
     LCSCReader();
     std::string lcscCmdToString(LcscCmd cmd);
     int lcscCmd(LcscCmd cmd);
@@ -241,4 +244,5 @@ private:
     int getRxNum();
     void encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge);
     std::string calculateSHA256(const std::string& data);
+    void handleUploadCDFilesTimerTimeout();
 };

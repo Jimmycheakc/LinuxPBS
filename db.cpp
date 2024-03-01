@@ -3045,3 +3045,8 @@ int db::AddSysEvent(string sEvent)
 	}
 	return r;
 }
+
+int db::FnGetDatabaseErrorFlag()
+{
+	return m_remote_db_err_flag;
+}

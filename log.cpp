@@ -137,11 +137,11 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
                 operation::getInstance()->FnSendLogMessageToMonitor(sLogMsg.str());
             }
         }
-    }
 
 #ifdef CONSOLE_LOG_ENABLE
-    {
-        std::cout << sLogMsg.str() << std::endl;
-    }
+        {
+            std::cout << sLogMsg.str() << std::endl;
+        }
 #endif
+    }
 }

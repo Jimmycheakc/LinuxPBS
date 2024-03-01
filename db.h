@@ -78,7 +78,9 @@ public:
     int clearseason();
     int IsBlackListIU(string sIU);
     int AddRemoteControl(string sTID,string sAction, string sRemarks);
-    int AddSysEvent(string sEvent); 
+    int AddSysEvent(string sEvent);
+
+    int FnGetDatabaseErrorFlag();
 
 
     /**

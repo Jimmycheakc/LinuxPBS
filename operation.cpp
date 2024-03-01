@@ -488,6 +488,30 @@ void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string 
     SendMsg2Monitor("306", str);
 }
 
+void operation::FnSendCmdDownloadParamAckToMonitor(bool success)
+{
+    std::string str = "99";
+
+    if (!success)
+    {
+        str = "98";
+    }
+
+    SendMsg2Monitor("310", str);
+}
+
+void operation::FnSendCmdDownloadIniAckToMonitor(bool success)
+{
+    std::string str = "99";
+
+    if (!success)
+    {
+        str = "98";
+    }
+
+    SendMsg2Monitor("309", str);
+}
+
 bool operation::copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
                         const std::string& username, const std::string& password, const std::string& outputFolderPath)
 {
@@ -544,35 +568,33 @@ bool operation::copyFiles(const std::string& mountPoint, const std::string& shar
         Logger::getInstance()->FnLog(("Output folder directory : " + outputFolderPath + " exists."), "", "OPR");
     }
 
-    // Iterate over files in the mounted directory and copy them to the local directory
-    for (const auto& entry : std::filesystem::directory_iterator(mountPoint))
+    // Copy files to mount point
+    bool foundIni = false;
+    std::filesystem::path folder(mountPoint);
+    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
     {
-        const std::string& filePath = entry.path().string();
-
-        // Extract the file name from the full path
-        std::string fileName = filePath.substr(filePath.find_last_of("/\\") + 1);
-
-        // Create the output file path
-        std::string outputFilePath = outputFolderPath + "/" + fileName;
-
-        // Copy the file
-        std::ifstream inFile(filePath, std::ios::binary);
-        std::ofstream outFile(outputFilePath, std::ios::binary);
-        if (!inFile || !outFile || !(outFile << inFile.rdbuf()))
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
         {
-            Logger::getInstance()->FnLog("Failed to copy file: " + fileName, "", "OPR");
-            inFile.close();
-            outFile.close();
-            umount(mountPoint.c_str()); // Unmount if folder creation fails
-            return false;
-        }
-        else
-        {
-            Logger::getInstance()->FnLog("Successfully to copy file: " + fileName, "", "OPR");
-        }
+            std::string filename = entry.path().filename().string();
 
-        inFile.close();
-        outFile.close();
+            if (std::filesystem::is_regular_file(entry)
+                && (filename.size() >= 4) && (filename.substr(filename.size() - 4) == ".ini"))
+            {
+                foundIni = true;
+                std::filesystem::path dest_file = outputFolderPath / entry.path().filename();
+                std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
+
+                std::stringstream ss;
+                ss << "Copy " << entry.path() << " to " << dest_file << " successfully";
+                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+            }
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", "", "OPR");
+        umount(mountPoint.c_str());
+        return false;
     }
 
     // Unmount the shared folder
@@ -588,17 +610,18 @@ bool operation::copyFiles(const std::string& mountPoint, const std::string& shar
         Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
     }
 
+    if (!foundIni)
+    {
+        Logger::getInstance()->FnLog("Ini file not found.", "", "OPR");
+        return false;
+    }
+
     return true;
 }
 
 bool operation::CopyIniFile()
 {
-    return copyFiles("/mnt/windows_share", "//192.168.2.141/Test", "sunpark", "Tdxh638*", "/home/root/LinuxPBSSourceCode/LatestSourceCode/Testing");
-}
-
-bool operation::CopyCdFiles()
-{
-    return copyFiles("/mnt/windows_share_cd", "//192.168.2.141/carpark/CSCR01/ftp/out/cdf", "sunpark", "Tdxh638*", "/home/root/LinuxPBSSourceCode/LatestSourceCode/Testing");
+    return copyFiles("/mnt/ini", "//192.168.2.141/Test", "sunpark", "Tdxh638*", "/home/root/LinuxPBSSourceCode/LatestSourceCode/Testing");
 }
 
 void operation::SendMsg2Monitor(string cmdcode,string dstr)
