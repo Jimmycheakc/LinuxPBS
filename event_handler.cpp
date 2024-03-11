@@ -8,6 +8,7 @@
 #include "lcsc.h"
 #include "log.h"
 #include "operation.h"
+#include "ksm_reader.h"
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
 
@@ -26,7 +27,11 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile,    eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderUploadCILFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCILFile,    eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile,     eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent,                   eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent,                   eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardIn"             ,std::bind(&EventHandler::handleKSMReaderCardIn,            eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardOut"            ,std::bind(&EventHandler::handleKSMReaderCardOut,           eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardTakeAway"       ,std::bind(&EventHandler::handleKSMReaderCardTakeAway,      eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo,          eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -517,6 +522,118 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << static_cast<int>(dioEvent);
         Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardIn(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << value;
+        Logger::getInstance()->FnLog(ss.str());
+
+        int ret = KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
+        if (ret != 1)
+        {
+            KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardOut(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << value;
+        Logger::getInstance()->FnLog(ss.str());
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardTakeAway(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << value;
+        Logger::getInstance()->FnLog(ss.str());
+
+        KSM_Reader::getInstance()->FnKSMReaderEnable(false);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardInfo(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Data : " << value;
+        Logger::getInstance()->FnLog(ss.str());
+
+        std::cout << "Card Number : " << KSM_Reader::getInstance()->FnKSMReaderGetCardNum() << std::endl;
+        std::cout << "Card Expiry Date : " << KSM_Reader::getInstance()->FnKSMReaderGetCardExpiryDate() << std::endl;
+        std::cout << "Card Balance : " << KSM_Reader::getInstance()->FnKSMReaderGetCardBalance() << std::endl;
     }
     else
     {

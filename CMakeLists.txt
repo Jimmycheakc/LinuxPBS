@@ -58,6 +58,7 @@ set(SOURCE_FILES
     operation.cpp
     tcp.cpp
     lpr.cpp
+    ksm_reader.cpp
     main.cpp
 )
 

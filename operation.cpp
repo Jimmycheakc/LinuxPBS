@@ -22,6 +22,7 @@
 #include "antenna.h"
 #include "lcsc.h"
 #include "dio.h"
+#include "ksm_reader.h"
 
 operation* operation::operation_ = nullptr;
 
@@ -261,6 +262,8 @@ void operation::Initdevice(io_context& ioContext)
     {
         LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
     }
+
+    KSM_Reader::getInstance()->FnKSMReaderInit(ioContext, 9600, getSerialPort("6"));
 
     LCD::getInstance()->FnLCDInit();
     GPIOManager::getInstance()->FnGPIOInit();

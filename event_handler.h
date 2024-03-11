@@ -44,4 +44,8 @@ private:
     bool handleLcscReaderUploadCILFile(const BaseEvent* event);
     bool handleLcscReaderUploadBLFile(const BaseEvent* event);
     bool handleDIOEvent(const BaseEvent* event);
+    bool handleKSMReaderCardIn(const BaseEvent* event);
+    bool handleKSMReaderCardOut(const BaseEvent* event);
+    bool handleKSMReaderCardTakeAway(const BaseEvent* event);
+    bool handleKSMReaderCardInfo(const BaseEvent* event);
 };
