@@ -35,19 +35,34 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
     if (operation::getInstance()->FnIsOperationInitialized()) {
 
         if (operation::getInstance()->tProcess.gbLoopApresent == false) {
-           
-          //  db::getInstance()->moveOfflineTransToCentral();
-           
+            if (operation::getInstance()->tProcess.giSystemOnline = 0 and operation::getInstance()->tProcess.glNoofOfflineData > 0) {
+                db::getInstance()->moveOfflineTransToCentral();
+            }
             // Sysnc time from PMS per hour
             if (operation::getInstance()->tProcess.giSyncTimeCnt > 6 * 60 ) {
                 db::getInstance()->synccentraltime();
                 operation::getInstance()->tProcess.giSyncTimeCnt = 0;
             } 
+            // check central DB
+            if (operation::getInstance()->tProcess.giSystemOnline != 0) {
+                
+                
+            }
+            LCSCReader::getInstance()->FnUploadLCSCCDFiles();
+            // Send DateTime to Monitor
+            operation::getInstance()->FnSendDateTimeToMonitor();
         }             
-
-        LCSCReader::getInstance()->FnUploadLCSCCDFiles();
-        // Send DateTime to Monitor
-        operation::getInstance()->FnSendDateTimeToMonitor();
+    } else {
+        if (operation::getInstance()->tProcess.gbInitParamFail==1) {
+            if (operation::getInstance()->LoadedparameterOK())
+            {
+                operation::getInstance()->tProcess.gbInitParamFail = 0;
+                operation::getInstance()->Initdevice(*(operation::getInstance()->iCurrentContext));
+                operation::getInstance()->isOperationInitialized_.store(true);
+                operation::getInstance()->ShowLEDMsg(operation::getInstance()->tMsg.MsgEntry_DefaultLED[0], operation::getInstance()->tMsg.MsgEntry_DefaultLED[1]);
+                operation::getInstance()->writelog("EPS in operation","OPR");
+            }
+        }
     }
 
     //--------

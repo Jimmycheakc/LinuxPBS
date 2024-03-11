@@ -90,15 +90,14 @@ typedef enum {
   iLOOPAhang = 7,
   iCHU = 8,
   iUPS = 9,
-  iNCSC = 10,
-  iLCSC = 11,
-  iStatinDoor = 12,
-  iBarrierDoor = 13,
-  iTGDController = 14,
-  iTGDSensor = 15,
-  iArmDrop = 16,
-  iBarrierStauts = 17,
-  iTicketStatus = 18
+  iLCSC = 10,
+  iStatinonDoor = 11,
+  iBarrierDoor = 12,
+  iTGDController = 13,
+  iTGDSensor = 14,
+  iArmDrop = 15,
+  iBarrierStauts = 16,
+  iTicketStatus = 17
 
 }eErrorDevice;
 
@@ -117,7 +116,6 @@ typedef enum
     ReaderError = 10,
     UPOSNoError = 11,
     UPOSError = 12,
- //   CPTBatchFull = 13,
     AntennaPowerOnOff = 14,
     TariffError = 15,
     TariffOk = 16,
@@ -127,12 +125,12 @@ typedef enum
     DIOOk = 20,
     LoopAHang = 21,
     LoopAOk = 22,
-    NCSCNoError = 23,
-    NCSCError = 24,
-    LCSCNoError = 26,
-    LCSCError = 27,
-    SDoorError = 28,
-    BDoorError = 29
+    LCSCNoError = 23,
+    LCSCError = 24,
+    SDoorError = 25,
+	SDoorNoError = 26,
+    BDoorError = 27,
+	BDoorNoError = 28
 } EPSError;  
 
 class trans_info {
@@ -204,16 +202,12 @@ struct  tEntryTrans_Struct
 	int iTransType;
 	short iRateType;
 	int iStatus;  //enter or reverse
-//	string sPwd;      //password, for ticket
-//	string sTag;
 	string sCardNo;
 	float sFee=0;
 	float sPaidAmt=0;
 	float sGSTAmt;
 	string sReceiptNo;
 	int iCardType=0;
-//	string sCHUDebitCode; //Entry debit from CHU
-//	string sCHUDebitTime;
 	float sOweAmt=0;
 //	bool sEnableReader;
 	string sLPN[2];
@@ -221,7 +215,7 @@ struct  tEntryTrans_Struct
 //	string sGreeting;
 //	string sRPLPN;
 //	string sPaidtime;
-
+	bool gbEntryOK;
 
 };
 
@@ -297,6 +291,7 @@ struct  tProcess_Struct
 	int is_season;
 	int online_status;
 	int offline_status;
+	int giSystemOnline;
 	string fsLastPaidIU;
 	string fsLastReadCard;
 	string gsDefaultIU; 
@@ -306,6 +301,13 @@ struct  tProcess_Struct
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
 	int giSyncTimeCnt;
+	bool gbloadedParam;
+	bool gbloadedVehtype;
+	bool gbloadedLEDMsg;
+	bool gbloadedStnSetup;
+	int gbInitParamFail;
+	bool WaitForLCSCReturn;
+	int giCardIsIn;
 };
 
 
@@ -325,6 +327,8 @@ struct  tParas_Struct
 	string gsCentralDBServer;
 	int giCommPortAntenna;
 	int giCommPortLCSC;
+	int giCommPortKDEReader;
+	int giCommPortUPOS;
 	string gsLocalLCSC;
 	string gsRemoteLCSC;
 	string gsRemoteLCSCBack;

@@ -204,7 +204,6 @@ private:
     std::string card_application_num_;
     double card_balance_;
     std::string reader_time_;
-    bool WaitForLCSCReturn_;
     bool HasCDFileToUpload_;
     int LastCDUploadDate_;
     int LastCDUploadTime_;

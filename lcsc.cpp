@@ -49,7 +49,6 @@ LCSCReader::LCSCReader()
     reader_time_(""),
     continueReadFlag_(false),
     isCmdExecuting_(false),
-    WaitForLCSCReturn_(false),
     HasCDFileToUpload_(false),
     LastCDUploadDate_(0),
     LastCDUploadTime_(0),
@@ -2314,7 +2313,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
 {
     if ((operation::getInstance()->tParas.giCommPortLCSC > 0)
         && (!operation::getInstance()->tProcess.gbLoopApresent)
-        && (WaitForLCSCReturn_ == false)
+        && (operation::getInstance()->tProcess.WaitForLCSCReturn == false)
         && (Common::getInstance()->FnGetCurrentHour() < 20))
     {
         if ((HasCDFileToUpload_ == false)
@@ -2358,7 +2357,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
             {
                 HasCDFileToUpload_ = true;
                 uploadCDFilesRet = FnUploadCDFile2(cdFileName);
-                WaitForLCSCReturn_ = true;
+                operation::getInstance()->tProcess.WaitForLCSCReturn = true;
                 CDUploadTimeOut_ = 0;
 
                 std::stringstream ss;
@@ -2435,11 +2434,11 @@ void LCSCReader::FnUploadLCSCCDFiles()
         }
     }
 
-    if (WaitForLCSCReturn_ == true)
+    if (operation::getInstance()->tProcess.WaitForLCSCReturn == true)
     {
         if (CDUploadTimeOut_ > 6)
         {
-            WaitForLCSCReturn_ = false;
+            operation::getInstance()->tProcess.WaitForLCSCReturn = false;
         }
         else
         {
@@ -2448,7 +2447,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
     }
 
     if ((Common::getInstance()->FnGetCurrentHour() > 20)
-        && (HasCDFileToUpload_ || WaitForLCSCReturn_))
+        && (HasCDFileToUpload_ || operation::getInstance()->tProcess.WaitForLCSCReturn))
     {
         std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
         std::filesystem::path folder(localLCSCFolder);
@@ -2466,7 +2465,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
             }
         }
-        WaitForLCSCReturn_ = false;
+        operation::getInstance()->tProcess.WaitForLCSCReturn = false;
         HasCDFileToUpload_ = false;
     }
 }

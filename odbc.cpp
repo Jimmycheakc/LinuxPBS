@@ -101,7 +101,7 @@ int odbc::Connect()
   
   try{
 
-     // if (vPing(m_IP,pingTimeOut)==false) return -1;
+    if (vPing(m_IP,pingTimeOut)==false) return -1;
     // Connect to a DSN
     //SQLCHAR* connStr = (SQLCHAR*)"DSN=mssqlserver;DATABASE=RF;UID=sa;PWD=yzhh2007";
     std::string constr=m_connString;

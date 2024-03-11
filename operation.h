@@ -4,6 +4,7 @@
 #include <string>
 #include <sstream>
 #include <iostream>
+#include "lcsc.h"
 #include "structuredata.h"
 #include "db.h"
 #include "udp.h"
@@ -15,6 +16,8 @@ public:
     db *m_db;
     udpclient *m_udp;
     udpclient *m_Monitorudp;
+    boost::asio::io_context* iCurrentContext;
+    std::atomic<bool> isOperationInitialized_;
     struct  tstation_struct gtStation;
     struct  tEntryTrans_Struct tEntry; 
     struct  tProcess_Struct tProcess;
@@ -59,6 +62,14 @@ public:
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
     void ManualOpenBarrier();
+    bool LoadParameter();
+    bool LoadedparameterOK();
+    int  GetSeasonTransType(int VehicleType, int SeasonType, int TransType);
+    void EnableCashcard(bool bEnable);
+    void EnableLCSC(bool bEnable);
+    void EnableKDE(bool bEnable);
+    void EnableUPOS(bool bEnable);
+    void ProcessLCSC(LCSCReader::mCSCEvents iEvent);
 
 
     void Openbarrier();
@@ -86,7 +97,6 @@ private:
         delete operation_;
     };
     std::string getSerialPort(const std::string& key);
-    std::atomic<bool> isOperationInitialized_;
     bool copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
                     const std::string& username, const std::string& password, const std::string& outputFolderPath);
 };

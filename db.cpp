@@ -54,6 +54,7 @@ int db::connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOu
 	if (centraldb->Connect()==0) {
 		dbss << "Central DB is connected!" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		operation::getInstance()->tProcess.giSystemOnline = 0;
 		return 1;
 	}
 	else {
@@ -156,13 +157,13 @@ int db::local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID)
 		if (r!=0) return iLocalFail;
 
 		if (selResult.size()>0){
-				operation::getInstance()->tSeason.SeasonType =std::stoi(selResult[0].GetDataItem(0));
-				operation::getInstance()->tSeason.s_status=std::stoi(selResult[0].GetDataItem(1));
+				operation::getInstance()->tSeason.SeasonType =selResult[0].GetDataItem(0);
+				operation::getInstance()->tSeason.s_status=selResult[0].GetDataItem(1);
 				operation::getInstance()->tSeason.date_from=selResult[0].GetDataItem(2);
 				operation::getInstance()->tSeason.date_to=selResult[0].GetDataItem(3);
-				operation::getInstance()->tSeason.rate_type=std::stoi(selResult[0].GetDataItem(5));
-				operation::getInstance()->tSeason.redeem_amt=std::stof(selResult[0].GetDataItem(8));
-				operation::getInstance()->tSeason.redeem_time=std::stoi(selResult[0].GetDataItem(9));
+				operation::getInstance()->tSeason.rate_type=selResult[0].GetDataItem(5);
+				operation::getInstance()->tSeason.redeem_amt=selResult[0].GetDataItem(8);
+				operation::getInstance()->tSeason.redeem_time=selResult[0].GetDataItem(9);
 			return iDBSuccess;
 		}
 		else
@@ -219,9 +220,9 @@ int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
 			//----
 			operation::getInstance()->tSeason.date_from=m_dtValidFrom;
 			operation::getInstance()->tSeason.date_to=m_dtValidTo;
-			operation::getInstance()->tSeason.rate_type=iRateType;
-			operation::getInstance()->tSeason.redeem_amt=m_sRedeemAmt;
-			operation::getInstance()->tSeason.redeem_time=m_iRedeemTime;
+			operation::getInstance()->tSeason.rate_type=std::to_string(iRateType);
+			operation::getInstance()->tSeason.redeem_amt=std::to_string(m_sRedeemAmt);
+			operation::getInstance()->tSeason.redeem_time=std::to_string(m_iRedeemTime);
 		}
 	}
 	else
@@ -314,9 +315,12 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 		{
 			dbss << "Insert Entry_trans to Central: fail1" ;
     		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			operation::getInstance()->tProcess.giSystemOnline = 1;
 			goto processLocal;
 		}
 	}
+
+	operation::getInstance()->tProcess.giSystemOnline = 0;
 
 	if ((tEntry.sLPN[0] != "")|| (tEntry.sLPN[1] !=""))
 	{
@@ -334,16 +338,16 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 
 	sqlStmt= "Insert into Entry_Trans_tmp (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
 
-	//sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee";
-	//sqlStmt = sqlStmt + ",gst_amt";
+	sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee";
+	sqlStmt = sqlStmt + ",gst_amt";
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpr";
 
 	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid + "',convert(datetime,'" + tEntry.sEntryTime+ "',120),'" + tEntry.sIUTKNo;
 	sqlStmt = sqlStmt +  "','" + std::to_string(tEntry.iTransType);
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType)+"'";
-	//sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
-	//sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt)+"'";
+	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
+	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt)+"'";
 
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
 
@@ -384,23 +388,23 @@ processLocal:
 	}
 
 	sqlStmt= "Insert into Entry_Trans ";
-	sqlStmt=sqlStmt + "(Station_ID,Entry_Time,iu_tk_No,";
+	sqlStmt=sqlStmt + "(Station_id,Entry_Time,iu_tk_no,";
 	sqlStmt=sqlStmt + "trans_type,status";
 	sqlStmt=sqlStmt + ",TK_SerialNo";
 
 	sqlStmt=sqlStmt + ",Card_Type";
-	//sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
-	//sqlStmt=sqlStmt +  ",gst_amt";
-	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpn";
+	sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
+	sqlStmt=sqlStmt +  ",gst_amt";
+	sqlStmt = sqlStmt + ",lpr";
 
 	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid+ "','" + tEntry.sEntryTime+ "','" + tEntry.sIUTKNo;
 	sqlStmt = sqlStmt +  "','" + std::to_string(tEntry.iTransType);
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType) + "'";
-	//sqlStmt = sqlStmt + ",'" + m->tEntry.sCardNo + "','" + std::to_string(m->tEntry.sPaidAmt) + "','" + std::to_string(m->tEntry.sFee);
-	//sqlStmt = sqlStmt + "','" + std::to_string(m->tEntry.sGSTAmt)+"'";
+	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
+	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt)+"'";
 
-	if (sLPRNo!="") sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
+	sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
 
 	sqlStmt = sqlStmt +  ")";
 
@@ -421,6 +425,7 @@ processLocal:
 	{
 		dbss << "Insert Entry_trans to Local: success";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		operation::getInstance()->tProcess.glNoofOfflineData = operation::getInstance()->tProcess.glNoofOfflineData + 1;
 		return iDBSuccess;
 	}
 
@@ -1483,6 +1488,7 @@ DBError db::loadstationsetup()
 		operation::getInstance()->gtStation.iGroupID= std::stoi(selResult[0].GetDataItem(11));
 		//m->gtStation.sZoneName= selResult[0].GetDataItem(11);
 		//m->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
+		operation::getInstance()->tProcess.gbloadedStnSetup = true;
 		return iDBSuccess;
 	}
 	return iNoData; 
@@ -1743,6 +1749,7 @@ DBError db::loadParam()
 				}
 			}
 		}
+		operation::getInstance()->tProcess.gbloadedParam = true;
         return iDBSuccess;
 	}
 
@@ -1771,6 +1778,7 @@ DBError db::loadvehicletype()
 				operation::getInstance()->tVType.push_back({std::stoi(readerItem.GetDataItem(0)), std::stoi(readerItem.GetDataItem(1))});
 			}
 		}
+		operation::getInstance()->tProcess.gbloadedVehtype = true;
 		return iDBSuccess;
 	}
 	return iNoData;
@@ -2581,6 +2589,7 @@ DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
 				}
 			}
 		}
+		operation::getInstance()->tProcess.gbloadedLEDMsg = true;
 		return iDBSuccess;
 	}
 	return iNoData;
@@ -2709,7 +2718,7 @@ void db::moveOfflineTransToCentral()
 			sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
 			sqlStmt=sqlStmt +  ",gst_amt";
 			sqlStmt = sqlStmt + ",lpr";
-			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Entry_Time desc limit 10";
+			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Entry_Time desc";
 		}
 		else if(operation::getInstance()->gtStation.iType==tiExit)
 		{
@@ -2724,7 +2733,7 @@ void db::moveOfflineTransToCentral()
 			sqlStmt=sqlStmt +  ",gst_amt,chu_debit_code,Card_Type,Top_Up_Amt";
 			sqlStmt = sqlStmt + ",lpr";
 			
-			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Exit_Time desc limit 10";
+			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Exit_Time desc";
 		}
 		
 		r = localdb->SQLSelect(sqlStmt,&selResult,true);
@@ -2819,13 +2828,13 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 	// insert into Central trans tmp table
 	sqstr="INSERT INTO " + tbName +" (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
 	sqstr=sqstr + ",card_no,paid_amt,parking_fee";        
-	sqstr=sqstr + ",gst_amt";
+	sqstr=sqstr + ",gst_amt,lpr";
 	sqstr=sqstr + ") Values ('" + ter.esid+ "',convert(datetime,'" + ter.sEntryTime+ "',120),'" + ter.sIUTKNo;
 	sqstr = sqstr +  "','" + std::to_string(ter.iTransType);
 	sqstr = sqstr + "','" + std::to_string(ter.iStatus) + "','" + ter.sSerialNo;
 	sqstr = sqstr + "','" + std::to_string(ter.iCardType);
 	sqstr = sqstr + "','" + ter.sCardNo + "','" + std::to_string(ter.sPaidAmt) + "','" + std::to_string(ter.sFee);
-	sqstr = sqstr + "','" + std::to_string(ter.sGSTAmt)+"'";
+	sqstr = sqstr + "','" + std::to_string(ter.sGSTAmt)+"','"+ter.sLPN[0]+"'";
 	sqstr = sqstr +  ")";
 
 	r = centraldb->SQLExecutNoneQuery(sqstr);

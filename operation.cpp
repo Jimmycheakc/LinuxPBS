@@ -47,9 +47,10 @@ void operation::OperationInit(io_context& ioContext)
     tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
     tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
     //
-    Setdefaultparameter();
+    iCurrentContext = &ioContext;
     //
-    writelog ("Exception: 1","OPR");
+    Setdefaultparameter();
+    //--- broad cast UDP
     tProcess.gsBroadCastIP = getIPAddress();
     try {
         m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
@@ -59,7 +60,7 @@ void operation::OperationInit(io_context& ioContext)
         std::string cppString(e.what());
         writelog ("Exception: "+ cppString,"OPR");
     }
-    writelog ("Exception: "+tParas.gsCentralDBServer ,"OPR");
+    // monitor UDP
     try {
         m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
     }
@@ -88,21 +89,76 @@ void operation::OperationInit(io_context& ioContext)
     if (iRet == 1) {
         m_db->synccentraltime();
         m_db->downloadseason();
+        db::getInstance()->moveOfflineTransToCentral();
+    } else
+    {
+        tProcess.giSystemOnline = 1;
     }
     //
-    m_db->loadstationsetup();
-    m_db->loadmessage();
-    m_db->loadParam();
-    m_db->loadvehicletype();
+    if (LoadParameter()) {
+        Initdevice(ioContext);
+        isOperationInitialized_.store(true);
+        ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
+        writelog("EPS in operation","OPR");
+    }else {
+        tProcess.gbInitParamFail = 1;
+        writelog("Unable to load parameter, Please download or check!", "OPR");
+    }
     //
-    Initdevice(ioContext);
+    Clearme();
+    LoopACome();
 
-    isOperationInitialized_.store(true);
-    
-    ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
+}
 
-   // PBSEntry ("1122944019");
+bool operation::LoadParameter()
+{
+    DBError iReturn;
+    bool gbLoadParameter = true;
+    //------
+    iReturn = m_db->loadstationsetup();
+    if (iReturn != 0) {
+        if (iReturn ==1) {
+            writelog ("No data for station setup table", "OPR");
+        }else{
+            writelog ("Error for loading station setup", "OPR");
+        }
+        gbLoadParameter = false; 
+    } 
+    iReturn = m_db->loadmessage();
+    if (iReturn != 0) {
+        if (iReturn ==1) {
+            writelog ("No data for LED message table", "OPR");
+        }else{
+            writelog ("Error for loading LED message", "OPR");
+        }
+        gbLoadParameter = false; 
+    }
+    iReturn = m_db->loadParam();
+    if (iReturn != 0) {
+        if (iReturn ==1) {
+            writelog ("No data for Parameter table", "OPR");
+        }else{
+            writelog ("Error for loading parameter", "OPR");
+        }
+        gbLoadParameter = false; 
+    }
+    iReturn = m_db->loadvehicletype();
+    if (iReturn != 0) {
+        if (iReturn ==1) {
+            writelog ("No data for vehicle type table", "OPR");
+        }else{
+            writelog ("Error for loading vehicle type", "OPR");
+        }
+       gbLoadParameter = false; 
+    } 
+    //
+    return gbLoadParameter;
+}
 
+bool operation:: LoadedparameterOK()
+{
+    if (tProcess.gbloadedLEDMsg == true and tProcess.gbloadedParam==true and tProcess.gbloadedStnSetup==true and tProcess.gbloadedVehtype ==true) return true;
+    else return false;
 }
 
 bool operation::FnIsOperationInitialized() const
@@ -116,7 +172,7 @@ void operation::LoopACome()
     ShowLEDMsg(tMsg.MsgEntry_LoopA[0], tMsg.MsgEntry_LoopA[1]);
     Clearme();
     Antenna::getInstance()->FnAntennaSendReadIUCmd();
-    LCSCReader::getInstance()->FnSendGetCardIDCmd();
+    EnableCashcard(true);
 
 }
 
@@ -140,16 +196,23 @@ void operation::LoopCGone()
 void operation::VehicleCome(string sNo)
 {
 
-     writelog ("Received IU: "+sNo,"OPR");
+    if (sNo.length()==10) {
+        writelog ("Received IU: "+sNo,"OPR");
+    }
+    else {
+        writelog ("Received Card: "+sNo,"OPR");
+        Antenna::getInstance()->FnAntennaStopRead();
+    }
 
     if (sNo.length()==10 and sNo == tProcess.gsDefaultIU) {
-
         SendMsg2Server ("90",sNo+",,,,,Default IU");
         writelog ("Default IU: "+sNo,"OPR");
         //---------
-        LCSCReader::getInstance()->FnSendGetCardIDCmd();
         return;
-    } 
+    }
+    //-----
+    EnableCashcard(false);
+    //----
     if (gtStation.iType == tientry) {
         PBSEntry (sNo);
     } 
@@ -174,27 +237,29 @@ void operation::Openbarrier()
 
 void operation::Clearme()
 {
+    
     if (gtStation.iType == tientry)
     {
-        tEntry.esid ="";
-        tEntry.sSerialNo = "";     //for ticket
+        tEntry.esid = to_string(gtStation.iSID);
+        tEntry.sSerialNo = "";     
         tEntry.sIUTKNo = "";
         tEntry.sEntryTime = "";
         tEntry.iTransType = 0;
         tEntry.iRateType = 0;
-        tEntry.iStatus = 0;  //enter or reverse
+        tEntry.iStatus = 0;      
 
         tEntry.sCardNo = "";
-        tEntry.sFee = 0;
-        tEntry.sPaidAmt = 0;
-        tEntry.sGSTAmt = 0;
+        tEntry.sFee = 0.00;
+        tEntry.sPaidAmt = 0.00;
+        tEntry.sGSTAmt = 0.00;
         tEntry.sReceiptNo = "";
         tEntry.iCardType=0;
-        tEntry.sOweAmt= 0;
+        tEntry.sOweAmt= 0.00;
 
         tEntry.sLPN[0] = "";
         tEntry.sLPN[1] = "";
         tEntry.iVehcileType = 0;
+        tEntry.gbEntryOK = false;
     }
     else
     {
@@ -262,8 +327,11 @@ void operation::Initdevice(io_context& ioContext)
     {
         LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
     }
-
-    KSM_Reader::getInstance()->FnKSMReaderInit(ioContext, 9600, getSerialPort("6"));
+    
+    if (tParas.giCommPortKDEReader > 0)
+    {
+        KSM_Reader::getInstance()->FnKSMReaderInit(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
+    }
 
     LCD::getInstance()->FnLCDInit();
     GPIOManager::getInstance()->FnGPIOInit();
@@ -290,7 +358,6 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 void operation::PBSEntry(string sIU)
 {
     int iRet;
-    int iEntryOK=0;
     CE_Time dt;
 	string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
 
@@ -334,7 +401,8 @@ void operation::PBSEntry(string sIU)
         ShowLEDMsg(tMsg.MsgEntry_LockStation[0], tMsg.MsgEntry_LockStation[1]);
         writelog("Loop A while station Locked","OPR");
         return;
-    } 
+    }
+    tEntry.iVehcileType = (tEntry.iTransType -1 )/3;
     iRet = CheckSeason(sIU,1);
 
     if (tProcess.gbcarparkfull ==1 and iRet == 1 and (std::stoi(tSeason.rate_type) !=0) and tParas.giFullAction ==iNoPartial )
@@ -356,14 +424,20 @@ void operation::PBSEntry(string sIU)
         ShowLEDMsg(tMsg.MsgEntry_SeasonPassback[0],tMsg.MsgEntry_SeasonPassback[1]);
         return;
     }
+    if (iRet ==1 or iRet == 4 or iRet == 6) {
+        tEntry.iTransType = GetSeasonTransType(tEntry.iVehcileType,std::stoi(tSeason.rate_type), tEntry.iTransType);
+    }
+
     if (iRet == 10) {
         ShowLEDMsg(tMsg.MsgEntry_SeasonAsHourly[0],tMsg.MsgEntry_SeasonAsHourly[1]);
-    } else if (iRet == 8)  ShowLEDMsg(tMsg.MsgEntry_WithIU[0],tMsg.MsgEntry_WithIU[1]);
-
-        tEntry.iStatus = 0; 
+    }
+    if (iRet == 8) {
+        ShowLEDMsg(tMsg.MsgEntry_WithIU[0],tMsg.MsgEntry_WithIU[1]);
+    }
         //---------
         SaveEntry();
-        Openbarrier();
+        tEntry.gbEntryOK = true;
+        if (tProcess.giCardIsIn == 0) Openbarrier();
 }
 
 void operation::PBSExit(string sIU)
@@ -377,6 +451,8 @@ void operation:: Setdefaultparameter()
 
 {
     tProcess.gsDefaultIU = "1096000001";
+    tProcess.glNoofOfflineData = 0;
+    tProcess.giSystemOnline = -1;
     //clear error msg
      for (int i= 0; i< Errsize; ++i){
         tPBSError[i].ErrNo = 0;
@@ -389,6 +465,15 @@ void operation:: Setdefaultparameter()
     tProcess.gbLoopCIsOn = false;
     //--------
     tProcess.giSyncTimeCnt = 0;
+    tProcess.gbloadedParam = false;
+	tProcess.gbloadedVehtype = false;
+	tProcess.gbloadedLEDMsg = false;
+	tProcess.gbloadedStnSetup = false;
+    //-------
+    tProcess.gbInitParamFail = 0;
+    tProcess.giCardIsIn = 0;
+    //-------
+    tProcess.WaitForLCSCReturn = false;
 
 }
 
@@ -432,9 +517,9 @@ string operation:: getIPAddress()
 void operation:: Sendmystatus()
 {
   //EPS error index:  0=antenna,     1=printer,   2=DB, 3=Reader, 4=UPOS
-  //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10=NCSC, 11= LCSC
-  //12= station door status, 13 = barrier door status, 14= TGD controll status
-  //15 = TGD sensor status 16=Arm drop status,17=barrier status,18=ticket status d DateTime
+  //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10= LCSC
+  //11= station door status, 12 = barrier door status, 13= TGD controll status
+  //14 = TGD sensor status 15=Arm drop status,16=barrier status,17=ticket status d DateTime
     CE_Time dt;
 	string str="";
     //-----
@@ -449,9 +534,9 @@ void operation:: Sendmystatus()
 void operation::FnSendMyStatusToMonitor()
 {
     //EPS error index:  0=antenna,     1=printer,   2=DB, 3=Reader, 4=UPOS
-    //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10=NCSC, 11= LCSC
-    //12= station door status, 13 = barrier door status, 14= TGD controll status
-    //15 = TGD sensor status 16=Arm drop status,17=barrier status,18=ticket status d DateTime
+    //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10= LCSC
+    //11= station door status, 12 = barrier door status, 13= TGD controll status
+    //14 = TGD sensor status 15=Arm drop status,16=barrier status,17=ticket status d DateTime
     CE_Time dt;
 	string str="";
     //-----
@@ -840,12 +925,31 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         }
         case SDoorError:
         {
-           sCmd = "71";
+            tPBSError[11].ErrNo = -1;
+            tPBSError[11].ErrMsg= "Station door open";
+            sCmd = "71";
             sErrMsg = tPBSError[11].ErrMsg;
+            break;
+        }
+        case SDoorNoError:
+        {
+            tPBSError[11].ErrNo = 0;
+            sCmd = "71";
+            sErrMsg = "Station door close";
             break;
         }
         case BDoorError:
         {
+            tPBSError[12].ErrNo = -1;
+            tPBSError[12].ErrMsg= "barrier door open";
+            sCmd = "72";
+            sErrMsg = tPBSError[12].ErrMsg;
+            break;
+        }
+        case BDoorNoError:
+        {
+            tPBSError[12].ErrNo = 0;
+            tPBSError[12].ErrMsg= "barrier door close";
             sCmd = "72";
             sErrMsg = tPBSError[12].ErrMsg;
             break;
@@ -855,7 +959,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
     }
     
     if (sErrMsg != "" ){
-        writelog (sErrMsg, "PBS");
+        writelog (sErrMsg, "OPR");
         SendMsg2Server(sCmd, sErrMsg);    
     }
 
@@ -1024,4 +1128,257 @@ void operation::ManualOpenBarrier()
      }
 }
 
+int operation:: GetSeasonTransType(int VehicleType, int SeasonType, int TransType)
+ {
+    // VehicleType: 0=car, 1=lorry, 2=motorcycle
+    // SeasonType(rate_type of season_mst): 3=Day, 4=Night, 5=GRO, 6=Park & Ride
+    // TransType: TransType for Wholeday season
 
+    //writelog ("Season Rate Type:"+std::to_string(SeasonType),"OPR");
+
+    if (SeasonType == 3) {
+        if (VehicleType == 0) {
+            return 50; // car day season
+        } else if (VehicleType == 1) {
+            return 51; // Lorry day season
+        } else if (VehicleType == 2) {
+            return 52; // motorcycle day season
+        }
+    } else if (SeasonType == 4) {
+        if (VehicleType == 0) {
+            return 53; // car night season
+        } else if (VehicleType == 1) {
+            return 54; // Lorry night season
+        } else if (VehicleType == 2) {
+            return 55; // motorcycle night season
+        }
+    } else if (SeasonType == 5) {
+        if (VehicleType == 0) {
+            return 56; // car GRO season
+        } else if (VehicleType == 1) {
+            return 57; // Lorry GRO season
+        } else if (VehicleType == 2) {
+            return 58; // motorcycle GRO season
+        }
+    } else if (SeasonType == 6) {
+        if (VehicleType == 0) {
+            return 59; // Car Park Ride Season
+        } else if (VehicleType == 1) {
+            return 60; // Lorry Park Ride season
+        } else if (VehicleType == 2) {
+            return 61; // motorcycle Park Ride Season
+        }
+    } else if (SeasonType == 7) {
+        if (VehicleType == 0 || VehicleType == 14) {
+            return 62; // Car Handicapped Season
+        } else if (VehicleType == 1) {
+            return 63; // Lorry Handicapped season
+        } else if (VehicleType == 2) {
+            return 64; // motorcycle Handicapped Season
+        }
+    } else if (SeasonType == 8) {
+        if (VehicleType == 0) {
+            return 65; // Staff A Car
+        } else if (VehicleType == 1) {
+            return 66; // staff A Lorry
+        } else if (VehicleType == 2) {
+            return 67; // Staff A Motorcycle
+        }
+    } else if (SeasonType == 9) {
+        if (VehicleType == 0) {
+            return 68; // Staff B Car
+        } else if (VehicleType == 1) {
+            return 69; // staff B Lorry
+        } else if (VehicleType == 2) {
+            return 70; // Staff B Motorcycle
+        }
+    } else if (SeasonType == 10) {
+        if (VehicleType == 0) {
+            return 71; // Staff C Car
+        } else if (VehicleType == 1) {
+            return 72; // staff C Lorry
+        } else if (VehicleType == 2) {
+            return 73; // Staff C Motorcycle
+        }
+    } else if (SeasonType == 11) {
+        if (VehicleType == 0) {
+            return 74; // Staff D Car
+        } else if (VehicleType == 1) {
+            return 75; // staff D Lorry
+        } else if (VehicleType == 2) {
+            return 76; // Staff D Motorcycle
+        }
+    } else if (SeasonType == 12) {
+        if (VehicleType == 0) {
+            return 77; // Staff E Car
+        } else if (VehicleType == 1) {
+            return 78; // staff E Lorry
+        } else if (VehicleType == 2) {
+            return 79; // Staff E Motorcycle
+        }
+    } else if (SeasonType == 13) {
+        if (VehicleType == 0) {
+            return 80; // Staff F Car
+        } else if (VehicleType == 1) {
+            return 81; // staff F Lorry
+        } else if (VehicleType == 2) {
+            return 82; // Staff F Motorcycle
+        }
+    } else if (SeasonType == 14) {
+        if (VehicleType == 0) {
+            return 83; // Staff G Car
+        } else if (VehicleType == 1) {
+            return 84; // staff G Lorry
+        } else if (VehicleType == 2) {
+            return 85; // Staff G Motorcycle
+        }
+    } else if (SeasonType == 15) {
+        if (VehicleType == 0) {
+            return 86; // Staff H Car
+        } else if (VehicleType == 1) {
+            return 87; // staff H Lorry
+        } else if (VehicleType == 2) {
+            return 88; // Staff H Motorcycle
+        }
+    } else if (SeasonType == 16) {
+        if (VehicleType == 0) {
+            return 89; // Staff I Car
+        } else if (VehicleType == 1) {
+            return 90; // staff I Lorry
+        } else if (VehicleType == 2) {
+            return 91; // Staff I Motorcycle
+        }
+    } else if (SeasonType == 17) {
+        if (VehicleType == 0) {
+            return 92; // Staff J Car
+        } else if (VehicleType == 1) {
+            return 93; // staff J Lorry
+        } else if (VehicleType == 2) {
+            return 94; // Staff J Motorcycle
+        }
+    } else if (SeasonType == 18) {
+        if (VehicleType == 0) {
+            return 95; // Staff K Car
+        } else if (VehicleType == 1) {
+            return 96; // staff K Lorry
+        } else if (VehicleType == 2) {
+            return 97; // Staff K Motorcycle
+        }
+    } else if (TransType == 9) {
+        return 9;
+    } 
+    return TransType + 1; // Whole day season
+}
+
+void operation:: EnableCashcard(bool bEnable)
+{
+    if (tParas.giCommPortLCSC > 0) EnableLCSC (bEnable);
+    if (tParas.giCommPortKDEReader>0) EnableKDE(bEnable);
+    if (tParas.giCommPortUPOS) EnableUPOS(bEnable);
+
+
+}
+
+void operation:: EnableLCSC(bool bEnable)
+{
+    int iRet;
+    if (tProcess.WaitForLCSCReturn) return;
+    if (bEnable && (LCSCReader::getInstance()->FnGetIsCmdExecuting())) return;
+    if (!bEnable && !LCSCReader::getInstance()->FnGetIsCmdExecuting()) return;
+
+    writelog ("Init LCSC Reader","OPR");
+
+    if (bEnable) {
+        LCSCReader::getInstance()->FnSendGetStatusCmd();
+        if (LCSCReader::getInstance()->FnGetReaderMode() != 1) {
+            LCSCReader::getInstance()->FnSendGetLoginCmd();
+            LCSCReader::getInstance()->FnSendGetStatusCmd();
+            if (LCSCReader::getInstance()->FnGetReaderMode() != 1) {
+                writelog ("LCSC Reader Error","OPR");
+                HandlePBSError(LCSCError);
+                return;
+            } 
+        }
+    }
+
+    if (bEnable) 
+    {
+        LCSCReader::getInstance()->FnSendSetTime();
+        if (!LCSCReader::getInstance()->FnGetIsCmdExecuting()) {
+            LCSCReader::getInstance()->FnSendGetCardIDCmd();
+            writelog("Start LCSC to read...", "OPR");
+        }
+    } else 
+    {
+        if (LCSCReader::getInstance()->FnGetIsCmdExecuting() ) {
+            LCSCReader::getInstance()->FnLCSCReaderStopRead();
+        }
+            writelog("Stop LCSC to Read...", "OPR");
+    }
+}
+
+
+
+void operation::EnableKDE(bool bEnable)
+{
+
+
+}
+
+void operation::EnableUPOS(bool bEnable)
+{
+
+
+}
+
+void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent) 
+{
+    float sBal;
+    int iRet;
+    std::string sCardNo;
+    float sPaymentAmt; 
+    float sRedeemAmt;
+    int iRedeemTime; 
+
+     switch (iEvent) {
+        case LCSCReader::mCSCEvents::sFWUploadSuccess:
+        case LCSCReader::mCSCEvents::sBLUploadSuccess:
+        case LCSCReader::mCSCEvents::sCFGUploadSuccess:
+        case LCSCReader::mCSCEvents::sCILUploadSuccess:
+        case LCSCReader::mCSCEvents::sBLUploadCorrupt:
+        case LCSCReader::mCSCEvents::sCFGUploadCorrupt:
+        case LCSCReader::mCSCEvents::sCILUploadCorrupt:
+            tProcess.WaitForLCSCReturn = false;
+            writelog("received ACK from LCSC", "OPR");
+            break;
+        case LCSCReader::mCSCEvents::sGetIDSuccess:
+        case LCSCReader::mCSCEvents::sGetBlcSuccess:
+            writelog ("event LCSC got ID and balance","OPR");
+            HandlePBSError (LCSCNoError);
+            
+            sCardNo = LCSCReader::getInstance()->FnGetCardApplicationNumber();
+            sBal = LCSCReader::getInstance()->FnGetCardBalance();
+
+            writelog ("LCSC card: " + sCardNo + ", Bal=$" + std::to_string(sBal), "OPR");
+            
+            if(sCardNo.length()!=16){
+                writelog ("Wrong Card No: "+sCardNo, "OPR");
+                ShowLEDMsg(tMsg.MsgEntry_CardReadingError[0], tMsg.MsgEntry_CardReadingError[1]);
+                SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
+                return;
+            }
+            else{
+                 if (gtStation.iType == tientry) {
+                    PBSEntry(sCardNo);
+                 }
+            }
+            break;
+         case LCSCReader::mCSCEvents::iFailWriteSettle:
+            writelog ("Write LCSC settle file failed","OPR");
+            break;
+         default:
+            break;
+    
+     }
+   
+}

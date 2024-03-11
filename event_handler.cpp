@@ -147,6 +147,8 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         ret = false;
     }
 
+    if (operation::getInstance()->tPBSError[iAntenna].ErrNo != 0) operation:: getInstance()->HandlePBSError(AntennaNoError);
+
     return ret;
 }
 
@@ -243,7 +245,7 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
         ss << __func__ << " Successfully, Data : " << static_cast<int>(value);
         Logger::getInstance()->FnLog(ss.str());
 
-        operation::getInstance()->VehicleCome(std::to_string(intEvent->data));
+        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
@@ -473,27 +475,31 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT");
+                operation:: getInstance()->HandlePBSError(SDoorError);
                 break;
             }
             case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT");
+                operation:: getInstance()->HandlePBSError(SDoorNoError);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT");
-                db::getInstance()->AddSysEvent("Barrier up");
+                operation:: getInstance()->HandlePBSError(BDoorError);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT");
+                operation:: getInstance()->HandlePBSError(BDoorNoError);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT");
+                db::getInstance()->AddSysEvent("Barrier up");
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:
