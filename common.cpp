@@ -44,6 +44,18 @@ std::string Common::FnGetDateTime()
     return oss.str();
 }
 
+std::string Common::FnGetDateTimeFormat_yyyymm()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m");
+    return oss.str();
+}
+
 std::string Common::FnGetDateTimeFormat_yyyymmddhhmmss()
 {
     auto now = std::chrono::system_clock::now();

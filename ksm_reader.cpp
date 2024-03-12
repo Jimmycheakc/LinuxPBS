@@ -24,6 +24,7 @@ KSM_Reader::KSM_Reader()
     cardPresented_(false),
     cardNum_(""),
     cardExpiryYearMonth_(0),
+    cardExpired_(false),
     cardBalance_(0)
 {
     memset(txBuff, 0, sizeof(txBuff));
@@ -318,7 +319,9 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
         std::vector<char> recvCmd(len);
         std::copy(dataBuff.begin() + startIdx, dataBuff.begin() + endIdx, recvCmd.begin());
 
-        std::cout << "Rx command : " << Common::getInstance()->FnGetVectorCharToHexString(recvCmd) << std::endl;
+        std::stringstream rxCmdSS;
+        rxCmdSS << "Rx command : " << Common::getInstance()->FnGetVectorCharToHexString(recvCmd);
+        Logger::getInstance()->FnLog(rxCmdSS.str(), logFileName_, "KSM");
         char cmdCodeMSB = recvCmd[2];
         char cmdCodeLSB = recvCmd[3];
 
@@ -488,7 +491,14 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
                     // Concatenate year and month ,eg (2024 * 100) + 3 = 202400 + 3 = 202403
                     cardExpiryYearMonth_ = (intExpYear * 100) + intExpMonth;
 
-                    std::cout << "Card Expiry Year Month : " << cardExpiryYearMonth_ << std::endl;
+                    if (std::to_string(cardExpiryYearMonth_) > Common::getInstance()->FnGetDateTimeFormat_yyyymm())
+                    {
+                        cardExpired_ = false;
+                    }
+                    else
+                    {
+                        cardExpired_ = true;
+                    }
 
                     retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
                     logMsg << "Rx Response : Card Read Info status.";
@@ -506,8 +516,6 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
                     {
                         cardBalance_ = 65536 + cardBalance_;
                     }
-
-                    std::cout << "Card balance : " << cardBalance_ << std::endl;
 
                     retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
                     logMsg << "Rx Response : Card Read Balance status.";
@@ -1027,7 +1035,12 @@ int KSM_Reader::FnKSMReaderGetCardExpiryDate()
     return cardExpiryYearMonth_;
 }
 
-int KSM_Reader::FnKSMReaderGetCardBalance()
+long KSM_Reader::FnKSMReaderGetCardBalance()
 {
     return cardBalance_;
+}
+
+bool KSM_Reader::FnKSMReaderGetCardExpired()
+{
+    return cardExpired_;
 }

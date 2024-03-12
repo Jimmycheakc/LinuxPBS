@@ -61,8 +61,9 @@ public:
     int FnKSMReaderSendEjectToFront();
 
     std::string FnKSMReaderGetCardNum();
+    bool FnKSMReaderGetCardExpired();
     int FnKSMReaderGetCardExpiryDate();
-    int FnKSMReaderGetCardBalance();
+    long FnKSMReaderGetCardBalance();
 
     /**
      * Singleton KSM_Reader should not be cloneable.
@@ -92,7 +93,8 @@ private:
     bool cardPresented_;
     std::string cardNum_;
     int cardExpiryYearMonth_;
-    int cardBalance_;
+    bool cardExpired_;
+    long cardBalance_;
     KSM_Reader();
     void resetRxBuffer();
     unsigned char* getTxBuff();
