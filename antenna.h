@@ -181,4 +181,5 @@ private:
     void handleRXCRC1State(char c, char &b);
     int handleRXCRC2State(char c, unsigned int &rxcrc, char b);
     void resetState();
+    void startSendReadIUCmdTimer(int milliseconds);
 };

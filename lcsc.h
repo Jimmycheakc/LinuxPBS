@@ -244,4 +244,6 @@ private:
     void encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge);
     std::string calculateSHA256(const std::string& data);
     void handleUploadCDFilesTimerTimeout();
+    void startGetCardIDTimer(int milliseconds);
+    void startGetCardBalanceTimer(int milliseconds);
 };

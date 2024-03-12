@@ -78,8 +78,6 @@ LCSCReader* LCSCReader::getInstance()
 void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
     pMainIOContext_ = &mainIOContext;
-    periodicSendGetCardIDCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
-    periodicSendGetCardBalanceCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     uploadCDFilesTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
     pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
@@ -139,12 +137,7 @@ void LCSCReader::handleGetCardIDTimerExpiration()
 
     if (ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load())
     {
-        periodicSendGetCardIDCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
-        periodicSendGetCardIDCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-                if (!error) {
-                    handleGetCardIDTimerExpiration();
-                }
-        });
+        startGetCardIDTimer(100);
     }
     else
     {
@@ -153,15 +146,28 @@ void LCSCReader::handleGetCardIDTimerExpiration()
     }
 }
 
+void LCSCReader::startGetCardIDTimer(int milliseconds)
+{
+    boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
+    std::thread timerThread([this, milliseconds, timerIOContext_]() {
+        periodicSendGetCardIDCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+        periodicSendGetCardIDCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+        periodicSendGetCardIDCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                if (!error) {
+                    handleGetCardIDTimerExpiration();
+                }
+        });
+
+        timerIOContext_->run();
+        delete timerIOContext_;
+    });
+    timerThread.detach();
+}
+
 void LCSCReader::FnSendGetCardIDCmd()
 {
     continueReadFlag_.store(true);
-    periodicSendGetCardIDCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
-    periodicSendGetCardIDCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-            if (!error) {
-                handleGetCardIDTimerExpiration();
-            }
-    });
+    startGetCardIDTimer(100);
 }
 
 void LCSCReader::handleGetCardBalanceTimerExpiration()
@@ -171,12 +177,7 @@ void LCSCReader::handleGetCardBalanceTimerExpiration()
 
     if (ret == static_cast<int>(mCSCEvents::sNoCard) && continueReadFlag_.load())
     {
-        periodicSendGetCardBalanceCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
-        periodicSendGetCardBalanceCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-                if (!error) {
-                    handleGetCardBalanceTimerExpiration();
-                }
-        });
+        startGetCardBalanceTimer(100);
     }
     else
     {
@@ -185,15 +186,28 @@ void LCSCReader::handleGetCardBalanceTimerExpiration()
     }
 }
 
+void LCSCReader::startGetCardBalanceTimer(int milliseconds)
+{
+    boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
+    std::thread timerThread([this, milliseconds, timerIOContext_]() {
+        periodicSendGetCardBalanceCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+        periodicSendGetCardBalanceCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+        periodicSendGetCardBalanceCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                if (!error) {
+                    handleGetCardBalanceTimerExpiration();
+                }
+        });
+
+        timerIOContext_->run();
+        delete timerIOContext_;
+    });
+    timerThread.detach();
+}
+
 void LCSCReader::FnSendGetCardBalance()
 {
     continueReadFlag_.store(true);
-    periodicSendGetCardBalanceCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
-    periodicSendGetCardBalanceCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-            if (!error) {
-                handleGetCardBalanceTimerExpiration();
-            }
-    });
+    startGetCardBalanceTimer(100);
 }
 
 void LCSCReader::FnSendGetTime()
@@ -988,9 +1002,7 @@ bool LCSCReader::lcscCmdSend(const std::vector<unsigned char>& dataBuff)
     {
         dataMsg << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(txBuff[k]) << ' ';
     }
-    //Logger::getInstance()->FnLog(dataMsg.str(), logFileName_, "LCSC");
-    dataMsg << std::endl;
-    Logger::getInstance()->FnLog(dataMsg.str(), "test", "test");
+    Logger::getInstance()->FnLog(dataMsg.str(), logFileName_, "LCSC");
 
     int retry = 0;
     boost::system::error_code error;

@@ -45,7 +45,6 @@ Antenna* Antenna::getInstance()
 void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
     pMainIOContext_ = &mainIOContext;
-    periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
     pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
@@ -1020,12 +1019,7 @@ void Antenna::handleReadIUTimerExpiration()
 
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
-        periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
-        periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-            if (!error) {
-                handleReadIUTimerExpiration();
-            }
-        });
+        startSendReadIUCmdTimer(100);
     }
     else
     {
@@ -1044,39 +1038,28 @@ void Antenna::handleReadIUTimerExpiration()
     }
 }
 
+void Antenna::startSendReadIUCmdTimer(int milliseconds)
+{
+    boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
+    std::thread timerThread([this, milliseconds, timerIOContext_]() {
+        periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+        periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+        periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                if (!error) {
+                    handleReadIUTimerExpiration();
+                }
+        });
+
+        timerIOContext_->run();
+        delete timerIOContext_;
+    });
+    timerThread.detach();
+}
+
 void Antenna::FnAntennaSendReadIUCmd()
 {
     continueReadFlag_.store(true);
-    periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(100));
-    periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-            if (!error) {
-                handleReadIUTimerExpiration();
-            }
-    });
-    /*
-    Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
-    int ret = 0;
-
-    continueReadFlag_.store(true);
-    do
-    {
-        ret = antennaCmd(AntCmdID::FORCE_GET_IU_NO_CMD);
-    } while (!successRecvIUFlag_ && continueReadFlag_.load());
-
-    continueReadFlag_.store(false);
-    
-    if (successRecvIUFlag_)
-    {
-        successRecvIUFlag_ = false;
-        // raise iucome event
-        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaIUCome", IUNumber_);
-    }
-    else
-    {
-        // raise antenna fail
-        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 0);
-    }
-    */
+    startSendReadIUCmdTimer(100);
 }
 
 void Antenna::FnAntennaStopRead()

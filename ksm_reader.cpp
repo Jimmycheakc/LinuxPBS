@@ -18,6 +18,7 @@ KSM_Reader::KSM_Reader()
     : io_serial_context(),
     TxNum_(0),
     RxNum_(0),
+    timerRunning_(false),
     continueReadFlag_(false),
     isCmdExecuting_(false),
     recvbcc_(0),
@@ -44,7 +45,6 @@ KSM_Reader* KSM_Reader::getInstance()
 void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
     pMainIOContext_ = &mainIOContext;
-    periodicSendReadCardCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
     pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
@@ -269,14 +269,14 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
         readerCmdSend(dataBuffer);
         result = ksmReaderReadWithTimeout(2000);
 
+        resetRxBuffer();
+
+        isCmdExecuting_.store(false);
+
         if (result.success)
         {
             ret = static_cast<int>(ksmReaderHandleCmdResponse(cmdID, result.data));
         }
-
-        resetRxBuffer();
-
-        isCmdExecuting_.store(false);
     }
     else
     {
@@ -295,10 +295,10 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
     receivedRespStream << "Received Buffer Data : " << Common::getInstance()->FnGetVectorCharToHexString(dataBuff);
     Logger::getInstance()->FnLog(receivedRespStream.str(), logFileName_, "KSM");
     std::stringstream receivedRespNumBytesStream;
-    receivedRespNumBytesStream << "Received Buffer size : " << getRxNum();
+    receivedRespNumBytesStream << "Received Buffer size : " << dataBuff.size();
     Logger::getInstance()->FnLog(receivedRespNumBytesStream.str(), logFileName_, "KSM");
 
-    if (getRxNum() > 3)
+    if (dataBuff.size() > 3)
     {
         if (dataBuff[0] != KSM_Reader::STX)
         {
@@ -306,14 +306,14 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
             return retCode;
         }
 
-        if (dataBuff[getRxNum() - 1] != KSM_Reader::ETX)
+        if (dataBuff[dataBuff.size() - 1] != KSM_Reader::ETX)
         {
             Logger::getInstance()->FnLog("Rx Frame : ETX error.", logFileName_, "KSM");
             return retCode;
         }
 
         std::size_t startIdx = 1;
-        std::size_t endIdx = getRxNum() - 1;
+        std::size_t endIdx = dataBuff.size() - 1;
         std::size_t len = endIdx - startIdx;
 
         std::vector<char> recvCmd(len);
@@ -394,14 +394,14 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
             if (cmdCodeLSB == 0x2F)
             {
                 retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : Card On : ";
+                logMsg << "Rx Response : Card On.";
             }
             else if (cmdCodeLSB == 0x31)
             {
                 // Temp: Raise event card out
                 EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardOut", true);
                 retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : Eject to front : ";
+                logMsg << "Rx Response : Eject to front.";
             }
 
             Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
@@ -413,12 +413,12 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
             if (cmdCodeLSB == 0x30)
             {
                 retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : IC Power On : ";
+                logMsg << "Rx Response : IC Power On.";
             }
             else if (cmdCodeLSB == 0x31)
             {
                 retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : IC Power Off : ";
+                logMsg << "Rx Response : IC Power Off.";
             }
 
             Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
@@ -430,7 +430,7 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
             if (cmdCodeLSB == 0x2F)
             {
                 retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : Warm Reset : ";
+                logMsg << "Rx Response : Warm Reset.";
             }
             else if (cmdCodeLSB == 0x31)
             {
@@ -438,17 +438,17 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
                 if (status == 0x4E)
                 {
                     retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Card Read Error : ";
+                    logMsg << "Rx Response : Card Read Error.";
                 }
                 else if (cmd == KSMReaderCmdID::SELECT_FILE1_CMD)
                 {
                     retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Select File 1 : ";
+                    logMsg << "Rx Response : Select File 1.";
                 }
                 else if (cmd == KSMReaderCmdID::SELECT_FILE2_CMD)
                 {
                     retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Select File 2 : ";
+                    logMsg << "Rx Response : Select File 2.";
                 }
                 else if (cmd == KSMReaderCmdID::READ_CARD_INFO_CMD)
                 {
@@ -917,6 +917,8 @@ int KSM_Reader::getRxNum()
 
 void KSM_Reader::handleReadCardStatusTimerExpiration()
 {
+    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+
     if (continueReadFlag_.load())
     {
         int iRet = FnKSMReaderSendGetStatus();
@@ -927,23 +929,53 @@ void KSM_Reader::handleReadCardStatusTimerExpiration()
 
 void KSM_Reader::stopReadCardStatusTimer()
 {
-    periodicSendReadCardCmdTimer_->cancel();
+    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+
+    if (periodicSendReadCardCmdTimer_)
+    {
+        periodicSendReadCardCmdTimer_->cancel();
+    }
+    timerRunning_.store(false);
 }
 
 void KSM_Reader::startReadCardStatusTimer(int milliseconds)
 {
-    periodicSendReadCardCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
-    periodicSendReadCardCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-            if (!error) {
-                handleReadCardStatusTimerExpiration();
-            }
-    });
+    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+    
+    if (!timerRunning_.load())
+    {
+        boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
+        std::thread timerThread([this, milliseconds, timerIOContext_]() {
+            periodicSendReadCardCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+            periodicSendReadCardCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+            periodicSendReadCardCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                    if (!timerRunning_.load())
+                    {
+                        return;
+                    }
+
+                    if (!error) {
+                        stopReadCardStatusTimer();
+                        handleReadCardStatusTimerExpiration();
+                    }
+            });
+
+            timerIOContext_->run();
+            delete timerIOContext_;
+        });
+        timerThread.detach();
+
+        timerRunning_.store(true);
+    }
 }
 
 int KSM_Reader::FnKSMReaderReadCardInfo()
 {
+    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+
     int retCode = 1;
     stopReadCardStatusTimer();
+    continueReadFlag_.store(false);
 
     if (ksmReaderCmd(KSMReaderCmdID::CARD_ON_IC_CMD) != 1)
     {
@@ -1001,11 +1033,16 @@ int KSM_Reader::FnKSMReaderReadCardInfo()
 
 cleanup:
     startReadCardStatusTimer(1000);
+    continueReadFlag_.store(true);
     return retCode;
 }
 
 int KSM_Reader::FnKSMReaderEnable(bool enable)
 {
+    std::stringstream ss;
+    ss << __func__ << " : " << enable;
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
+
     int iRet = -1;
 
     if (enable)
@@ -1019,6 +1056,7 @@ int KSM_Reader::FnKSMReaderEnable(bool enable)
     else
     {
         continueReadFlag_.store(false);
+        stopReadCardStatusTimer();
         iRet = ksmReaderCmd(KSMReaderCmdID::CARD_PROHIBITED_CMD);
     }
 
