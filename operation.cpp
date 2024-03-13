@@ -106,8 +106,6 @@ void operation::OperationInit(io_context& ioContext)
     }
     //
     Clearme();
-    LoopACome();
-
 }
 
 bool operation::LoadParameter()
@@ -171,6 +169,7 @@ void operation::LoopACome()
     writelog ("Loop A Come.","OPR");
     ShowLEDMsg(tMsg.MsgEntry_LoopA[0], tMsg.MsgEntry_LoopA[1]);
     Clearme();
+    tProcess.giEnableCashcardCnt = 0;
     Antenna::getInstance()->FnAntennaSendReadIUCmd();
     EnableCashcard(true);
 
@@ -196,7 +195,7 @@ void operation::LoopCGone()
 void operation::VehicleCome(string sNo)
 {
 
-    if (sNo.length()==10) {
+    if (sNo.length() == 10) {
         writelog ("Received IU: "+sNo,"OPR");
     }
     else {
@@ -408,13 +407,13 @@ void operation::PBSEntry(string sIU)
     if (tProcess.gbcarparkfull ==1 and iRet == 1 and (std::stoi(tSeason.rate_type) !=0) and tParas.giFullAction ==iNoPartial )
     {   
         writelog ("VIP Season Only.", "OPR");
-        ShowLEDMsg("VIP Season Only", "VIP Season Only");
+        ShowLEDMsg("Carpark Full!^VIP Season Only", "Carpark Full!^VIP Season Only");
         return;
     } 
     if (tProcess.gbcarparkfull ==1 and iRet != 1 )
     {   
         writelog ("Season Only.", "OPR");
-        ShowLEDMsg(tMsg.MsgEntry_SeasonOnly[0], tMsg.MsgEntry_SeasonOnly[1]);
+        ShowLEDMsg("Carpark Full!^Season only", "Carpark Full!^Season only");
         return;
     } 
     if (iRet == 6 and sIU.length()>10)
@@ -954,6 +953,16 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = tPBSError[12].ErrMsg;
             break;
         }
+        case ReaderNoError:
+        {
+            tPBSError[iReader].ErrNo = 0;
+            break;
+        }
+        case ReaderError:
+        {
+            tPBSError[iReader].ErrNo = -1;
+            break;
+        }
         default:
             break;
     }
@@ -1321,8 +1330,12 @@ void operation:: EnableLCSC(bool bEnable)
 
 void operation::EnableKDE(bool bEnable)
 {
+    if (bEnable == false)
+    {
+        KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+    }
 
-
+    KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
 }
 
 void operation::EnableUPOS(bool bEnable)
@@ -1368,9 +1381,7 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
                 return;
             }
             else{
-                 if (gtStation.iType == tientry) {
-                    PBSEntry(sCardNo);
-                 }
+                VehicleCome(sCardNo);
             }
             break;
          case LCSCReader::mCSCEvents::iFailWriteSettle:
@@ -1381,4 +1392,51 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
     
      }
    
+}
+
+void operation:: KSM_CardIn()
+{
+    int iRet;
+    //--------
+    if (tPBSError[iReader].ErrNo != 0) {tPBSError[iReader].ErrNo = 0;}
+    //---------
+    tProcess.giCardIsIn = 1;
+    iRet =  KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
+    if (iRet != 1) {
+        ShowLEDMsg (tMsg.MsgEntry_CardReadingError[0], tMsg.MsgEntry_CardReadingError[1]);
+        SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
+        KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+    }
+}
+
+void operation:: KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired)
+ {  
+    
+    writelog ("Cashcard: " + sKSMCardNo, "OPR");
+    //------
+    tPBSError[iReader].ErrNo = 0;
+    if (sKSMCardNo == "" || sKSMCardNo.length()!= 16 || sKSMCardNo.substr(5,4) == "0005") {
+        ShowLEDMsg (tMsg.MsgEntry_CardReadingError[0], tMsg.MsgEntry_CardReadingError[1]);
+        SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
+        KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+        return;
+    }
+    else { 
+        VehicleCome(sKSMCardNo);
+    }
+ }
+
+ void operation:: KSM_CardTakeAway()
+{
+    
+    tProcess.giCardIsIn = 2;                     
+
+    writelog ("Card Take Away ", "PBS");
+    //--------
+    if (gtStation.iType == tientry) {
+        if (tEntry.gbEntryOK == 1){
+            EnableCashcard(false);
+            Openbarrier();
+        }
+    }
 }

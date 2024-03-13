@@ -70,6 +70,9 @@ public:
     void EnableKDE(bool bEnable);
     void EnableUPOS(bool bEnable);
     void ProcessLCSC(LCSCReader::mCSCEvents iEvent);
+    void KSM_CardIn();
+    void KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired);
+    void KSM_CardTakeAway();
 
 
     void Openbarrier();

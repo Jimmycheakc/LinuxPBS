@@ -308,6 +308,7 @@ struct  tProcess_Struct
 	int gbInitParamFail;
 	bool WaitForLCSCReturn;
 	int giCardIsIn;
+	int giEnableCashcardCnt;
 };
 
 

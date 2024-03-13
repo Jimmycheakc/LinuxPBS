@@ -554,11 +554,7 @@ bool EventHandler::handleKSMReaderCardIn(const BaseEvent* event)
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
 
-        int ret = KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
-        if (ret != 1)
-        {
-            KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
-        }
+        operation::getInstance()->KSM_CardIn();
     }
     else
     {
@@ -584,6 +580,7 @@ bool EventHandler::handleKSMReaderCardOut(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
+        operation::getInstance()->writelog("card out", "OPR");
     }
     else
     {
@@ -610,7 +607,7 @@ bool EventHandler::handleKSMReaderCardTakeAway(const BaseEvent* event)
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
 
-        KSM_Reader::getInstance()->FnKSMReaderEnable(false);
+        operation::getInstance()->KSM_CardTakeAway();
     }
     else
     {
@@ -626,6 +623,9 @@ bool EventHandler::handleKSMReaderCardTakeAway(const BaseEvent* event)
 bool EventHandler::handleKSMReaderCardInfo(const BaseEvent* event)
 {
     bool ret = true;
+    string sCardNo;
+    long glcardbal;
+    bool gbcardExpired;
 
     const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
 
@@ -637,10 +637,17 @@ bool EventHandler::handleKSMReaderCardInfo(const BaseEvent* event)
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
 
-        std::cout << "Card Number : " << KSM_Reader::getInstance()->FnKSMReaderGetCardNum() << std::endl;
-        std::cout << "Card Expiry Date : " << KSM_Reader::getInstance()->FnKSMReaderGetCardExpiryDate() << std::endl;
-        std::cout << "Card Balance : " << KSM_Reader::getInstance()->FnKSMReaderGetCardBalance() << std::endl;
-        std::cout << "Card Expired : " << KSM_Reader::getInstance()->FnKSMReaderGetCardExpired() << std::endl;
+        //---------
+        sCardNo = KSM_Reader::getInstance()->FnKSMReaderGetCardNum();
+        glcardbal = KSM_Reader::getInstance()->FnKSMReaderGetCardBalance();
+        gbcardExpired = KSM_Reader::getInstance()->FnKSMReaderGetCardExpired();
+        //--------
+        //std::cout << "Card Number : " << KSM_Reader::getInstance()->FnKSMReaderGetCardNum() << std::endl;
+        //std::cout << "Card Expiry Date : " << KSM_Reader::getInstance()->FnKSMReaderGetCardExpiryDate() << std::endl;
+        //std::cout << "Card Balance : " << KSM_Reader::getInstance()->FnKSMReaderGetCardBalance() << std::endl;
+        //std::cout << "Card Expired : " << KSM_Reader::getInstance()->FnKSMReaderGetCardExpired() << std::endl;
+        //------
+        operation::getInstance()->KSM_CardInfo(sCardNo,glcardbal,gbcardExpired);
     }
     else
     {
