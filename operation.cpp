@@ -1333,9 +1333,16 @@ void operation::EnableKDE(bool bEnable)
     if (bEnable == false)
     {
         KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
-    }
 
-    KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
+        if (tProcess.giCardIsIn != 1)
+        {
+            KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
+        }
+    }
+    else
+    {
+        KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
+    }
 }
 
 void operation::EnableUPOS(bool bEnable)

@@ -148,9 +148,11 @@ void LCSCReader::handleGetCardIDTimerExpiration()
 
 void LCSCReader::startGetCardIDTimer(int milliseconds)
 {
-    boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
-    std::thread timerThread([this, milliseconds, timerIOContext_]() {
-        periodicSendGetCardIDCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
+    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
+        std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardIDCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
         periodicSendGetCardIDCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
         periodicSendGetCardIDCmdTimer_->async_wait([this](const boost::system::error_code& error) {
                 if (!error) {
@@ -159,7 +161,6 @@ void LCSCReader::startGetCardIDTimer(int milliseconds)
         });
 
         timerIOContext_->run();
-        delete timerIOContext_;
     });
     timerThread.detach();
 }
@@ -188,9 +189,11 @@ void LCSCReader::handleGetCardBalanceTimerExpiration()
 
 void LCSCReader::startGetCardBalanceTimer(int milliseconds)
 {
-    boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
-    std::thread timerThread([this, milliseconds, timerIOContext_]() {
-        periodicSendGetCardBalanceCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
+    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
+        std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardBalanceCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
         periodicSendGetCardBalanceCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
         periodicSendGetCardBalanceCmdTimer_->async_wait([this](const boost::system::error_code& error) {
                 if (!error) {
@@ -199,7 +202,6 @@ void LCSCReader::startGetCardBalanceTimer(int milliseconds)
         });
 
         timerIOContext_->run();
-        delete timerIOContext_;
     });
     timerThread.detach();
 }

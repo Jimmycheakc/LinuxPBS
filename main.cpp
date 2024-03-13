@@ -49,9 +49,9 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 
             }
             LCSCReader::getInstance()->FnUploadLCSCCDFiles();
-            // Send DateTime to Monitor
-            operation::getInstance()->FnSendDateTimeToMonitor();
-        }             
+        }
+        // Send DateTime to Monitor
+        operation::getInstance()->FnSendDateTimeToMonitor();
     } else {
         if (operation::getInstance()->tProcess.gbInitParamFail==1) {
             if (operation::getInstance()->LoadedparameterOK())

@@ -121,7 +121,6 @@ private:
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicSendReadIUCmdTimer_;
     std::string logFileName_;
     std::atomic<bool> continueReadFlag_;
     std::atomic<bool> isCmdExecuting_;

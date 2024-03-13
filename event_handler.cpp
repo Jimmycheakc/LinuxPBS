@@ -437,6 +437,7 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
+                operation::getInstance()->tProcess.gbLoopApresent = false;
                 operation::getInstance()->LoopAGone();
                 break;
             }

@@ -1019,7 +1019,7 @@ void Antenna::handleReadIUTimerExpiration()
 
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
-        startSendReadIUCmdTimer(100);
+        startSendReadIUCmdTimer(200);
     }
     else
     {
@@ -1040,9 +1040,11 @@ void Antenna::handleReadIUTimerExpiration()
 
 void Antenna::startSendReadIUCmdTimer(int milliseconds)
 {
-    boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
-    std::thread timerThread([this, milliseconds, timerIOContext_]() {
-        periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+    Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
+
+    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
+    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
+        std::unique_ptr<boost::asio::deadline_timer> periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
         periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
         periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& error) {
                 if (!error) {
@@ -1051,7 +1053,6 @@ void Antenna::startSendReadIUCmdTimer(int milliseconds)
         });
 
         timerIOContext_->run();
-        delete timerIOContext_;
     });
     timerThread.detach();
 }

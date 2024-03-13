@@ -170,8 +170,6 @@ public:
 private:
     static LCSCReader* lcscReader_;
     boost::asio::io_context* pMainIOContext_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardIDCmdTimer_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicSendGetCardBalanceCmdTimer_;
     std::unique_ptr<boost::asio::deadline_timer> uploadCDFilesTimer_;
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;

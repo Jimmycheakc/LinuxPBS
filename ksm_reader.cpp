@@ -18,7 +18,6 @@ KSM_Reader::KSM_Reader()
     : io_serial_context(),
     TxNum_(0),
     RxNum_(0),
-    timerRunning_(false),
     continueReadFlag_(false),
     isCmdExecuting_(false),
     recvbcc_(0),
@@ -927,46 +926,23 @@ void KSM_Reader::handleReadCardStatusTimerExpiration()
     }
 }
 
-void KSM_Reader::stopReadCardStatusTimer()
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-
-    if (periodicSendReadCardCmdTimer_)
-    {
-        periodicSendReadCardCmdTimer_->cancel();
-    }
-    timerRunning_.store(false);
-}
-
 void KSM_Reader::startReadCardStatusTimer(int milliseconds)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
     
-    if (!timerRunning_.load())
-    {
-        boost::asio::io_context* timerIOContext_ = new boost::asio::io_context();
-        std::thread timerThread([this, milliseconds, timerIOContext_]() {
-            periodicSendReadCardCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
-            periodicSendReadCardCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
-            periodicSendReadCardCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-                    if (!timerRunning_.load())
-                    {
-                        return;
-                    }
-
-                    if (!error) {
-                        stopReadCardStatusTimer();
-                        handleReadCardStatusTimerExpiration();
-                    }
-            });
-
-            timerIOContext_->run();
-            delete timerIOContext_;
+    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
+    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
+        std::unique_ptr<boost::asio::deadline_timer> periodicSendReadCardCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
+        periodicSendReadCardCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+        periodicSendReadCardCmdTimer_->async_wait([this](const boost::system::error_code& error) {
+                if (!error) {
+                    handleReadCardStatusTimerExpiration();
+                }
         });
-        timerThread.detach();
 
-        timerRunning_.store(true);
-    }
+        timerIOContext_->run();
+    });
+    timerThread.detach();
 }
 
 int KSM_Reader::FnKSMReaderReadCardInfo()
@@ -974,7 +950,6 @@ int KSM_Reader::FnKSMReaderReadCardInfo()
     Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
 
     int retCode = 1;
-    stopReadCardStatusTimer();
     continueReadFlag_.store(false);
 
     if (ksmReaderCmd(KSMReaderCmdID::CARD_ON_IC_CMD) != 1)
@@ -1056,7 +1031,6 @@ int KSM_Reader::FnKSMReaderEnable(bool enable)
     else
     {
         continueReadFlag_.store(false);
-        stopReadCardStatusTimer();
         iRet = ksmReaderCmd(KSMReaderCmdID::CARD_PROHIBITED_CMD);
     }
 
