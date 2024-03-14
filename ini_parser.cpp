@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <boost/filesystem.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include "ini_parser.h"
@@ -22,6 +23,23 @@ IniParser* IniParser::getInstance()
 
 void IniParser::FnReadIniFile()
 {
+
+    // Create local INI folder
+    try
+    {
+        if (!(boost::filesystem::exists(INI_FILE_PATH)))
+        {
+            if (!(boost::filesystem::create_directories(INI_FILE_PATH)))
+            {
+                std::cerr << "Failed to create directory: " << INI_FILE_PATH << std::endl;
+            }
+        }
+    }
+    catch (const std::exception &ex)
+    {
+        std::cerr << "Exception: " << ex.what() << std::endl;
+    }
+
     boost::property_tree::ptree pt;
     boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
 

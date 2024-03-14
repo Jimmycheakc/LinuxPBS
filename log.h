@@ -13,7 +13,7 @@
 class Logger
 {
 public:
-    const std::string LOG_FILE_PATH = "/home/root/LinuxPBSSourceCode/LatestSourceCode/carpark/log";
+    const std::string LOG_FILE_PATH = "/home/root/carpark/Log";
 
     static Logger* getInstance();
     void FnCreateLogFile(std::string filename="");

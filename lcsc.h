@@ -13,6 +13,8 @@ class LCSCReader
 {
 
 public:
+    const std::string LOCAL_LCSC_FOLDER_PATH = "/home/root/carpark/LTA";
+
     struct CscPacket
     {
         uint8_t attn;

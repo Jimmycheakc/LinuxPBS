@@ -1,3 +1,4 @@
+#include <boost/filesystem.hpp>
 #include <sys/mount.h>
 #include <cstdint>
 #include <iostream>
@@ -89,6 +90,22 @@ void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsign
     pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
+
+    // Create local LCSC folder
+    try
+    {
+        if (!(boost::filesystem::exists(LOCAL_LCSC_FOLDER_PATH)))
+        {
+            if (!(boost::filesystem::create_directories(LOCAL_LCSC_FOLDER_PATH)))
+            {
+                std::cerr << "Failed to create directory: " << LOCAL_LCSC_FOLDER_PATH << std::endl;
+            }
+        }
+    }
+    catch (const std::exception &ex)
+    {
+        std::cerr << "Exception: " << ex.what() << std::endl;
+    }
 
     std::stringstream ss;
     if (pSerialPort_->is_open())
@@ -1973,7 +1990,7 @@ bool LCSCReader::FnMoveCDAckFile()
     std::string sharedFolderPath = folderPath;
     std::string username = "sunpark";
     std::string password = "Tdxh638*";
-    std::string cdAckFilePath = operation::getInstance()->tParas.gsLocalLCSC;
+    std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
     // Create the mount point directory if doesn't exist
     if (!std::filesystem::exists(mountPoint))
@@ -2056,7 +2073,7 @@ bool LCSCReader::FnGenerateCDAckFile()
 {
     FnSendGetStatusCmd();
 
-    std::string cdAckFilePath = operation::getInstance()->tParas.gsLocalLCSC;
+    std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
     // Create cd ack file path
     if (!std::filesystem::exists(cdAckFilePath))
@@ -2201,7 +2218,7 @@ bool LCSCReader::FnDownloadCDFiles()
     std::string sharedFolderPath = folderPath;
     std::string username = "sunpark";
     std::string password = "Tdxh638*";
-    std::string outputFolderPath = operation::getInstance()->tParas.gsLocalLCSC;
+    std::string outputFolderPath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
     // Create the mount point directory if doesn't exist
     if (!std::filesystem::exists(mountPoint))
@@ -2347,7 +2364,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
 
         if ((HasCDFileToUpload_ == true) || (LastCDUploadDate_ == 0))
         {
-            std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+            std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
             std::filesystem::path folder(localLCSCFolder);
             LastCDUploadDate_ = 1;
             bool uploadCDFilesRet = false;
@@ -2386,7 +2403,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
                     {
                         HasCDFileToUpload_ = false;
                         Logger::getInstance()->FnLog("Generate CD Ack file successfully", logFileName_, "LCSC");
-                        std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+                        std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
                         std::filesystem::path folder(localLCSCFolder);
                         LastCDUploadDate_ = 0;
 
@@ -2419,7 +2436,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
                 }
                 else
                 {
-                    std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+                    std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
                     std::filesystem::path folder(localLCSCFolder);
 
                     for (const auto& entry : std::filesystem::directory_iterator(folder))
@@ -2463,7 +2480,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
     if ((Common::getInstance()->FnGetCurrentHour() > 20)
         && (HasCDFileToUpload_ || operation::getInstance()->tProcess.WaitForLCSCReturn))
     {
-        std::string localLCSCFolder = operation::getInstance()->tParas.gsLocalLCSC;
+        std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
         std::filesystem::path folder(localLCSCFolder);
 
         for (const auto& entry : std::filesystem::directory_iterator(folder))

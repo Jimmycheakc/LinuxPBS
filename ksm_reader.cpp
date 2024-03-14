@@ -81,7 +81,7 @@ void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigne
     }
     else
     {
-        initSS << "Failed to initialize the KSM Reade.";
+        initSS << "Failed to initialize the KSM Reader.";
     }
     Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
 }

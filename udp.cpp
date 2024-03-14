@@ -78,7 +78,7 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("download INI file","UDP");
 
-			if (operation::getInstance()->CopyIniFile())
+			if (operation::getInstance()->CopyIniFile(pField.Field(0), pField.Field(3)))
 			{
 				operation::getInstance()->FnSendCmdDownloadIniAckToMonitor(true);
 			}

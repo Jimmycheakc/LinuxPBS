@@ -665,7 +665,7 @@ bool operation::copyFiles(const std::string& mountPoint, const std::string& shar
             std::string filename = entry.path().filename().string();
 
             if (std::filesystem::is_regular_file(entry)
-                && (filename.size() >= 4) && (filename.substr(filename.size() - 4) == ".ini"))
+                && (filename.size() >= 4) && (filename == "LinuxPBS.ini"))
             {
                 foundIni = true;
                 std::filesystem::path dest_file = outputFolderPath / entry.path().filename();
@@ -706,9 +706,23 @@ bool operation::copyFiles(const std::string& mountPoint, const std::string& shar
     return true;
 }
 
-bool operation::CopyIniFile()
+bool operation::CopyIniFile(const std::string& serverIpAddress, const std::string& stationID)
 {
-    return copyFiles("/mnt/ini", "//192.168.2.141/Test", "sunpark", "Tdxh638*", "/home/root/LinuxPBSSourceCode/LatestSourceCode/Testing");
+    if ((!serverIpAddress.empty()) && (!stationID.empty()))
+    {
+        std::string sharedFilePath = "//" + serverIpAddress + "/carpark/LinuxPBS/Ini/Stn" + stationID;
+
+        std::stringstream ss;
+        ss << "Ini Shared File Path : " << sharedFilePath;
+        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+
+        return copyFiles("/mnt/ini", sharedFilePath, "sunpark", "Tdxh638*", "/home/root/carpark/Ini");
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Server IP address or station ID empty.", "", "OPR");
+        return false;
+    }
 }
 
 void operation::SendMsg2Monitor(string cmdcode,string dstr)
