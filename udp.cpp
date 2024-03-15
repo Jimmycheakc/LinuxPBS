@@ -31,10 +31,6 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
     rxcmd = std::stoi(pField.Field(2));
     switch(rxcmd)
     {
-		case CmdStopStationSoftware:
-		{
-			break;
-		}
 		case CmdMonitorEnquiry:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -144,6 +140,12 @@ void udpclient::processdata (const char* data, std::size_t length)
     rxcmd = std::stoi(pField.Field(2));
     switch(rxcmd)
     {
+		case CmdStopStationSoftware:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			std::exit(0);
+			break;
+		}
 		case CmdStatusEnquiry:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");

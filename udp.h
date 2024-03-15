@@ -11,7 +11,7 @@ using ip::udp;
 
 typedef enum : unsigned int{
 	CmdStopStationSoftware=11,
-    CmdStatusEnquiry=13,
+	CmdStatusEnquiry=13,
 	CmdUpdateSeason=20,
 	CmdDownloadMsg=22,
 	CmdUpdateParam=23,
