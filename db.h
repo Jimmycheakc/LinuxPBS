@@ -81,6 +81,7 @@ public:
     int AddSysEvent(string sEvent);
 
     int FnGetDatabaseErrorFlag();
+    int clearexpiredseason();
 
 
     /**

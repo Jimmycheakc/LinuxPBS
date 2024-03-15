@@ -31,6 +31,10 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
     rxcmd = std::stoi(pField.Field(2));
     switch(rxcmd)
     {
+		case CmdStopStationSoftware:
+		{
+			break;
+		}
 		case CmdMonitorEnquiry:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -201,7 +205,15 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			i=stoi(pField.Field(3));
-			operation::getInstance()->tProcess.gbcarparkfull = i;
+			if (i != operation::getInstance()->tProcess.gbcarparkfull) {
+				operation::getInstance()->tProcess.gbcarparkfull = i;
+				if (i == 0) {
+					string sIUNo = operation:: getInstance()->tEntry.sIUTKNo; 
+					if (operation::getInstance()->tProcess.gbLoopApresent == true and sIUNo != "" ){
+						operation::getInstance()->PBSEntry(sIUNo);
+					}
+				}
+			}
 			break;
 		}
 		case CmdClearSeason:

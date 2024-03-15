@@ -3064,3 +3064,28 @@ int db::FnGetDatabaseErrorFlag()
 {
 	return m_remote_db_err_flag;
 }
+
+int db::clearexpiredseason()
+{
+	std::string tableNm="season_mst";
+	
+	std::string sqlStmt;
+	
+	int r=-1;// success flag
+	try {
+
+		sqlStmt="Delete FROM season_mst WHERE TIMESTAMPDIFF(HOUR, date_to, NOW()) >= 30*24";
+
+		r=localdb->SQLExecutNoneQuery(sqlStmt);
+
+		if(r==0) m_local_db_err_flag=0;
+		else m_local_db_err_flag=1;
+	}
+	catch (const std::exception &e)
+	{
+		operation::getInstance()->writelog("DB: local db error in clearing: " + std::string(e.what()),"DB");
+		r=-1;
+		m_local_db_err_flag=1;
+	} 
+	return r;
+}

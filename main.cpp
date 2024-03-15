@@ -49,6 +49,11 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 
             }
             LCSCReader::getInstance()->FnUploadLCSCCDFiles();
+            //---- clear expired season
+            if (operation::getInstance()->tProcess.giLastHousekeepingDate != Common::getInstance()->FnGetCurrentDay()){
+                db::getInstance()->clearexpiredseason();
+                operation::getInstance()->tProcess.giLastHousekeepingDate = Common::getInstance()->FnGetCurrentDay();
+            }
         }
         // Send DateTime to Monitor
         operation::getInstance()->FnSendDateTimeToMonitor();

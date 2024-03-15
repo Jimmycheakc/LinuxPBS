@@ -10,7 +10,8 @@ using namespace boost::asio;
 using ip::udp;
 
 typedef enum : unsigned int{
-	CmdStatusEnquiry=13,
+	CmdStopStationSoftware=11,
+    CmdStatusEnquiry=13,
 	CmdUpdateSeason=20,
 	CmdDownloadMsg=22,
 	CmdUpdateParam=23,

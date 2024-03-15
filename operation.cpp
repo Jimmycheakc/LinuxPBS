@@ -169,7 +169,6 @@ void operation::LoopACome()
     writelog ("Loop A Come.","OPR");
     ShowLEDMsg(tMsg.MsgEntry_LoopA[0], tMsg.MsgEntry_LoopA[1]);
     Clearme();
-    tProcess.giEnableCashcardCnt = 0;
     Antenna::getInstance()->FnAntennaSendReadIUCmd();
     EnableCashcard(true);
 
@@ -178,6 +177,10 @@ void operation::LoopACome()
 void operation::LoopAGone()
 {
     writelog ("Loop A End.","OPR");
+    if (tEntry.sIUTKNo == "") {
+        EnableCashcard(false);
+        Antenna::getInstance()->FnAntennaStopRead();
+    }
 
 }
 void operation::LoopCCome()
@@ -436,7 +439,7 @@ void operation::PBSEntry(string sIU)
         //---------
         SaveEntry();
         tEntry.gbEntryOK = true;
-        if (tProcess.giCardIsIn == 0) Openbarrier();
+        if (tProcess.giCardIsIn != 1) Openbarrier();
 }
 
 void operation::PBSExit(string sIU)
@@ -473,6 +476,7 @@ void operation:: Setdefaultparameter()
     tProcess.giCardIsIn = 0;
     //-------
     tProcess.WaitForLCSCReturn = false;
+    tProcess.giLastHousekeepingDate = 0;
 
 }
 
@@ -970,11 +974,15 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         case ReaderNoError:
         {
             tPBSError[iReader].ErrNo = 0;
+            sCmd= "05";
+            tPBSError[iReader].ErrMsg= "Card Reader OK";
             break;
         }
         case ReaderError:
         {
             tPBSError[iReader].ErrNo = -1;
+            sCmd = "05";
+            tPBSError[iReader].ErrMsg= "Card Reader Error";
             break;
         }
         default:
@@ -1346,7 +1354,10 @@ void operation::EnableKDE(bool bEnable)
 {
     if (bEnable == false)
     {
-        KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+        if (tProcess.giCardIsIn !=2 )
+        {
+            KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+        }
 
         if (tProcess.giCardIsIn != 1)
         {
@@ -1355,7 +1366,13 @@ void operation::EnableKDE(bool bEnable)
     }
     else
     {
-        KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
+        if (KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable) == -1)
+        {
+            if (tPBSError[iReader].ErrNo != -1)
+            {
+                HandlePBSError(ReaderError);
+            }
+        }
     }
 }
 
@@ -1419,7 +1436,7 @@ void operation:: KSM_CardIn()
 {
     int iRet;
     //--------
-    if (tPBSError[iReader].ErrNo != 0) {tPBSError[iReader].ErrNo = 0;}
+    if (tPBSError[iReader].ErrNo != 0) {HandlePBSError(ReaderNoError);}
     //---------
     tProcess.giCardIsIn = 1;
     iRet =  KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
