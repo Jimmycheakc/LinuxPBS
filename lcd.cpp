@@ -121,15 +121,7 @@ void LCD::FnLCDDisplayStringCentered(std::uint8_t row, char* str)
             FnLCDDisplayCharacter(' ');
         }
         
-        std::uint8_t col_size = 0;
-        if (((MAXIMUM_CHARACTER_PER_ROW - str_size) % 2) == 0)
-        {
-            col_size = (MAXIMUM_CHARACTER_PER_ROW - str_size) / 2;
-        }
-        else
-        {
-            col_size = ((MAXIMUM_CHARACTER_PER_ROW - str_size) / 2) + 1;
-        }
+        std::uint8_t col_size = ((MAXIMUM_CHARACTER_PER_ROW - str_size) / 2) + 1;
 
         FnLCDDisplayString(row, col_size, str);
     }

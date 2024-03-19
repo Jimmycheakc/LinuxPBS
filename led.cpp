@@ -25,6 +25,8 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
             std::stringstream ss;
             ss << "Successfully open serial port: " << comPortName << std::endl;
             Logger::getInstance()->FnLog(ss.str());
+
+            FnLEDSendLEDMsg("***", "", LED::Alignment::LEFT);
         }
         else
         {

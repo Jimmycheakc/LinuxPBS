@@ -58,6 +58,7 @@ public:
     int FnKSMReaderReadCardInfo();
 
     int FnKSMReaderSendGetStatus();
+    void FnKSMReaderStartGetStatus();
     int FnKSMReaderSendEjectToFront();
 
     std::string FnKSMReaderGetCardNum();

@@ -98,7 +98,7 @@ void operation::OperationInit(io_context& ioContext)
     if (LoadParameter()) {
         Initdevice(ioContext);
         isOperationInitialized_.store(true);
-        ShowLEDMsg(tMsg.MsgEntry_DefaultLED[0], tMsg.MsgEntry_DefaultLED[1]);
+        ShowLEDMsg(tMsg.Msg_DefaultLED[0], tMsg.Msg_DefaultLED[1]);
         writelog("EPS in operation","OPR");
     }else {
         tProcess.gbInitParamFail = 1;
@@ -167,11 +167,11 @@ bool operation::FnIsOperationInitialized() const
 void operation::LoopACome()
 {
     writelog ("Loop A Come.","OPR");
-    ShowLEDMsg(tMsg.MsgEntry_LoopA[0], tMsg.MsgEntry_LoopA[1]);
+    ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
     Clearme();
-    Antenna::getInstance()->FnAntennaSendReadIUCmd();
+    if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();
     EnableCashcard(true);
-
+    ShowLEDMsg("Reading IU...^Insert/Tap Card", "Reading IU...^Insert/Tap Card");
 }
 
 void operation::LoopAGone()
@@ -216,6 +216,8 @@ void operation::VehicleCome(string sNo)
     EnableCashcard(false);
     //----
     if (gtStation.iType == tientry) {
+
+        ShowLEDMsg (tMsg.Msg_Processing[0],tMsg.Msg_Processing[0] ); 
         PBSEntry (sNo);
     } 
     else{
@@ -226,6 +228,10 @@ void operation::VehicleCome(string sNo)
 
 void operation::Openbarrier()
 {
+    if (tProcess.giCardIsIn == 1) {
+        ShowLEDMsg ("Please take ^ CashCard.","Please Take ^ Cashcard.");
+        return;
+    }
     writelog ("Station Open Barrier.","OPR");
 
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
@@ -392,7 +398,7 @@ void operation::PBSEntry(string sIU)
         tEntry.iTransType=GetVTypeFromLoop();
     }
     if (tEntry.iTransType == 9) {
-        ShowLEDMsg(tMsg.MsgEntry_authorizedvehicle[0],tMsg.MsgEntry_authorizedvehicle[1]);
+        ShowLEDMsg(tMsg.Msg_authorizedvehicle[0],tMsg.Msg_authorizedvehicle[1]);
         tEntry.iStatus = 0;
         SaveEntry();
         Openbarrier();
@@ -400,7 +406,7 @@ void operation::PBSEntry(string sIU)
     }
     if (tProcess.gbcarparkfull ==1 and tParas.giFullAction == iLock)
     {   
-        ShowLEDMsg(tMsg.MsgEntry_LockStation[0], tMsg.MsgEntry_LockStation[1]);
+        ShowLEDMsg(tMsg.Msg_LockStation[0], tMsg.Msg_LockStation[1]);
         writelog("Loop A while station Locked","OPR");
         return;
     }
@@ -423,7 +429,7 @@ void operation::PBSEntry(string sIU)
     {
         writelog ("season passback","OPR");
         SendMsg2Server("90",sIU+",,,,,Season Passback");
-        ShowLEDMsg(tMsg.MsgEntry_SeasonPassback[0],tMsg.MsgEntry_SeasonPassback[1]);
+        ShowLEDMsg(tMsg.Msg_SeasonPassback[0],tMsg.Msg_SeasonPassback[1]);
         return;
     }
     if (iRet ==1 or iRet == 4 or iRet == 6) {
@@ -431,15 +437,15 @@ void operation::PBSEntry(string sIU)
     }
 
     if (iRet == 10) {
-        ShowLEDMsg(tMsg.MsgEntry_SeasonAsHourly[0],tMsg.MsgEntry_SeasonAsHourly[1]);
+        ShowLEDMsg(tMsg.Msg_SeasonAsHourly[0],tMsg.Msg_SeasonAsHourly[1]);
     }
     if (iRet == 8) {
-        ShowLEDMsg(tMsg.MsgEntry_WithIU[0],tMsg.MsgEntry_WithIU[1]);
+        ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
     }
         //---------
         SaveEntry();
         tEntry.gbEntryOK = true;
-        if (tProcess.giCardIsIn != 1) Openbarrier();
+        Openbarrier();
 }
 
 void operation::PBSExit(string sIU)
@@ -477,6 +483,7 @@ void operation:: Setdefaultparameter()
     //-------
     tProcess.WaitForLCSCReturn = false;
     tProcess.giLastHousekeepingDate = 0;
+    tProcess.fsLastIUNo = "";
 
 }
 
@@ -1020,7 +1027,9 @@ void operation::SaveEntry()
     if (tEntry.sIUTKNo== "") return;
 
     iRet = db::getInstance()->insertentrytrans(tEntry);
-
+    //----
+    if (iRet == iDBSuccess) tProcess.fsLastIUNo = tEntry.sIUTKNo;
+    //-------
     tPBSError[iDB].ErrNo = (iRet == iDBSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
 
     std::string sMsg2Send = (iRet == iDBSuccess) ? "Entry OK" : (iRet == iCentralFail) ? "Entry Central Failed" : "Entry Local Failed";
@@ -1067,43 +1076,43 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 writelog("DB error when Check season", "OPR");
                 break;
             case 0:  
-                sMsg = tMsg.MsgEntry_SeasonInvalid[0];
-                sLCD = tMsg.MsgEntry_SeasonInvalid[1];
+                sMsg = tMsg.Msg_SeasonInvalid[0];
+                sLCD = tMsg.Msg_SeasonInvalid[1];
                 break;
             case 1:  
                 if (gtStation.iType == tientry) {
-                    sMsg = tMsg.MsgEntry_ValidSeason[0];
-                    sLCD = tMsg.MsgEntry_ValidSeason[1];
+                    sMsg = tMsg.Msg_ValidSeason[0];
+                    sLCD = tMsg.Msg_ValidSeason[1];
                 } 
                 break;
             case 2: 
-                sMsg = tMsg.MsgEntry_SeasonExpired[0];
-                sLCD = tMsg.MsgEntry_SeasonExpired[1];
+                sMsg = tMsg.Msg_SeasonExpired[0];
+                sLCD = tMsg.Msg_SeasonExpired[1];
                 writelog("Season Expired", "OPR");
                 break;
             case 3: 
-                sMsg = tMsg.MsgEntry_SeasonTerminated[0];
-                sLCD = tMsg.MsgEntry_SeasonTerminated[1];
+                sMsg = tMsg.Msg_SeasonTerminated[0];
+                sLCD = tMsg.Msg_SeasonTerminated[1];
                 writelog ("Season terminated", "OPR");
                 break;
             case 4:  
-                sMsg = tMsg.MsgEntry_SeasonBlocked[0];
-                sLCD = tMsg.MsgEntry_SeasonBlocked[1];
+                sMsg = tMsg.Msg_SeasonBlocked[0];
+                sLCD = tMsg.Msg_SeasonBlocked[1];
                 writelog ("Season Blocked", "OPR");
                 break;
             case 5:  
-                sMsg = tMsg.MsgEntry_SeasonInvalid[0];
-                sLCD = tMsg.MsgEntry_SeasonInvalid[1];
+                sMsg = tMsg.Msg_SeasonInvalid[0];
+                sLCD = tMsg.Msg_SeasonInvalid[1];
                 writelog ("Season Lost", "OPR");
                 break;
             case 6:
-                sMsg = tMsg.MsgEntry_SeasonPassback[0];
-                sLCD = tMsg.MsgEntry_SeasonPassback[1];
+                sMsg = tMsg.Msg_SeasonPassback[0];
+                sLCD = tMsg.Msg_SeasonPassback[1];
                 writelog ("Season Passback", "OPR");
                 break;
             case 7:  
-                sMsg = tMsg.MsgEntry_SeasonNotStart[0];
-                sLCD = tMsg.MsgEntry_SeasonNotStart[1];
+                sMsg = tMsg.Msg_SeasonNotStart[0];
+                sLCD = tMsg.Msg_SeasonNotStart[1];
                 writelog ("Season Not Start", "OPR");
                 break;
             case 8: 
@@ -1112,13 +1121,13 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 writelog ("Wrong Season Type", "OPR");
                 break;
             case 10:     
-                sMsg = tMsg.MsgEntry_SeasonAsHourly[0];
-                sLCD = tMsg.MsgEntry_SeasonAsHourly[1];
+                sMsg = tMsg.Msg_SeasonAsHourly[0];
+                sLCD = tMsg.Msg_SeasonAsHourly[1];
                 writelog ("Season As Hourly", "OPR");
                 break;
             case 11:     
-                sMsg = tMsg.MsgEntry_ESeasonWithinAllowance[0];
-                sLCD = tMsg.MsgEntry_ESeasonWithinAllowance[1];
+                sMsg = tMsg.Msg_ESeasonWithinAllowance[0];
+                sLCD = tMsg.Msg_ESeasonWithinAllowance[1];
                 writelog ("Season within allowance", "OPR");
                 break;
             case 12:
@@ -1127,8 +1136,8 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 writelog ("Master Season", "OPR");
                 break;
             case 13:     
-                sMsg = tMsg.MsgEntry_WholeDayParking[0];
-                sLCD = tMsg.MsgEntry_WholeDayParking[1];
+                sMsg = tMsg.Msg_WholeDayParking[0];
+                sLCD = tMsg.Msg_WholeDayParking[1];
                 writelog ("Whole Day Season", "OPR");
                 break;
             default:
@@ -1414,12 +1423,12 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
             
             if(sCardNo.length()!=16){
                 writelog ("Wrong Card No: "+sCardNo, "OPR");
-                ShowLEDMsg(tMsg.MsgEntry_CardReadingError[0], tMsg.MsgEntry_CardReadingError[1]);
+                ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
                 SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
                 return;
             }
             else{
-                VehicleCome(sCardNo);
+                if (tEntry.sIUTKNo == "")  VehicleCome(sCardNo);
             }
             break;
          case LCSCReader::mCSCEvents::iFailWriteSettle:
@@ -1436,12 +1445,14 @@ void operation:: KSM_CardIn()
 {
     int iRet;
     //--------
+    ShowLEDMsg ("Please Wait...", "Please Wait...");
+    //--------
     if (tPBSError[iReader].ErrNo != 0) {HandlePBSError(ReaderNoError);}
     //---------
     tProcess.giCardIsIn = 1;
     iRet =  KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
     if (iRet != 1) {
-        ShowLEDMsg (tMsg.MsgEntry_CardReadingError[0], tMsg.MsgEntry_CardReadingError[1]);
+        ShowLEDMsg (tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
         SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
         KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
     }
@@ -1454,13 +1465,14 @@ void operation:: KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCard
     //------
     tPBSError[iReader].ErrNo = 0;
     if (sKSMCardNo == "" || sKSMCardNo.length()!= 16 || sKSMCardNo.substr(5,4) == "0005") {
-        ShowLEDMsg (tMsg.MsgEntry_CardReadingError[0], tMsg.MsgEntry_CardReadingError[1]);
+        ShowLEDMsg (tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
         SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
         KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
         return;
     }
     else { 
-        VehicleCome(sKSMCardNo);
+        if (tEntry.sIUTKNo == "") VehicleCome(sKSMCardNo);
+        else  KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
     }
  }
 
@@ -1475,6 +1487,28 @@ void operation:: KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCard
         if (tEntry.gbEntryOK == 1){
             EnableCashcard(false);
             Openbarrier();
+            ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
+        }
+    }
+}
+
+bool operation::AntennaOK() {
+    
+    if (tParas.giEPS == 0) {
+        writelog ("Antenna: Non-EPS", "OPR");
+        return false;
+    } else {
+        if (tParas.giCommPortAntenna == 0) {
+            writelog("Antenna: Commport Not Set", "OPR");
+            return false;
+        } else {
+            if (tPBSError[iAntenna].ErrNo == 0) {
+                writelog("Antenna: OK", "OPR");
+                return true;
+            } else {
+                writelog("Antenna: Error=" + tPBSError[iAntenna].ErrMsg, "OPR");
+                return true;
+            }
         }
     }
 }

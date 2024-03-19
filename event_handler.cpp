@@ -582,6 +582,7 @@ bool EventHandler::handleKSMReaderCardOut(const BaseEvent* event)
         ss << __func__ << " Successfully, Data : " << value;
         Logger::getInstance()->FnLog(ss.str());
         operation::getInstance()->writelog("card out", "OPR");
+        KSM_Reader::getInstance()->FnKSMReaderStartGetStatus();
     }
     else
     {

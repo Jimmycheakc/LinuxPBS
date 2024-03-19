@@ -83,6 +83,7 @@ void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigne
     {
         initSS << "Failed to initialize the KSM Reader.";
     }
+    Logger::getInstance()->FnLog(initSS.str());
     Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
 }
 
@@ -266,7 +267,7 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
         result.success = false;
         
         readerCmdSend(dataBuffer);
-        result = ksmReaderReadWithTimeout(2000);
+        result = ksmReaderReadWithTimeout(3000);
 
         resetRxBuffer();
 
@@ -590,6 +591,26 @@ KSM_Reader::ReadResult KSM_Reader::ksmReaderReadWithTimeout(int milliseconds)
             pSerialPort_->cancel();
             resetRxBuffer();
             success = false;
+        }
+        else
+        {
+            if (responseIsComplete(buffer, total_bytes_transferred))
+            {
+                std::stringstream ss;
+                ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
+                pSerialPort_->cancel();
+                success = true;
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << __func__ << "Async Read Timeout Occurred - Rx Not Completed.";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
+                pSerialPort_->cancel();
+                resetRxBuffer();
+                success = false;
+            }
         }
 
         io_serial_context.post([this]() {
@@ -922,7 +943,7 @@ void KSM_Reader::handleReadCardStatusTimerExpiration()
     {
         int iRet = FnKSMReaderSendGetStatus();
 
-        startReadCardStatusTimer(1000);
+        startReadCardStatusTimer(3000);
     }
 }
 
@@ -1007,8 +1028,6 @@ int KSM_Reader::FnKSMReaderReadCardInfo()
     }
 
 cleanup:
-    startReadCardStatusTimer(1000);
-    continueReadFlag_.store(true);
     return retCode;
 }
 
@@ -1055,4 +1074,10 @@ long KSM_Reader::FnKSMReaderGetCardBalance()
 bool KSM_Reader::FnKSMReaderGetCardExpired()
 {
     return cardExpired_;
+}
+
+void KSM_Reader::FnKSMReaderStartGetStatus()
+{
+    continueReadFlag_.store(true);
+    startReadCardStatusTimer(100);
 }

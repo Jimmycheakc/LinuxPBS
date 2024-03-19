@@ -116,6 +116,7 @@ void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsign
     {
         ss << "Failed to open serial port for LCSC Reader Communication: " << comPortName;
     }
+    Logger::getInstance()->FnLog(ss.str());
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 }
 

@@ -20,7 +20,8 @@ Antenna::Antenna()
     successRecvIUCount_(0),
     successRecvIUFlag_(false),
     continueReadFlag_(false),
-    isCmdExecuting_(false)
+    isCmdExecuting_(false),
+    antIUCmdSendCount_(0)
 {
     memset(txBuff, 0 , sizeof(txBuff));
     memset(rxBuff, 0, sizeof(rxBuff));
@@ -170,7 +171,6 @@ int Antenna::antennaCmd(AntCmdID cmdID)
     {
         std::stringstream ss;
         ss << __func__ << " Command ID : " << antennaCmdIDToString(cmdID);
-        Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
 
         if (!pSerialPort_->is_open())
@@ -336,7 +336,7 @@ Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
                 {
                     std::stringstream ss;
                     ss << __func__ << "Async Read error : " << error.message();
-                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "Ant");
+                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
                     success = false;
                     timer.cancel();
                 }
@@ -349,7 +349,7 @@ Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
         {
             std::stringstream ss;
             ss << __func__ << "Async Read Timeout Occurred.";
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "Ant");
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
             pSerialPort_->cancel();
             resetRxBuffer();
             success = false;
@@ -496,7 +496,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
                 }
             }
 
-            Logger::getInstance()->FnLog(logMsg.str());
             Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "ANT");
             retCode = AntCmdRetCode::AntRecv_ACK;
         }
@@ -504,7 +503,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
         {
             if (cmd == AntCmdID::GET_ANTENNA_DATA_CMD)
             {
-            Logger::getInstance()->FnLog("GET_ANTENNA_DATA_CMD response : OK !");
             Logger::getInstance()->FnLog("GET_ANTENNA_DATA_CMD response : OK !", logFileName_, "ANT");
             }
             retCode = AntCmdRetCode::AntRecv_ACK;
@@ -535,7 +533,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
                     break;
                 }
             }
-            Logger::getInstance()->FnLog(logMsg.str());
             Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "ANT");
             retCode = AntCmdRetCode::AntRecv_NAK;
         }
@@ -543,7 +540,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
         {
             if (cmd == AntCmdID::SET_ANTENNA_DATA_CMD)
             {
-            Logger::getInstance()->FnLog("SET_ANTENNA_DATA_CMD response : BUSY response");
             Logger::getInstance()->FnLog("SET_ANTENNA_DATA_CMD response : BUSY response", logFileName_, "ANT");
             }
             retCode = AntCmdRetCode::AntRecv_NAK;
@@ -576,7 +572,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
 
                         std::stringstream ss;
                         ss << "IU No : " << IUNumber_;
-                        Logger::getInstance()->FnLog(ss.str());
                         Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
                     }
                 }
@@ -586,7 +581,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
             {
                 std::stringstream ss;
                 ss << "Unknow IU, IU No : " << IUNumberStr << " IU No. is not numeric)";
-                Logger::getInstance()->FnLog(ss.str());
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
 
                 retCode = AntCmdRetCode::AntRecv_NAK;
@@ -596,7 +590,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
         {
             if (cmd == AntCmdID::FORCE_GET_IU_NO_CMD)
             {
-                Logger::getInstance()->FnLog("FORCE_GET_IU_NO_CMD response : NACK response");
                 Logger::getInstance()->FnLog("FORCE_GET_IU_NO_CMD response : NACK response", logFileName_, "ANT");
             }
             retCode = AntCmdRetCode::AntRecv_NAK;
@@ -605,7 +598,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
         {
             if (cmd == AntCmdID::MACHINE_CHECK_CMD)
             {
-                Logger::getInstance()->FnLog("MACHINE_CHECK_CMD response : OK !");
                 Logger::getInstance()->FnLog("MACHINE_CHECK_CMD response : OK !", logFileName_, "ANT");
             }
             retCode = AntCmdRetCode::AntRecv_ACK;
@@ -614,7 +606,6 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
         {
             if (cmd == AntCmdID::REQ_IO_STATUS_CMD)
             {
-                Logger::getInstance()->FnLog("REQ_IO_STATUS_CMD response : OK !");
                 Logger::getInstance()->FnLog("REQ_IO_STATUS_CMD response : OK !", logFileName_, "ANT");
             }
             retCode = AntCmdRetCode::AntRecv_ACK;
@@ -1016,6 +1007,7 @@ void Antenna::handleReadIUTimerExpiration()
 {
     int ret = 0;
     ret = antennaCmd(AntCmdID::FORCE_GET_IU_NO_CMD);
+    antIUCmdSendCount_++;
 
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
@@ -1059,6 +1051,7 @@ void Antenna::startSendReadIUCmdTimer(int milliseconds)
 
 void Antenna::FnAntennaSendReadIUCmd()
 {
+    antIUCmdSendCount_ = 0;
     continueReadFlag_.store(true);
     startSendReadIUCmdTimer(100);
 }
@@ -1066,4 +1059,9 @@ void Antenna::FnAntennaSendReadIUCmd()
 void Antenna::FnAntennaStopRead()
 {
     continueReadFlag_.store(false);
+}
+
+int Antenna::FnAntennaGetIUCmdSendCount()
+{
+    return antIUCmdSendCount_;
 }

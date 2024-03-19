@@ -56,7 +56,8 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
             }
         }
         // Send DateTime to Monitor
-        operation::getInstance()->FnSendDateTimeToMonitor();
+        // Temp : disable
+        //operation::getInstance()->FnSendDateTimeToMonitor();
     } else {
         if (operation::getInstance()->tProcess.gbInitParamFail==1) {
             if (operation::getInstance()->LoadedparameterOK())
@@ -64,7 +65,7 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 operation::getInstance()->tProcess.gbInitParamFail = 0;
                 operation::getInstance()->Initdevice(*(operation::getInstance()->iCurrentContext));
                 operation::getInstance()->isOperationInitialized_.store(true);
-                operation::getInstance()->ShowLEDMsg(operation::getInstance()->tMsg.MsgEntry_DefaultLED[0], operation::getInstance()->tMsg.MsgEntry_DefaultLED[1]);
+                operation::getInstance()->ShowLEDMsg(operation::getInstance()->tMsg.Msg_DefaultLED[0], operation::getInstance()->tMsg.Msg_DefaultLED[1]);
                 operation::getInstance()->writelog("EPS in operation","OPR");
             }
         }

@@ -102,6 +102,7 @@ public:
     void FnAntennaSendReadIUCmd();
     void FnAntennaStopRead();
     bool FnGetIsCmdExecuting() const;
+    int FnAntennaGetIUCmdSendCount();
 
     /**
      * Singleton Antenna should not be cloneable.
@@ -124,6 +125,7 @@ private:
     std::string logFileName_;
     std::atomic<bool> continueReadFlag_;
     std::atomic<bool> isCmdExecuting_;
+    std::atomic<int> antIUCmdSendCount_;
     int antennaCmdTimeoutInMillisec_;
     int antennaCmdMaxRetry_;
     int antennaIUCmdMinOKtimes_;
