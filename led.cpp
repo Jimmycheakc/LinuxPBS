@@ -10,7 +10,8 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
     : serialPort_(io_context, comPortName),
     baudRate_(baudRate),
     comPortName_(comPortName),
-    maxCharPerRow_(maxCharacterPerRow)
+    maxCharPerRow_(maxCharacterPerRow),
+    logFileName_("led")
 {
     try
     {
@@ -23,16 +24,33 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
         if (serialPort_.is_open())
         {
             std::stringstream ss;
-            ss << "Successfully open serial port: " << comPortName << std::endl;
-            Logger::getInstance()->FnLog(ss.str());
+            ss << "Successfully open serial port: " << comPortName;
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LED");
 
             FnLEDSendLEDMsg("***", "", LED::Alignment::LEFT);
+
+            std::string ledType = "";
+            if (maxCharacterPerRow == LED614_MAX_CHAR_PER_ROW)
+            {
+                ledType = "LED 614";
+            }
+            else if (maxCharacterPerRow == LED216_MAX_CHAR_PER_ROW)
+            {
+                ledType = "LED 216";
+            }
+            else if (maxCharacterPerRow == LED226_MAX_CHAR_PER_ROW)
+            {
+                ledType = "LED 226";
+            }
+            Logger::getInstance()->FnLog(ledType + " initialization completed.");
+            Logger::getInstance()->FnLog(ledType + " initialization completed.", logFileName_, "LED");
         }
         else
         {
             std::stringstream ss;
-            ss << "Failed to open serial port: " << comPortName << std::endl;
+            ss << "Failed to open serial port: " << comPortName;
             Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LED");
         }
     }
     catch(const std::exception& e)
@@ -40,6 +58,7 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
         std::stringstream ss;
         ss << "Exception during LED Initialization: " << e.what() << std::endl;
         Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
     }
 }
 
@@ -122,6 +141,7 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
         std::stringstream ss;
         ss << "Exception during LED write : " << e.what() << std::endl;
         Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LED");
     }
 }
 

@@ -4,10 +4,13 @@
 #include "log.h"
 
 EventManager* EventManager::eventManager_ = nullptr;
+const std::string eventLogFileName = "event";
 
 EventManager::EventManager()
     : isEventThreadRunning_(false)
 {
+    logFileName_ = eventLogFileName;
+    Logger::getInstance()->FnCreateLogFile(logFileName_);
 }
 
 EventManager* EventManager::getInstance()
@@ -21,7 +24,7 @@ EventManager* EventManager::getInstance()
 
 void EventManager::FnStartEventThread()
 {
-    Logger::getInstance()->FnLog(__func__);
+    Logger::getInstance()->FnLog(__func__, logFileName_, "EVT");
 
     if (!isEventThreadRunning_)
     {
@@ -32,7 +35,7 @@ void EventManager::FnStartEventThread()
 
 void EventManager::FnStopEventThread()
 {
-    Logger::getInstance()->FnLog(__func__);
+    Logger::getInstance()->FnLog(__func__, logFileName_, "EVT");
 
     if (isEventThreadRunning_)
     {
@@ -44,7 +47,7 @@ void EventManager::FnStopEventThread()
 
 void EventManager::FnRegisterEvent(const EventSignal::slot_type& subscriber)
 {
-    Logger::getInstance()->FnLog(__func__);
+    Logger::getInstance()->FnLog(__func__, logFileName_, "EVT");
 
     eventSignal_.connect(subscriber);
 }
@@ -54,7 +57,7 @@ void EventManager::FnEnqueueEvent(const std::string& eventName, EventType eventD
 {
     std::stringstream ss;
     ss << __func__ << " Event Name : " << eventName;
-    Logger::getInstance()->FnLog(ss.str());
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "EVT");
 
     auto event = std::make_unique<Event<EventType>>(std::move(eventData));
 

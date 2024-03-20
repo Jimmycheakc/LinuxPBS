@@ -56,8 +56,7 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
             }
         }
         // Send DateTime to Monitor
-        // Temp : disable
-        //operation::getInstance()->FnSendDateTimeToMonitor();
+        operation::getInstance()->FnSendDateTimeToMonitor();
     } else {
         if (operation::getInstance()->tProcess.gbInitParamFail==1) {
             if (operation::getInstance()->LoadedparameterOK())

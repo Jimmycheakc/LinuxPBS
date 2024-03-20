@@ -30,6 +30,8 @@ void LCD::FnLCDInit()
     FnLCDCursorOff();
     FnLCDHome();
     usleep(250000); // Sleep for 0.25 seconds
+
+    Logger::getInstance()->FnLog("LCD initialization completed.");
 }
 
 void LCD::FnLCDInitDriver()
@@ -40,7 +42,7 @@ void LCD::FnLCDInitDriver()
         if (lcdFd_ < 0)
         {
             std::stringstream ss;
-            ss << "Faile to open CH34x LCD driver, fd = " << std::to_string(lcdFd_) << std::endl;
+            ss << "Failed to open CH34x LCD driver, fd = " << std::to_string(lcdFd_) << std::endl;
             Logger::getInstance()->FnLog(ss.str());
         }
         else

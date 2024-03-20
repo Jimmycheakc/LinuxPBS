@@ -10,6 +10,8 @@
 #include <typeinfo>
 #include "boost/signals2.hpp"
 
+extern const std::string eventLogFileName;
+
 class BaseEvent
 {
 
@@ -60,6 +62,7 @@ private:
     std::condition_variable condition_;
     bool isEventThreadRunning_;
     std::thread eventThread_;
+    std::string logFileName_;
     EventManager();
     void processEventsFromQueue();
     void processEvent(const std::string& eventName, BaseEvent* event);

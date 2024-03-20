@@ -70,6 +70,7 @@ void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigne
     else
     {
         ss << "Failed to open serial port for KSM Reader Communication: " << comPortName;
+        Logger::getInstance()->FnLog(ss.str());
     }
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
 
@@ -77,11 +78,11 @@ void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigne
     int ret = ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
     if (ret == 1)
     {
-        initSS << "Successfully initialized the KSM Reader.";
+        initSS << "KSM Reader initialization completed.";
     }
     else
     {
-        initSS << "Failed to initialize the KSM Reader.";
+        initSS << "KSM Reader initialization failed.";
     }
     Logger::getInstance()->FnLog(initSS.str());
     Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
@@ -171,7 +172,6 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
     {
         std::stringstream ss;
         ss << __func__ << " Command ID : " << KSMReaderCmdIDToString(cmdID);
-        Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
 
         if (!pSerialPort_->is_open())
@@ -252,6 +252,7 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
             {
                 std::stringstream ss;
                 ss << __func__ << " : Command not found.";
+                Logger::getInstance()->FnLog(ss.str());
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
 
                 return static_cast<int>(KSMReaderCmdRetCode::KSMReaderRecv_CmdNotFound);
@@ -437,7 +438,7 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
                 char status = recvCmd[4];
                 if (status == 0x4E)
                 {
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_NoResp;
                     logMsg << "Rx Response : Card Read Error.";
                 }
                 else if (cmd == KSMReaderCmdID::SELECT_FILE1_CMD)

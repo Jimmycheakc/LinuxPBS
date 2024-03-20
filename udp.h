@@ -38,7 +38,8 @@ typedef enum : unsigned int{
 	CmdMonitorOutput = 303,
 	CmdDownloadIni = 309,
 	CmdDownloadParam = 310,
-    CmdMonitorSyncTime = 311
+    CmdMonitorSyncTime = 311,
+    CmdMonitorStatus = 312
 } monitorudp_rx_command;
 
 class udpclient {
@@ -51,10 +52,12 @@ public:
     void processdata(const char*data, std::size_t length);
     void processmonitordata(const char*data, std::size_t length);
     void udpinit(const std::string ServerIP, unsigned short RemotePort, unsigned short LocalPort);
+    bool FnGetMonitorStatus();
 
 public:
     udpclient(io_context& ioContext, const std::string& serverAddress, unsigned short serverPort,unsigned short LocalPort)
-        : socket_(ioContext, udp::endpoint(udp::v4(), LocalPort)), serverEndpoint_(ip::address::from_string(serverAddress), serverPort) {
+        : monitorStatus_(false),
+        socket_(ioContext, udp::endpoint(udp::v4(), LocalPort)), serverEndpoint_(ip::address::from_string(serverAddress), serverPort) {
         startreceive();
     }
     void startsend(const std::string& message) {
@@ -69,6 +72,7 @@ public:
         });
     }
  private:
+    bool monitorStatus_;
     void startreceive() {
         socket_.async_receive_from(buffer(data_, max_length), senderEndpoint_, [this](const boost::system::error_code& error, std::size_t bytes_received) {
             if (!error) {

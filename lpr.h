@@ -31,12 +31,17 @@ public:
 private:
     static Lpr* lpr_;
     int cameraNo_;
+    std::string lprIp4Front_;
+    std::string lprIp4Rear_;
     int reconnTime_;
     int reconnTime2_;
     std::string stdID_;
     std::string logFileName_;
+    int commErrorTimeCriteria_;
+    int transErrorCountCriteria_;
+    std::unique_ptr<TcpClient> pFrontCamera_;
     Lpr();
-    void iniFrontCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);
-    void iniRearCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);
+    void initFrontCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);
+    void initRearCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);
     void sendTransIDToLPR(const std::string& transID);
 };

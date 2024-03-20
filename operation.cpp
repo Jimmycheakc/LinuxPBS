@@ -304,8 +304,6 @@ std::string operation::getSerialPort(const std::string& key)
 
 void operation::Initdevice(io_context& ioContext)
 {
-    LCD::getInstance()->FnLCDInit();
-
     if (tParas.giCommPortAntenna > 0)
     {
         Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
@@ -738,11 +736,14 @@ bool operation::CopyIniFile(const std::string& serverIpAddress, const std::strin
 
 void operation::SendMsg2Monitor(string cmdcode,string dstr)
 {
-	string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
-	str+=dstr+"|]";
-	m_Monitorudp->startsend(str);
-    //----
-    writelog ("Message to Monitor: " + str,"OPR");
+    if (m_Monitorudp->FnGetMonitorStatus())
+    {
+        string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
+        str+=dstr+"|]";
+        m_Monitorudp->startsend(str);
+        //----
+        writelog ("Message to Monitor: " + str,"OPR");
+    }
 }
 
 void operation::SendMsg2Server(string cmdcode,string dstr)

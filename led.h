@@ -49,6 +49,7 @@ private:
     unsigned int baudRate_;
     std::string comPortName_;
     int maxCharPerRow_;
+    std::string logFileName_;
 
     void FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string text, LED::Alignment align, std::vector<char>& result);
 };

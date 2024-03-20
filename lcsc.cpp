@@ -25,7 +25,7 @@ LCSCReader* LCSCReader::lcscReader_ = nullptr;
 
 LCSCReader::LCSCReader()
     : io_serial_context(),
-    logFileName_("LCSC"),
+    logFileName_("lcsc"),
     TxNum_(0),
     RxNum_(0),
     lcscCmdTimeoutInMillisec_(2000),
@@ -111,13 +111,15 @@ void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsign
     if (pSerialPort_->is_open())
     {
         ss << "Successfully open serial port for LCSC Reader Communication: " << comPortName;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC Reader initialization completed.");
     }
     else
     {
         ss << "Failed to open serial port for LCSC Reader Communication: " << comPortName;
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
     }
-    Logger::getInstance()->FnLog(ss.str());
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 }
 
 void LCSCReader::FnSendGetStatusCmd()
@@ -983,7 +985,6 @@ std::vector<unsigned char> LCSCReader::loadSetTime()
     dataBuf[3] = 0x0A;
 
     std::time_t epochSeconds = Common::getInstance()->FnGetEpochSeconds();
-    std::cout << "set time : " << epochSeconds << std::endl;
     dataBuf[4] = (epochSeconds >> 24) & 0xFF;
     dataBuf[5] = (epochSeconds >> 16) & 0xFF;
     dataBuf[6] = (epochSeconds >> 8) & 0xFF;

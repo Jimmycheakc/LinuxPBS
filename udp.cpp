@@ -31,6 +31,20 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
     rxcmd = std::stoi(pField.Field(2));
     switch(rxcmd)
     {
+		case CmdMonitorStatus:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			int status = std::stoi(pField.Field(3));
+			if (status == 1)
+			{
+				monitorStatus_ = true;
+			}
+			else
+			{
+				monitorStatus_ = false;
+			}
+			break;
+		}
 		case CmdMonitorEnquiry:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -264,3 +278,8 @@ void udpclient::processdata (const char* data, std::size_t length)
 	}
 }
 
+
+bool udpclient::FnGetMonitorStatus()
+{
+	return monitorStatus_;
+}

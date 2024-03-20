@@ -51,7 +51,6 @@ void Logger::FnCreateLogFile(std::string filename)
 
     // Temp: need to get the station_ID from file
     std::string sStationID = IniParser::getInstance()->FnGetStationID();
-    std::cout << sStationID << std::endl;
 
     time_t timer = time(0);
     struct tm timeinfo = {};

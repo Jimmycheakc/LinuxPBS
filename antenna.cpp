@@ -65,6 +65,7 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
     else
     {
         ss << "Failed to open serial port for Antenna Communication: " << comPortName;
+        Logger::getInstance()->FnLog(ss.str());
     }
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
     
