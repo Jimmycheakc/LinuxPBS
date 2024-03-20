@@ -268,7 +268,7 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
         result.success = false;
         
         readerCmdSend(dataBuffer);
-        result = ksmReaderReadWithTimeout(3000);
+        result = ksmReaderReadWithTimeout(2000);
 
         resetRxBuffer();
 
@@ -944,7 +944,7 @@ void KSM_Reader::handleReadCardStatusTimerExpiration()
     {
         int iRet = FnKSMReaderSendGetStatus();
 
-        startReadCardStatusTimer(3000);
+        startReadCardStatusTimer(2000);
     }
 }
 

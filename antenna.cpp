@@ -292,6 +292,11 @@ int Antenna::antennaCmd(AntCmdID cmdID)
             }
         } while(retry <= antennaCmdMaxRetry_);
 
+        if (retry >= antennaCmdMaxRetry_)
+        {
+            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 1);
+        }
+
         isCmdExecuting_.store(false);
     }
     else
@@ -1013,6 +1018,10 @@ void Antenna::handleReadIUTimerExpiration()
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
         startSendReadIUCmdTimer(200);
+        if (antIUCmdSendCount_ > 10) {
+            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 2);
+            antIUCmdSendCount_ = 0;
+        }
     }
     else
     {
@@ -1026,7 +1035,7 @@ void Antenna::handleReadIUTimerExpiration()
         else
         {
             // raise antenna fail
-            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 0);
+            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 3);
         }
     }
 }

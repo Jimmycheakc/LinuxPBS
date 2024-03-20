@@ -84,7 +84,22 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        operation:: getInstance()->HandlePBSError(AntennaError,value);
+        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent == true) 
+        { 
+            operation :: getInstance()->writelog("No IU detected!", "OPR");
+            if (operation::getInstance()->tEntry.sEnableReader == false && operation::getInstance()->tEntry.gbEntryOK != 1) 
+            {
+                operation::getInstance()->EnableCashcard(true);
+                operation::getInstance()->ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
+            }
+        }
+        else  
+        {
+            if (value < 2)
+            {
+                operation:: getInstance()->HandlePBSError(AntennaError,value);
+            }
+        }
     }
     else
     {
@@ -141,8 +156,10 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->VehicleCome(value);
-
-        if (operation::getInstance()->tPBSError[iAntenna].ErrNo != 0) operation:: getInstance()->HandlePBSError(AntennaNoError);
+        if (operation::getInstance()->tPBSError[iAntenna].ErrNo != 0)
+        {
+            operation:: getInstance()->HandlePBSError(AntennaNoError);
+        }
     }
     else
     {

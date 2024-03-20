@@ -228,6 +228,15 @@ void udpclient::processdata (const char* data, std::size_t length)
 					if (operation::getInstance()->tProcess.gbLoopApresent == true and sIUNo != "" ){
 						operation::getInstance()->PBSEntry(sIUNo);
 					}
+					operation::getInstance()->tProcess.IdleMsg[0] = operation::getInstance()->tMsg.Msg_DefaultLED[0];
+					operation::getInstance()->tProcess.IdleMsg[1] = operation::getInstance()->tMsg.Msg_DefaultLED[1];
+				}
+				else {
+					operation::getInstance()->tProcess.IdleMsg[0] = operation::getInstance()->tMsg.Msg_CarParkFull2LED[0];
+					operation::getInstance()->tProcess.IdleMsg[1] = operation::getInstance()->tMsg.Msg_CarParkFull2LED[1];
+				}
+				if (operation::getInstance()->tProcess.gbLoopApresent == false) {
+					operation::getInstance()->ShowLEDMsg(operation::getInstance()->tProcess.IdleMsg[0],operation::getInstance()->tProcess.IdleMsg[1]);
 				}
 			}
 			break;
