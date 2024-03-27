@@ -74,6 +74,7 @@ public:
     void KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired);
     void KSM_CardTakeAway();
     bool AntennaOK();
+    void CheckReader();
 
 
     void Openbarrier();

@@ -104,6 +104,19 @@ std::string Common::FnConvertDateTime(uint32_t seconds)
     return oss.str();
 }
 
+std::string Common::FeGetDateTimeFormat_VehicleTrans() 
+ {
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
 std::time_t Common::FnGetEpochSeconds()
 {
     auto currentTime = std::chrono::system_clock::now();

@@ -125,6 +125,14 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			operation::getInstance()->FnSyncCentralDBTime();
 			break;
 		}
+		case CmdStopStationSoftware:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->SendMsg2Monitor("11", "99");
+
+			std::exit(0);
+			break;
+		}
 		default:
 			break;
 	}
@@ -157,6 +165,8 @@ void udpclient::processdata (const char* data, std::size_t length)
 		case CmdStopStationSoftware:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->SendMsg2Server("09","11Stopping...");
+
 			std::exit(0);
 			break;
 		}
@@ -208,7 +218,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("open barrier from PMS","UDP");
-			operation::getInstance()->Openbarrier();
+			operation::getInstance()->ManualOpenBarrier();
 			break;
 		}
 		case CmdSetTime:

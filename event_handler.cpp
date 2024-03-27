@@ -87,9 +87,8 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent == true) 
         { 
             operation :: getInstance()->writelog("No IU detected!", "OPR");
-            if (operation::getInstance()->tEntry.sEnableReader == false && operation::getInstance()->tEntry.gbEntryOK != 1) 
+            if (operation::getInstance()->tEntry.gbEntryOK == false and operation::getInstance()->tEntry.sIUTKNo == "" and operation::getInstance()->tProcess.giCardIsIn == 0) 
             {
-                operation::getInstance()->EnableCashcard(true);
                 operation::getInstance()->ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
             }
         }
@@ -449,14 +448,14 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
         {
             case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
+              //  Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
                 operation::getInstance()->tProcess.gbLoopApresent = true;
                 operation::getInstance()->LoopACome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
+             //   Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
                 operation::getInstance()->tProcess.gbLoopApresent = false;
                 operation::getInstance()->LoopAGone();
                 break;
@@ -473,13 +472,13 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             }
             case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_ON_EVENT");
+           //     Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_ON_EVENT");
                 operation::getInstance()->LoopCCome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
             {
-                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_OFF_EVENT");
+            //    Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_C_OFF_EVENT");
                 operation::getInstance()->LoopCGone();
                 break;
             }

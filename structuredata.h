@@ -216,7 +216,9 @@ struct  tEntryTrans_Struct
 //	string sRPLPN;
 //	string sPaidtime;
 	bool gbEntryOK;
-
+	int giShowType;
+	string gsTransID;
+	
 };
 
 
@@ -275,8 +277,6 @@ struct  tExitTrans_Struct
 	string video_location;
 	string video1_location;
 	string sRPLPN;
-
-
 };
 
 
@@ -311,6 +311,7 @@ struct  tProcess_Struct
 	int giLastHousekeepingDate;
 //	bool gbwaitLoopA;
 	std::string IdleMsg[2];
+	
 };
 
 
@@ -339,6 +340,7 @@ struct  tParas_Struct
 	string gsCSCRcdackFolder;
 	string gsCPOID;
 	string gsCPID;
+	string gscarparkcode;
 	int giUploadBLTO;	//not in current central DB
 	int giCommPortLED;
 	int giHasMCycle;

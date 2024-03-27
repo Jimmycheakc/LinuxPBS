@@ -1103,6 +1103,26 @@ LCSCReader::ReadResult LCSCReader::lcscReadWithTimeout(int milliseconds)
             resetRxBuffer();
             success = false;
         }
+        else
+        {
+            if (responseIsComplete(buffer, total_bytes_transferred))
+            {
+                std::stringstream ss;
+                ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+                pSerialPort_->cancel();
+                success = true;
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << __func__ << "Async Read Timeout Occurred - Rx Not Completed.";
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+                pSerialPort_->cancel();
+                resetRxBuffer();
+                success = false;
+            }
+        }
 
         
         io_serial_context.post([this]() {

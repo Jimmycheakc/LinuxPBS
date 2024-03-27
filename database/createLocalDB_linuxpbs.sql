@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
     Card_Type INT DEFAULT 0,
     Owe_Amt DECIMAL(10,2) DEFAULT 0,
     lpr VARCHAR(20),
+    entry_lpn_SID VARCHAR(32),
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -18,6 +18,7 @@ public:
     std::string FnGetDateTimeFormat_yyyymmddhhmmss();
     std::string FnGetDateTimeFormat_yyyymmdd_hhmmss();
     std::string FnGetDateTimeFormat_yyyymmddhhmm();
+    std::string FeGetDateTimeFormat_VehicleTrans();
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::time_t FnGetEpochSeconds();
     std::string FnGetDateTimeSpace();

@@ -32,6 +32,7 @@ public:
 
     enum class KSMReaderCmdRetCode
     {
+        KSMReaderComm_Error       = -4,
         KSMReaderSend_Failed      = -3,
         KSMReaderRecv_CmdNotFound = -2,
         KSMReaderRecv_NoResp      = -1,
@@ -52,11 +53,12 @@ public:
     static const int RX_BUF_SIZE = 128;
 
     static KSM_Reader* getInstance();
-    void FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
+    int FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
     bool FnGetIsCmdExecuting() const;
     int FnKSMReaderEnable(bool enable);
     int FnKSMReaderReadCardInfo();
 
+    int FnKSMReaderSendInit();
     int FnKSMReaderSendGetStatus();
     void FnKSMReaderStartGetStatus();
     int FnKSMReaderSendEjectToFront();

@@ -339,7 +339,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 	sqlStmt= "Insert into Entry_Trans_tmp (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
 
 	sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee";
-	sqlStmt = sqlStmt + ",gst_amt";
+	sqlStmt = sqlStmt + ",gst_amt,entry_lpn_SID";
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpr";
 
 	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid + "',convert(datetime,'" + tEntry.sEntryTime+ "',120),'" + tEntry.sIUTKNo;
@@ -347,8 +347,8 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType)+"'";
 	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt)+"'";
-
+	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
+	sqlStmt = sqlStmt + "','" + tEntry.gsTransID +"'";
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
 
 	sqlStmt = sqlStmt +  ")";
@@ -394,7 +394,7 @@ processLocal:
 
 	sqlStmt=sqlStmt + ",Card_Type";
 	sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
-	sqlStmt=sqlStmt +  ",gst_amt";
+	sqlStmt=sqlStmt +  ",gst_amt,entry_lpn_SID";
 	sqlStmt = sqlStmt + ",lpr";
 
 	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid+ "','" + tEntry.sEntryTime+ "','" + tEntry.sIUTKNo;
@@ -402,7 +402,8 @@ processLocal:
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType) + "'";
 	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt)+"'";
+	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
+	sqlStmt = sqlStmt + "','" + tEntry.gsTransID +"'";
 
 	sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
 
@@ -1586,6 +1587,11 @@ DBError db::loadParam()
 				if (readerItem.GetDataItem(0) == "EPS")
 				{
 					operation::getInstance()->tParas.giEPS = std::stoi(readerItem.GetDataItem(1));
+				}
+
+				if (readerItem.GetDataItem(0) == "carparkcode")
+				{
+					operation::getInstance()->tParas.gscarparkcode = readerItem.GetDataItem(1);
 				}
 
 				if (readerItem.GetDataItem(0) == "locallcsc")
@@ -3024,7 +3030,7 @@ int db::AddRemoteControl(string sTID,string sAction, string sRemarks)
 	
 	r = centraldb->SQLExecutNoneQuery(sqstr);
 
-	//operation::getInstance()->writelog(sqstr,"DB");
+//	operation::getInstance()->writelog(sqstr,"DB");
 	
 	if (r==0) {
 		operation::getInstance()->writelog("Success insert: " + sAction,"DB");

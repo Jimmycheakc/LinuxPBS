@@ -41,7 +41,7 @@ KSM_Reader* KSM_Reader::getInstance()
     return ksm_reader_;
 }
 
-void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
+int KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
     pMainIOContext_ = &mainIOContext;
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
@@ -62,10 +62,12 @@ void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigne
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
 
+    int ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
     std::stringstream ss;
     if (pSerialPort_->is_open())
     {
         ss << "Successfully open serial port for KSM Reader Communication: " << comPortName;
+        ret = 1;
     }
     else
     {
@@ -74,18 +76,24 @@ void KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigne
     }
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
 
-    std::stringstream initSS;
-    int ret = ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
-    if (ret == 1)
+    if (pSerialPort_->is_open())
     {
-        initSS << "KSM Reader initialization completed.";
+        std::stringstream initSS;
+        int cmdRet = ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
+        if (cmdRet == 1)
+        {
+            initSS << "KSM Reader initialization completed.";
+            ret = cmdRet;
+        }
+        else
+        {
+            initSS << "KSM Reader initialization failed.";
+            ret = cmdRet;
+        }
+        Logger::getInstance()->FnLog(initSS.str());
+        Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
     }
-    else
-    {
-        initSS << "KSM Reader initialization failed.";
-    }
-    Logger::getInstance()->FnLog(initSS.str());
-    Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
+    return ret;
 }
 
 bool KSM_Reader::FnGetIsCmdExecuting() const
@@ -100,6 +108,13 @@ void KSM_Reader::sendEnq()
 
     unsigned char data[1] = { KSM_Reader::ENQ };
     boost::asio::write(*pSerialPort_, boost::asio::buffer(data, 1));
+}
+
+int KSM_Reader::FnKSMReaderSendInit()
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+
+    return ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
 }
 
 int KSM_Reader::FnKSMReaderSendGetStatus()

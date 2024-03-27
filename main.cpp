@@ -39,9 +39,11 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 db::getInstance()->moveOfflineTransToCentral();
             }
             // Sysnc time from PMS per hour
-            if (operation::getInstance()->tProcess.giSyncTimeCnt > 6 * 60 ) {
+            if (operation::getInstance()->tProcess.giSyncTimeCnt > 6*60 ) {
                 db::getInstance()->synccentraltime();
                 operation::getInstance()->tProcess.giSyncTimeCnt = 0;
+                //-----
+                operation::getInstance()->CheckReader();
             } 
             // check central DB
             if (operation::getInstance()->tProcess.giSystemOnline != 0) {

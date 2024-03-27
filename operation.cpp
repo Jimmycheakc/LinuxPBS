@@ -78,9 +78,10 @@ void operation::OperationInit(io_context& ioContext)
         exit(0); 
     }
     string m_connstring;
-    writelog ("Connect Central DB:"+tParas.gsCentralDBName,"OPR");
+    writelog ("Connect Central (" +tParas.gsCentralDBServer +  ") DB:"+tParas.gsCentralDBName,"OPR");
     for (int i = 0 ; i < 5; ++i ) {
-        m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
+      //  m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
+        m_connstring = "DRIVER=FreeTDS;SERVER=" + tParas.gsCentralDBServer + ";PORT=1433;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
         iRet = m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,2);
         if (iRet == 1) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -105,8 +106,11 @@ void operation::OperationInit(io_context& ioContext)
         tProcess.IdleMsg[1] = tMsg.Msg_DefaultLED[1];
         //-------
         Clearme();
+        CheckReader();
         isOperationInitialized_.store(true);
         DIO::getInstance()->FnStartDIOMonitoring();
+        SendMsg2Server("90",",,,,,Starting OK");
+       
     }else {
         tProcess.gbInitParamFail = 1;
         writelog("Unable to load parameter, Please download or check!", "OPR");
@@ -175,9 +179,14 @@ void operation::LoopACome()
     writelog ("Loop A Come.","OPR");
     ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
     Clearme();
+    //----
+    tEntry.gsTransID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+
+    //----
     if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     ShowLEDMsg("Reading IU...^Please wait", "Reading IU...^Please wait");
+    operation::getInstance()->EnableCashcard(true);
 }
 
 void operation::LoopAGone()
@@ -223,7 +232,7 @@ void operation::VehicleCome(string sNo)
     //----
     if (gtStation.iType == tientry) {
 
-        PBSEntry (sNo);
+        if(tEntry.gbEntryOK == false) PBSEntry (sNo);
     } 
     else{
         PBSExit(sNo);
@@ -274,6 +283,10 @@ void operation::Clearme()
         tEntry.iVehcileType = 0;
         tEntry.gbEntryOK = false;
         tEntry.sEnableReader = false;
+        tEntry.giShowType = 1;
+        tEntry.gsTransID = "";
+        tProcess.giCardIsIn = 0;
+       
     }
     else
     {
@@ -342,7 +355,12 @@ void operation::Initdevice(io_context& ioContext)
     
     if (tParas.giCommPortKDEReader > 0)
     {
-        KSM_Reader::getInstance()->FnKSMReaderInit(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
+        int iRet = KSM_Reader::getInstance()->FnKSMReaderInit(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
+        if (iRet != 1)
+        {  
+            HandlePBSError(ReaderError);
+        }
+        if (iRet == -4) { tPBSError[iReader].ErrNo = -4;}
     }
 
     LCD::getInstance()->FnLCDInit();
@@ -353,6 +371,11 @@ void operation::Initdevice(io_context& ioContext)
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 {
     
+    static string sLastLEDMsg;
+    //------
+    if (sLastLEDMsg == LEDMsg) return;
+    sLastLEDMsg = LEDMsg;
+    //----
     writelog ("LED Message:" + LEDMsg,"OPR");
     if (LEDMsg != LCDMsg)
     {
@@ -372,30 +395,27 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 void operation::PBSEntry(string sIU)
 {
     int iRet;
-    CE_Time dt;
-	string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
 
     tEntry.sIUTKNo = sIU;
-    tEntry.sEntryTime=dtStr;
-    if (sIU != "")
-    {
-        //check blacklist
-        iRet = m_db->IsBlackListIU(sIU);
-        if (iRet >= 0){
-            ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
-            SendMsg2Server("90",sIU+",,,,,Blacklist IU");
-            if(iRet ==0) return;
-        }
-        //check block 
-        string gsBlockIUPrefix = IniParser::getInstance()->FnGetBlockIUPrefix();
-        writelog ("blockIUprfix =" +gsBlockIUPrefix, "OPR");
-        if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos and sIU.length() == 10)
-        {
-            ShowLEDMsg("Lorry No Entry^Pls Reverse","Lorry No Entry^Pls Reverse");
-            SendMsg2Server("90",sIU+",,,,,Block IU");
-            return;
-        }
+    tEntry.sEntryTime= Common::getInstance()->FeGetDateTimeFormat_VehicleTrans();
 
+    if (sIU == "") return;
+    //check blacklist
+    SendMsg2Server("90",sIU+",,,,,PMS_DVR");
+    iRet = m_db->IsBlackListIU(sIU);
+    if (iRet >= 0){
+        ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
+        SendMsg2Server("90",sIU+",,,,,Blacklist IU");
+        if(iRet ==0) return;
+    }
+    //check block 
+    string gsBlockIUPrefix = IniParser::getInstance()->FnGetBlockIUPrefix();
+   // writelog ("blockIUprfix =" +gsBlockIUPrefix, "OPR");
+    if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos and sIU.length() == 10)
+    {
+        ShowLEDMsg("Lorry No Entry^Pls Reverse","Lorry No Entry^Pls Reverse");
+        SendMsg2Server("90",sIU+",,,,,Block IU");
+        return;
     }
 
     if(sIU.length()==10) 
@@ -440,12 +460,14 @@ void operation::PBSEntry(string sIU)
     }
     if (iRet ==1 or iRet == 4 or iRet == 6) {
         tEntry.iTransType = GetSeasonTransType(tEntry.iVehcileType,std::stoi(tSeason.rate_type), tEntry.iTransType);
+        tEntry.giShowType = 0;
     }
 
     if (iRet == 10) {
         ShowLEDMsg(tMsg.Msg_SeasonAsHourly[0],tMsg.Msg_SeasonAsHourly[1]);
+        tEntry.giShowType = 2;
     }
-    if (iRet == 8) {
+    if (iRet != 1) {
         ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
     }
         //---------
@@ -583,8 +605,11 @@ void operation::FnSendDateTimeToMonitor()
 
 void operation::FnSendLogMessageToMonitor(std::string msg)
 {
-    std::string str = "[" + gtStation.sName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
-    m_Monitorudp->startsend(str);
+    if (m_Monitorudp->FnGetMonitorStatus())
+    {
+        std::string str = "[" + gtStation.sPCName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
+        m_Monitorudp->startsend(str);
+    }
 }
 
 void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg)
@@ -747,7 +772,7 @@ void operation::SendMsg2Monitor(string cmdcode,string dstr)
 {
     if (m_Monitorudp->FnGetMonitorStatus())
     {
-        string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
+        string str="["+ gtStation.sPCName +"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
         str+=dstr+"|]";
         m_Monitorudp->startsend(str);
         //----
@@ -1035,6 +1060,7 @@ void operation::SaveEntry()
     int iRet;
     
     if (tEntry.sIUTKNo== "") return;
+    writelog ("Save Entry trans:"+ tEntry.sIUTKNo, "OPR");
 
     iRet = db::getInstance()->insertentrytrans(tEntry);
     //----
@@ -1044,7 +1070,7 @@ void operation::SaveEntry()
 
     std::string sMsg2Send = (iRet == iDBSuccess) ? "Entry OK" : (iRet == iCentralFail) ? "Entry Central Failed" : "Entry Local Failed";
 
-    sMsg2Send = tEntry.sIUTKNo + ",,,,,"+sMsg2Send;
+    sMsg2Send = tEntry.sIUTKNo + ",,,," + std::to_string(tEntry.giShowType) + ","+sMsg2Send;
 
     if (tEntry.iStatus == 0) {
         SendMsg2Server("90", sMsg2Send);
@@ -1159,6 +1185,8 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
         if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
         
         ShowLEDMsg(sMsg,sLCD);
+        
+        if (iReturn != 1) std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
 }
 
@@ -1329,14 +1357,19 @@ void operation:: EnableCashcard(bool bEnable)
 
 }
 
-void operation:: EnableLCSC(bool bEnable)
+void operation:: CheckReader()
 {
-    int iRet;
-    if (tProcess.WaitForLCSCReturn) return;
-    if (bEnable && (LCSCReader::getInstance()->FnGetIsCmdExecuting())) return;
-    if (!bEnable && !LCSCReader::getInstance()->FnGetIsCmdExecuting()) return;
-
-    if (bEnable) {
+    if (tPBSError[iReader].ErrNo == -1) {
+        writelog("Check KDE Status ...", "OPR");
+        if (KSM_Reader::getInstance()->FnKSMReaderSendInit() == 1)
+        {
+            HandlePBSError(ReaderNoError);
+        }else{
+            writelog ("KDE Reader Error","OPR");
+        }
+    }
+    if (tParas.giCommPortLCSC > 0) {
+        writelog("Check LCSC Status...", "OPR");
         LCSCReader::getInstance()->FnSendGetStatusCmd();
         if (LCSCReader::getInstance()->FnGetReaderMode() != 1) {
             LCSCReader::getInstance()->FnSendGetLoginCmd();
@@ -1345,13 +1378,28 @@ void operation:: EnableLCSC(bool bEnable)
                 writelog ("LCSC Reader Error","OPR");
                 HandlePBSError(LCSCError);
                 return;
-            } 
+                } 
         }
+        if (tPBSError[10].ErrNo == -1) tPBSError[10].ErrNo = 0;
+        LCSCReader::getInstance()->FnSendSetTime();
+    }
+}
+
+void operation:: EnableLCSC(bool bEnable)
+{
+    int iRet;
+    if (tPBSError[10].ErrNo == -1) return;
+    //-------
+    if (tProcess.WaitForLCSCReturn) return;
+    if (bEnable && (LCSCReader::getInstance()->FnGetIsCmdExecuting())) return;
+    
+    if (!bEnable && !LCSCReader::getInstance()->FnGetIsCmdExecuting()) {
+        writelog("Stop LCSC to Read...", "OPR");
+        return;
     }
 
     if (bEnable) 
     {
-        LCSCReader::getInstance()->FnSendSetTime();
         if (!LCSCReader::getInstance()->FnGetIsCmdExecuting()) {
             LCSCReader::getInstance()->FnSendGetCardIDCmd();
             writelog("Start LCSC to read...", "OPR");
@@ -1369,6 +1417,8 @@ void operation:: EnableLCSC(bool bEnable)
 
 void operation::EnableKDE(bool bEnable)
 {
+    if (tPBSError[iReader].ErrNo != 0) return;
+    //-----
     if (bEnable == false)
     {
         if (tProcess.giCardIsIn == 1 )
@@ -1434,6 +1484,7 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
                 writelog ("Wrong Card No: "+sCardNo, "OPR");
                 ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
                 SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
+                EnableLCSC(true);
                 return;
             }
             else
@@ -1448,7 +1499,16 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
          case LCSCReader::mCSCEvents::iFailWriteSettle:
             writelog ("Write LCSC settle file failed","OPR");
             break;
+         case LCSCReader::mCSCEvents::sNoCard:
+            if (tEntry.gbEntryOK == false) writelog ("Received No card Event", "OPR");
+            break;
          default:
+            writelog ("Received Error Event" + std::to_string(static_cast<int>(iEvent)), "OPR");
+            if (tProcess.gbLoopApresent == true && tEntry.gbEntryOK == false) {
+                ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
+                SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
+                EnableLCSC(true);
+            }else EnableCashcard(false);
             break;
     
      }
@@ -1459,6 +1519,7 @@ void operation:: KSM_CardIn()
 {
     int iRet;
     //--------
+     ShowLEDMsg ("Card In^Please Wait ...", "Card In^Please Wait ...");
     //--------
     if (tPBSError[iReader].ErrNo != 0) {HandlePBSError(ReaderNoError);}
     //---------
@@ -1494,18 +1555,19 @@ void operation:: KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCard
     writelog ("Card Take Away ", "PBS");
     tProcess.giCardIsIn = 2;
 
-    if (tEntry.gbEntryOK)
+    if (tEntry.gbEntryOK == true)
     {
         ShowLEDMsg(tMsg.Msg_CardTaken[0],tMsg.Msg_CardTaken[1]);
     }
     else
     {
+        if (tProcess.gbcarparkfull && tEntry.sIUTKNo != "" ) return;
         ShowLEDMsg(tMsg.Msg_InsertCashcard[0], tMsg.Msg_InsertCashcard[1]);   
     }                    
     //--------
     if (gtStation.iType == tientry)
     {
-        if (tEntry.gbEntryOK == 1)
+        if (tEntry.gbEntryOK == true)
         {
             Openbarrier();
             EnableCashcard(false);
