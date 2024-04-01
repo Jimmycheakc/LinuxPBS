@@ -5,6 +5,8 @@
 #include <boost/algorithm/string.hpp>
 #include <string>
 #include <sstream>
+#include "event_handler.h"
+#include "event_manager.h"
 
 Lpr* Lpr::lpr_ = nullptr;
 
@@ -40,14 +42,6 @@ void Lpr::LprInit(boost::asio::io_context& mainIOContext)
     reconnTime2_ = 10000;
     commErrorTimeCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorTime());
     transErrorCountCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorCount());
-
-    std::cout << "cameraNo : " << cameraNo_ << std::endl;
-    std::cout << "lprIp4Front_ : " << lprIp4Front_ << std::endl;
-    std::cout << "lprIp4Rear_ : " << lprIp4Rear_ << std::endl;
-    std::cout << "reconnTime_ : " << reconnTime_ << std::endl;
-    std::cout << "reconnTime2_ : " << reconnTime2_ << std::endl;
-    std::cout << "commErrorTimeCriteria_ : " << commErrorTimeCriteria_ << std::endl;
-    std::cout << "transErrorCountCriteria_ : " << transErrorCountCriteria_ << std::endl; 
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
 
@@ -112,7 +106,6 @@ bool Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
 
 void Lpr::handleReconnectTimerTimeout()
 {
-    std::cout << __func__ << std::endl;
     Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
     if (!pFrontCamera_->isStatusGood())
@@ -120,7 +113,6 @@ void Lpr::handleReconnectTimerTimeout()
         std::stringstream ss;
         ss << "Reconnect to server IP : " << lprIp4Front_;
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-        std::cout << __func__ << ss.str() << std::endl;
 
         pFrontCamera_->connect();
     }
@@ -155,13 +147,11 @@ void Lpr::handleFrontSocketConnect()
     std::stringstream ss;
     ss << "Connected to server IP : " << lprIp4Front_;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 
     pFrontCamera_->send("OK");
     std::stringstream okss;
     okss << "Front camera: Send OK";
     Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
-    std::cout << okss.str() << std::endl;
 }
 
 void Lpr::handleFrontSocketClose()
@@ -171,7 +161,6 @@ void Lpr::handleFrontSocketClose()
     std::stringstream ss;
     ss << "Server @ Front Camera IP : " << lprIp4Front_ << " close connection.";
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 }
 
 void Lpr::handleFrontSocketError(std::string error_msg)
@@ -181,7 +170,6 @@ void Lpr::handleFrontSocketError(std::string error_msg)
     std::stringstream ss;
     ss << "Front camera: TCP Socket Error: " << error_msg;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 }
 
 void Lpr::handleReceiveFrontCameraData(const char* data, std::size_t length)
@@ -191,7 +179,6 @@ void Lpr::handleReceiveFrontCameraData(const char* data, std::size_t length)
     ss.write(data, length);
     ss << " , Length : " << length;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 
     std::string receiveDataStr(data, length);
     processData(receiveDataStr, CType::FRONT_CAMERA);
@@ -249,7 +236,6 @@ bool Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
 
 void Lpr::handleReconnectTimer2Timeout()
 {
-    std::cout << __func__ << std::endl;
     Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
     if (!pRearCamera_->isStatusGood())
@@ -257,7 +243,6 @@ void Lpr::handleReconnectTimer2Timeout()
         std::stringstream ss;
         ss << "Reconnect to server IP : " << lprIp4Rear_;
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-        std::cout << __func__ << ss.str() << std::endl;
 
         pRearCamera_->connect();
     }
@@ -292,13 +277,11 @@ void Lpr::handleRearSocketConnect()
     std::stringstream ss;
     ss << "Connected to server IP : " << lprIp4Rear_;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 
     pRearCamera_->send("OK");
     std::stringstream okss;
     okss << "Rear camera: Send OK";
     Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
-    std::cout << okss.str() << std::endl;
 }
 
 void Lpr::handleRearSocketClose()
@@ -308,7 +291,6 @@ void Lpr::handleRearSocketClose()
     std::stringstream ss;
     ss << "Server @ Rear Camera IP : " << lprIp4Rear_ << " close connection.";
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 }
 
 void Lpr::handleRearSocketError(std::string error_msg)
@@ -318,7 +300,6 @@ void Lpr::handleRearSocketError(std::string error_msg)
     std::stringstream ss;
     ss << "Rear camera: TCP Socket Error: " << error_msg;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 }
 
 void Lpr::handleReceiveRearCameraData(const char* data, std::size_t length)
@@ -328,7 +309,6 @@ void Lpr::handleReceiveRearCameraData(const char* data, std::size_t length)
     ss.write(data, length);
     ss << " , Length : " << length;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-    std::cout << ss.str() << std::endl;
 
     std::string receiveDataStr(data, length);
     processData(receiveDataStr, CType::REAR_CAMERA);
@@ -544,7 +524,12 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
         // Blank LPR check
         if (LPN == "0000000000")
         {
-            //RaiseEvent LPReceive(camType, LPN, TransID, imagePath)
+            struct LPREventData data;
+            data.camType = m_CType;
+            data.LPN = LPN;
+            data.TransID = TransID;
+            data.imagePath = imagePath;
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
 
             std::stringstream ss;
             ss << "Raise LPRReceive. LPN Not recognized. @ " << m_CType;
@@ -554,7 +539,12 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
         }
         else
         {
-            //RaiseEvent LPReceive(camType, LPN, TransID, imagePath)
+            struct LPREventData data;
+            data.camType = m_CType;
+            data.LPN = LPN;
+            data.TransID = TransID;
+            data.imagePath = imagePath;
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
 
             std::stringstream ss;
             ss << "Raise LPRReceive. @ " << m_CType;
@@ -576,7 +566,12 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
                 // blank LPR check
                 if (LPN == "0000000000")
                 {
-                    // RaiseEvent LPReceive(camType, LPN, TransID, imagePath)
+                    struct LPREventData data;
+                    data.camType = m_CType;
+                    data.LPN = LPN;
+                    data.TransID = TransID;
+                    data.imagePath = imagePath;
+                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
 
                     std::stringstream ss;
                     ss << "Raise LPRReceive. LPN Not recognized. @ " << m_CType;
@@ -586,7 +581,12 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
                 }
                 else
                 {
-                    // RaiseEvent LPReceive(camType, LPN, TransID, imagePath)
+                    struct LPREventData data;
+                    data.camType = m_CType;
+                    data.LPN = LPN;
+                    data.TransID = TransID;
+                    data.imagePath = imagePath;
+                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
 
                     std::stringstream ss;
                     ss << "Raise LPRReceive. @ " << m_CType;

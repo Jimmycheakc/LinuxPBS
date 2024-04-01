@@ -9,6 +9,14 @@
 class Lpr
 {
 public:
+    struct LPREventData
+    {
+        std::string camType;
+        std::string LPN;
+        std::string TransID;
+        std::string imagePath;
+    };
+
     enum class CType
     {
         FRONT_CAMERA = 0,
@@ -18,6 +26,7 @@ public:
     static Lpr* getInstance();
 
     void LprInit(boost::asio::io_context& mainIOContext);
+    void SendTransIDToLPR(const std::string& transID);
 
     /**
      * Singleton Lpr should not be cloneable.
@@ -65,7 +74,6 @@ private:
     void handleRearSocketClose();
     void handleRearSocketError(std::string error_msg);
 
-    void SendTransIDToLPR(const std::string& transID);
     void SendTransIDToLPR_Front(const std::string& transID);
     void SendTransIDToLPR_Rear(const std::string& transID);
 

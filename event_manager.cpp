@@ -99,3 +99,4 @@ void EventManager::processEvent(const std::string& eventName, BaseEvent* event)
 template void EventManager::FnEnqueueEvent<int>(const std::string&, int);
 template void EventManager::FnEnqueueEvent<bool>(const std::string&, bool);
 template void EventManager::FnEnqueueEvent<std::string>(const std::string&, std::string);
+template void EventManager::FnEnqueueEvent<const void*>(const std::string&, const void* eventData);

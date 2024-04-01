@@ -48,4 +48,5 @@ private:
     bool handleKSMReaderCardOut(const BaseEvent* event);
     bool handleKSMReaderCardTakeAway(const BaseEvent* event);
     bool handleKSMReaderCardInfo(const BaseEvent* event);
+    bool handleLPRReceive(const BaseEvent* event);
 };

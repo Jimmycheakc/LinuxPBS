@@ -12,7 +12,14 @@ TcpClient::TcpClient(boost::asio::io_context& io_context, const std::string& ipA
 
 void TcpClient::send(const std::string& message)
 {
-    boost::asio::write(socket_, boost::asio::buffer(message));
+    try
+    {
+        boost::asio::write(socket_, boost::asio::buffer(message));
+    }
+    catch (const boost::system::system_error& e)
+    {
+        handleError(e.what());
+    }
 }
 
 bool TcpClient::isConnected() const

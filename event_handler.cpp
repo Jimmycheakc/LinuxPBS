@@ -9,6 +9,7 @@
 #include "log.h"
 #include "operation.h"
 #include "ksm_reader.h"
+#include "lpr.h"
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
 
@@ -31,7 +32,8 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleKSMReaderCardIn"             ,std::bind(&EventHandler::handleKSMReaderCardIn,            eventHandler_, std::placeholders::_1) },
     {   "Evt_handleKSMReaderCardOut"            ,std::bind(&EventHandler::handleKSMReaderCardOut,           eventHandler_, std::placeholders::_1) },
     {   "Evt_handleKSMReaderCardTakeAway"       ,std::bind(&EventHandler::handleKSMReaderCardTakeAway,      eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo,          eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo,          eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLPRReceive"                  ,std::bind(&EventHandler::handleLPRReceive,                 eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -684,5 +686,45 @@ bool EventHandler::handleKSMReaderCardInfo(const BaseEvent* event)
         ret = false;
     }
 
+    return ret;
+}
+
+bool EventHandler::handleLPRReceive(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<const void*>* typedEvent = dynamic_cast<const Event<const void*>*>(event);
+
+    if (typedEvent != nullptr)
+    {
+        const struct Lpr::LPREventData* eventData = static_cast<const struct Lpr::LPREventData*>(typedEvent->data);
+        if (!eventData) {
+            // Handle invalid data pointer
+            return false;
+        }
+        
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << "camType : " << eventData->camType;
+        ss << ", LPN : " << eventData->LPN;
+        ss << ", TransID : " << eventData->TransID;
+        ss << ", imagePath : " << eventData->imagePath;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string camType = eventData->camType;
+        std::string LPN = eventData->LPN;
+        std::string TransID = eventData->TransID;
+        std::string imagePath = eventData->imagePath;
+
+        // Handle the LPR 
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+    
     return ret;
 }
