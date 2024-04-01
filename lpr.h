@@ -25,8 +25,8 @@ public:
 
     static Lpr* getInstance();
 
-    void LprInit(boost::asio::io_context& mainIOContext);
-    void SendTransIDToLPR(const std::string& transID);
+    void FnLprInit(boost::asio::io_context& mainIOContext);
+    void FnSendTransIDToLPR(const std::string& transID);
 
     /**
      * Singleton Lpr should not be cloneable.
@@ -57,10 +57,11 @@ private:
     std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer2_;
     std::unique_ptr<boost::asio::deadline_timer> periodicStatusTimer_;
     std::unique_ptr<boost::asio::deadline_timer> periodicStatusTimer2_;
+    bool frontCameraInitialized_;
+    bool rearCameraInitialized_;
     Lpr();
-    bool initFrontCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH);
-    bool initRearCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH);
-    void sendTransIDToLPR(const std::string& transID);
+    void initFrontCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH);
+    void initRearCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH);
     void startReconnectTimer();
     void handleReconnectTimerTimeout();
     void startReconnectTimer2();

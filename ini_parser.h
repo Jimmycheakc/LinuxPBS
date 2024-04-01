@@ -38,10 +38,13 @@ public:
     int FnGetBarrierDooropen() const;
     int FnGetBarrierStatus() const;
     int FnGetManualOpenBarrier() const;
+    int FnGetLorrysensor() const;
+    int FnGetArmbroken() const;
 
     // Confirm [DO]
     int FnGetOpenbarrier() const;
     int FnGetLCDbacklight() const;
+    int FnGetclosebarrier() const;
 
     /**
      * Singleton IniParser should not be cloneable.
@@ -82,8 +85,11 @@ private:
     int BarrierDooropen_;
     int BarrierStatus_;
     int ManualOpenBarrier_;
+    int Lorrysensor_;
+    int Armbroken_;
 
     // Confirm [DO]
     int Openbarrier_;
     int LCDbacklight_;
+    int closebarrier_;
 };

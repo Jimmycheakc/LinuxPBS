@@ -541,6 +541,26 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT");
                 break;
             }
+            case DIO::DIO_EVENT::LORRY_SENSOR_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LORRY_SENSOR_ON_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::LORRY_SENSOR_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::LORRY_SENSOR_OFF_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT");
+                break;
+            }
             default:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::UNKNOWN_EVENT");

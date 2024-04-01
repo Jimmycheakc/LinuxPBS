@@ -28,7 +28,11 @@ public:
         BARRIER_STATUS_ON_EVENT = 12,
         BARRIER_STATUS_OFF_EVENT = 13,
         MANUAL_OPEN_BARRIED_ON_EVENT = 14,
-        MANUAL_OPEN_BARRIED_OFF_EVENT = 15
+        MANUAL_OPEN_BARRIED_OFF_EVENT = 15,
+        LORRY_SENSOR_ON_EVENT = 16,
+        LORRY_SENSOR_OFF_EVENT = 17,
+        ARM_BROKEN_ON_EVENT = 18,
+        ARM_BROKEN_OFF_EVENT = 19
     };
 
     static DIO* getInstance();
@@ -38,6 +42,7 @@ public:
     void FnSetOpenBarrier(int value);
     int FnGetOpenBarrier() const;
     void FnSetLCDBacklight(int value);
+    void FnSetCloseBarrier(int value);
     int FnGetLCDBacklight() const;
     int FnGetLoopAStatus() const;
     int FnGetLoopBStatus() const;
@@ -45,8 +50,10 @@ public:
     int FnGetIntercomStatus() const;
     int FnGetStationDoorStatus() const;
     int FnGetBarrierDoorStatus() const;
-    int FnGetBarrierStatusStatus() const;
+    int FnGetBarrierStatus() const;
     int FnGetManualOpenBarrierStatus() const;
+    int FnGetLorrySensor() const;
+    int FnGetArmbroken() const;
 
     int FnGetOutputPinNum(int pinNum);
 
@@ -71,6 +78,8 @@ private:
     int barrier_door_open_di_;
     int barrier_status_di_;
     int manual_open_barrier_di_;
+    int lorry_sensor_di_;
+    int arm_broken_di_;
     int loop_a_di_last_val_;
     int loop_b_di_last_val_;
     int loop_c_di_last_val_;
@@ -79,8 +88,11 @@ private:
     int barrier_door_open_di_last_val_;
     int barrier_status_di_last_val_;
     int manual_open_barrier_di_last_val_;
+    int lorry_sensor_di_last_val_;
+    int arm_broken_di_last_val_;
     int open_barrier_do_;
     int lcd_backlight_do_;
+    int close_barrier_do_;
     bool isDIOMonitoringThreadRunning_;
     std::thread dioMonitoringThread_;
     DIO();

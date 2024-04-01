@@ -221,6 +221,13 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->ManualOpenBarrier();
 			break;
 		}
+		case CmdCloseBarrier:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->writelog("Close barrier from PMS","UDP");
+			operation::getInstance()->ManualCloseBarrier();
+			break;
+		}
 		case CmdSetTime:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");

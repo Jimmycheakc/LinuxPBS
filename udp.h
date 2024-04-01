@@ -23,6 +23,7 @@ typedef enum : unsigned int{
 	CmdSetTime=35,
     CmdClearSeason=37,
 	CmdDownloadtype=41,
+    CmdCloseBarrier=42,
 	CmdUpdateSetting=51,
 	CmdSetLotCount=65,
 	CmdLockupbarrier=67,

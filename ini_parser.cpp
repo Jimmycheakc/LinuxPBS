@@ -69,10 +69,13 @@ void IniParser::FnReadIniFile()
     BarrierDooropen_                = pt.get<int>("DI.BarrierDooropen");
     BarrierStatus_                  = pt.get<int>("DI.BarrierStatus");
     ManualOpenBarrier_              = pt.get<int>("DI.ManualOpenBarrier");
+    Lorrysensor_                    = pt.get<int>("DI.Lorrysensor");
+    Armbroken_                      = pt.get<int>("DI.Armbroken");
 
     // Confirm [DO]
     Openbarrier_                    = pt.get<int>("DO.Openbarrier");
     LCDbacklight_                   = pt.get<int>("DO.LCDbacklight");
+    closebarrier_                   = pt.get<int>("DO.closebarrier");
 }
 
 void IniParser::FnPrintIniFile()
@@ -213,6 +216,16 @@ int IniParser::FnGetManualOpenBarrier() const
     return ManualOpenBarrier_;
 }
 
+int IniParser::FnGetLorrysensor() const
+{
+    return Lorrysensor_;
+}
+
+int IniParser::FnGetArmbroken() const
+{
+    return Armbroken_;
+}
+
 // Confirm [DO]
 int IniParser::FnGetOpenbarrier() const
 {
@@ -222,4 +235,9 @@ int IniParser::FnGetOpenbarrier() const
 int IniParser::FnGetLCDbacklight() const
 {
     return LCDbacklight_;
+}
+
+int IniParser::FnGetclosebarrier() const
+{
+    return closebarrier_;
 }

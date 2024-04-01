@@ -62,6 +62,7 @@ public:
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
     void ManualOpenBarrier();
+    void ManualCloseBarrier();
     bool LoadParameter();
     bool LoadedparameterOK();
     int  GetSeasonTransType(int VehicleType, int SeasonType, int TransType);

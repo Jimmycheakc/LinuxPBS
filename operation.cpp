@@ -23,6 +23,7 @@
 #include "lcsc.h"
 #include "dio.h"
 #include "ksm_reader.h"
+#include "lpr.h"
 
 operation* operation::operation_ = nullptr;
 
@@ -179,8 +180,10 @@ void operation::LoopACome()
     writelog ("Loop A Come.","OPR");
     ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
     Clearme();
+    DIO::getInstance()->FnSetLCDBacklight(1);
     //----
     tEntry.gsTransID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+    Lpr::getInstance()->FnSendTransIDToLPR(tEntry.gsTransID);
 
     //----
     if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();
@@ -192,6 +195,9 @@ void operation::LoopACome()
 void operation::LoopAGone()
 {
     writelog ("Loop A End.","OPR");
+    //------
+    DIO::getInstance()->FnSetLCDBacklight(0);
+     //
     if (tEntry.sIUTKNo == "") {
         EnableCashcard(false);
         Antenna::getInstance()->FnAntennaStopRead();
@@ -360,12 +366,14 @@ void operation::Initdevice(io_context& ioContext)
         {  
             HandlePBSError(ReaderError);
         }
+        //  -4 KDE comm port error
         if (iRet == -4) { tPBSError[iReader].ErrNo = -4;}
     }
 
     LCD::getInstance()->FnLCDInit();
     GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
+    Lpr::getInstance()->FnLprInit(ioContext);
 }
 
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
@@ -561,7 +569,9 @@ void operation:: Sendmystatus()
   //14 = TGD sensor status 15=Arm drop status,16=barrier status,17=ticket status d DateTime
     CE_Time dt;
 	string str="";
-    //-----
+    //----
+    tPBSError[iBarrierStauts].ErrNo = DIO::getInstance()->FnGetBarrierStatus();
+    //------
     for (int i= 0; i< Errsize; ++i){
         str += std::to_string(tPBSError[i].ErrNo) + ",";
     }
@@ -1203,6 +1213,13 @@ void operation::ManualOpenBarrier()
         SaveEntry();
         Openbarrier();
      }
+}
+
+void operation::ManualCloseBarrier()
+{
+    writelog ("Manual Close barrier.", "OPR");
+    m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual close barrier","");
+    DIO::getInstance()->FnSetCloseBarrier(1);
 }
 
 int operation:: GetSeasonTransType(int VehicleType, int SeasonType, int TransType)
