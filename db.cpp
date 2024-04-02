@@ -2686,7 +2686,6 @@ void db::moveOfflineTransToCentral()
 	
 	if(operation::getInstance()->gtStation.iType==tientry)
 	{
-		
 		r = localdb->SQLSelect("SELECT count(iu_tk_no) FROM Entry_Trans",&tResult,false);
 		if(r!=0) {
 			m_local_db_err_flag=1;
@@ -2844,7 +2843,7 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 	// insert into Central trans tmp table
 	sqstr="INSERT INTO " + tbName +" (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
 	sqstr=sqstr + ",card_no,paid_amt,parking_fee";        
-	sqstr=sqstr + ",gst_amt,lpr";
+	sqstr=sqstr + ",gst_amt,lpn";
 	sqstr=sqstr + ") Values ('" + ter.esid+ "',convert(datetime,'" + ter.sEntryTime+ "',120),'" + ter.sIUTKNo;
 	sqstr = sqstr +  "','" + std::to_string(ter.iTransType);
 	sqstr = sqstr + "','" + std::to_string(ter.iStatus) + "','" + ter.sSerialNo;

@@ -90,8 +90,6 @@ void operation::OperationInit(io_context& ioContext)
     // sync central time
     if (iRet == 1) {
         m_db->synccentraltime();
-        m_db->downloadseason();
-        db::getInstance()->moveOfflineTransToCentral();
     } else
     {
         tProcess.giSystemOnline = 1;
@@ -111,6 +109,9 @@ void operation::OperationInit(io_context& ioContext)
         isOperationInitialized_.store(true);
         DIO::getInstance()->FnStartDIOMonitoring();
         SendMsg2Server("90",",,,,,Starting OK");
+        //-----
+        m_db->downloadseason();
+        m_db->moveOfflineTransToCentral();
        
     }else {
         tProcess.gbInitParamFail = 1;
