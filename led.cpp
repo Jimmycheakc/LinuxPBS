@@ -10,9 +10,26 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
     : serialPort_(io_context, comPortName),
     baudRate_(baudRate),
     comPortName_(comPortName),
-    maxCharPerRow_(maxCharacterPerRow),
-    logFileName_("led")
+    maxCharPerRow_(maxCharacterPerRow)
 {
+    std::string ledType = "";
+    logFileName_ = "led";
+    if (maxCharacterPerRow == LED614_MAX_CHAR_PER_ROW)
+    {
+        ledType = "LED 614";
+        logFileName_ = "led614";
+    }
+    else if (maxCharacterPerRow == LED216_MAX_CHAR_PER_ROW)
+    {
+        ledType = "LED 216";
+        logFileName_ = "led216";
+    }
+    else if (maxCharacterPerRow == LED226_MAX_CHAR_PER_ROW)
+    {
+        ledType = "LED 226";
+        logFileName_ = "led226";
+    }
+
     try
     {
         serialPort_.set_option(boost::asio::serial_port_base::baud_rate(baudRate));
@@ -20,6 +37,8 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
         serialPort_.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         serialPort_.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         serialPort_.set_option(boost::asio::serial_port_base::character_size(8));
+
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
         if (serialPort_.is_open())
         {
@@ -29,19 +48,6 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
 
             FnLEDSendLEDMsg("***", "", LED::Alignment::LEFT);
 
-            std::string ledType = "";
-            if (maxCharacterPerRow == LED614_MAX_CHAR_PER_ROW)
-            {
-                ledType = "LED 614";
-            }
-            else if (maxCharacterPerRow == LED216_MAX_CHAR_PER_ROW)
-            {
-                ledType = "LED 216";
-            }
-            else if (maxCharacterPerRow == LED226_MAX_CHAR_PER_ROW)
-            {
-                ledType = "LED 226";
-            }
             Logger::getInstance()->FnLog(ledType + " initialization completed.");
             Logger::getInstance()->FnLog(ledType + " initialization completed.", logFileName_, "LED");
         }
