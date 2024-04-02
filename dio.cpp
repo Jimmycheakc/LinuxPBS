@@ -261,6 +261,7 @@ void DIO::monitoringDIOChangeThreadFunction()
 
         if (lorry_sensor_curr_val == GPIOManager::GPIO_HIGH && lorry_sensor_di_last_val_ == GPIOManager::GPIO_LOW)
         {
+            operation::getInstance()->tProcess.gbLorrySensorIsOn = true;
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LORRY_SENSOR_ON_EVENT));
 
             // Send to Input Pin Status to Monitor
@@ -268,6 +269,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         }
         else if (lorry_sensor_curr_val == GPIOManager::GPIO_LOW && lorry_sensor_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
+            operation::getInstance()->tProcess.gbLorrySensorIsOn = false;
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LORRY_SENSOR_OFF_EVENT));
 
             // Send to Input Pin Status to Monitor

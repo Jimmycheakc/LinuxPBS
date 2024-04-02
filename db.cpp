@@ -3100,3 +3100,45 @@ int db::clearexpiredseason()
 	} 
 	return r;
 }
+
+int db::updateEntryTrans(string lpn, string sTransID) 
+{
+
+	int r=0;
+	string sqstr="";
+
+	// insert into Central trans tmp table
+
+	sqstr="UPDATE Entry_trans_tmp set lpn = '"+ lpn + "' WHERE entry_lpn_sid = '"+ sTransID + "'";
+	
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	if (r==0) 
+	{
+		if (centraldb->NumberOfRowsAffected > 0){
+			operation::getInstance()->writelog("Success update LPR to Entry_Trans_Tmp","DB");
+		}else
+		{
+			sqstr="UPDATE Entry_trans set lpn = '"+ lpn + "' WHERE entry_lpn_sid = '"+ sTransID + "'";
+			r = centraldb->SQLExecutNoneQuery(sqstr);
+
+			if (r==0) {
+				if (centraldb->NumberOfRowsAffected > 0)
+				{
+					operation::getInstance()->writelog("Success update LPR to Entry_Trans","DB");
+					m_remote_db_err_flag=0;
+				} else operation::getInstance()->writelog("No TransID for update","DB");
+			} else
+			{
+			operation::getInstance()->writelog("fail to update LPR to Entry_trans","DB");
+		 	m_remote_db_err_flag=1;
+			}
+		}
+	}
+	else {
+		operation::getInstance()->writelog("fail to update LPR to Entry_trans_Tmp","DB");
+		 m_remote_db_err_flag=1;
+		
+	}
+	return r;
+}

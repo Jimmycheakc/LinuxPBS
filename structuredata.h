@@ -283,7 +283,7 @@ struct  tExitTrans_Struct
 struct  tProcess_Struct
 {
 	
-	int save_trans=0;
+	bool gbsavedtrans;
 	bool gbcarparkfull;
 	long glNoofOfflineData;
 	string fsLastIUNo;
@@ -300,6 +300,7 @@ struct  tProcess_Struct
 	bool gbLoopAIsOn;
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
+	bool gbLorrySensorIsOn;
 	int giSyncTimeCnt;
 	bool gbloadedParam;
 	bool gbloadedVehtype;

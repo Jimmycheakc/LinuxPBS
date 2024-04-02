@@ -9,18 +9,18 @@
 class Lpr
 {
 public:
-    struct LPREventData
-    {
-        std::string camType;
-        std::string LPN;
-        std::string TransID;
-        std::string imagePath;
-    };
-
     enum class CType
     {
         FRONT_CAMERA = 0,
         REAR_CAMERA = 1
+    };
+
+    struct LPREventData
+    {
+        CType camType;
+        std::string LPN;
+        std::string TransID;
+        std::string imagePath;
     };
 
     static Lpr* getInstance();

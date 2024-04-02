@@ -73,7 +73,7 @@ void operation::OperationInit(io_context& ioContext)
     int iRet = 0;
     m_db = db::getInstance();
 
-    iRet = m_db->connectlocaldb("DSN={MariaDB-server};DRIVER={MariaDB ODBC 3.0 Driver};SERVER=127.0.0.1;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;",2,2,2);
+    iRet = m_db->connectlocaldb("DSN={MariaDB-server};DRIVER={MariaDB ODBC 3.0 Driver};SERVER=127.0.0.1;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;",2,2,1);
     if (iRet != 1) {
         writelog ("Unable to connect local DB.","OPR");
         exit(0); 
@@ -83,7 +83,7 @@ void operation::OperationInit(io_context& ioContext)
     for (int i = 0 ; i < 5; ++i ) {
       //  m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
         m_connstring = "DRIVER=FreeTDS;SERVER=" + tParas.gsCentralDBServer + ";PORT=1433;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
-        iRet = m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,2);
+        iRet = m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,1);
         if (iRet == 1) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
@@ -187,9 +187,8 @@ void operation::LoopACome()
 
     //----
     if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     ShowLEDMsg("Reading IU...^Please wait", "Reading IU...^Please wait");
-    operation::getInstance()->EnableCashcard(true);
+ //   operation::getInstance()->EnableCashcard(true);
 }
 
 void operation::LoopAGone()
@@ -292,6 +291,7 @@ void operation::Clearme()
         tEntry.giShowType = 1;
         tEntry.gsTransID = "";
         tProcess.giCardIsIn = 0;
+        tProcess.gbsavedtrans = false;
        
     }
     else
@@ -397,7 +397,7 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
     {
         LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
     }
-    usleep(100000);
+  //  usleep(100000);
 }
 
 void operation::PBSEntry(string sIU)
@@ -507,6 +507,7 @@ void operation:: Setdefaultparameter()
     tProcess.gbLoopAIsOn = false;
     tProcess.gbLoopBIsOn = false;
     tProcess.gbLoopCIsOn = false;
+    tProcess.gbLorrySensorIsOn = false;
     //--------
     tProcess.giSyncTimeCnt = 0;
     tProcess.gbloadedParam = false;
@@ -571,6 +572,7 @@ void operation:: Sendmystatus()
 	string str="";
     //----
     tPBSError[iBarrierStauts].ErrNo = DIO::getInstance()->FnGetBarrierStatus();
+    if (DIO::getInstance()->FnGetArmbroken() == 1) tPBSError[iBarrierStauts].ErrNo=3;
     //------
     for (int i= 0; i< Errsize; ++i){
         str += std::to_string(tPBSError[i].ErrNo) + ",";
@@ -1060,7 +1062,10 @@ int operation::GetVTypeFromLoop()
     {
         ret = 7;
     }
-   
+    else if (operation::getInstance()->tProcess.gbLoopAIsOn == true && operation::getInstance()->tProcess.gbLorrySensorIsOn == true)
+    {
+        ret = 4;
+    }
     return ret;
 
 }
@@ -1085,7 +1090,7 @@ void operation::SaveEntry()
     if (tEntry.iStatus == 0) {
         SendMsg2Server("90", sMsg2Send);
     }
-
+    tProcess.gbsavedtrans = true;
 }
 
 void operation::ShowTotalLots(std::string totallots, std::string LEDId)
@@ -1219,7 +1224,14 @@ void operation::ManualCloseBarrier()
 {
     writelog ("Manual Close barrier.", "OPR");
     m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual close barrier","");
+    
+    if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
+
     DIO::getInstance()->FnSetCloseBarrier(1);
+    //
+    std::this_thread::sleep_for(std::chrono::milliseconds(tParas.gsBarrierPulse));
+    //
+    DIO::getInstance()->FnSetCloseBarrier(0);
 }
 
 int operation:: GetSeasonTransType(int VehicleType, int SeasonType, int TransType)
@@ -1366,6 +1378,8 @@ int operation:: GetSeasonTransType(int VehicleType, int SeasonType, int TransTyp
 
 void operation:: EnableCashcard(bool bEnable)
 {
+    if (bEnable == tEntry.sEnableReader) return;
+    //-------
     tEntry.sEnableReader = bEnable;
     if (tParas.giCommPortLCSC > 0) EnableLCSC (bEnable);
     if (tParas.giCommPortKDEReader>0) EnableKDE(bEnable);
@@ -1438,6 +1452,7 @@ void operation::EnableKDE(bool bEnable)
     //-----
     if (bEnable == false)
     {
+            //------
         if (tProcess.giCardIsIn == 1 )
         {
             KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
@@ -1610,5 +1625,22 @@ bool operation::AntennaOK() {
                 return true;
             }
         }
+    }
+}
+
+void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation)
+{
+    writelog ("Received Trans ID: "+sTransid + " LPN: "+ LPN ,"OPR");
+    writelog ("Send Trans ID: "+ tEntry.gsTransID, "OPR");
+
+    int i = static_cast<int>(CType);
+
+    if (tEntry.gsTransID == sTransid && tProcess.gbLoopApresent == true && tProcess.gbsavedtrans == false)
+    {
+       if (gtStation.iType == tientry)  tEntry.sLPN[i]=LPN;
+    }
+    else
+    {
+        if (gtStation.iType == tientry) db::getInstance()->updateEntryTrans(LPN,sTransid);
     }
 }

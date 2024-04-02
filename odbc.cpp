@@ -223,7 +223,8 @@ int odbc::SQLExecutNoneQuery(std::string statement)
   SQLSMALLINT columns; // number of columns
   SQLLEN rows; // number of rows
   int ret=-1;
-
+  NumberOfRowsAffected=0;
+ 
   try{
 
     if (IsConnected()!=1)
@@ -246,9 +247,9 @@ int odbc::SQLExecutNoneQuery(std::string statement)
       return ret;
     }    
     //SQLNumResultCols(stmt, &columns);//get numbers of columns
-    //SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
-    ////printf("Number of rows affected: %ld \n",(long int)rows);
-    //NumberOfRowsAffected=(long int)rows;
+    SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
+   // printf("Number of rows affected: %ld \n",(long int)rows);
+    NumberOfRowsAffected=(long int)rows;
     ret=0;
      
     SQLFreeHandle(SQL_HANDLE_STMT, stmt);    
@@ -314,17 +315,17 @@ int odbc::IsConnected()
   SQLUINTEGER	uIntVal; // Unsigned int attribute values
 
 
-  if (vPing(m_IP,pingTimeOut)==false) return -1;
+//  if (vPing(m_IP,pingTimeOut)==false) return -1;
 
   ret = SQLGetConnectAttr(dbc,SQL_ATTR_CONNECTION_DEAD,(SQLPOINTER)&uIntVal,(SQLINTEGER) sizeof(uIntVal),NULL);
   if (!SQL_SUCCEEDED(ret)) {
     GetError("SQLGetConnectAttr(SQL_ATTR_CONNECTION_DEAD)", dbc, SQL_HANDLE_DBC);
-    return -1;
+    return 0;
   }
   if (uIntVal==SQL_CD_FALSE) return 1; // The connection is open and available for statement processing.
   if (uIntVal==SQL_CD_TRUE) return 0; // The connection to the server has been lost.
   
-  return -1;
+  return 0;
 }
 
 char* odbc::To_CharArray(const std::string &Text)
@@ -414,11 +415,9 @@ try
     dtValidFrom="";
     //------------------------------
 
-
     if (IsConnected()!=1)
     {
         Disconnect();
-
         if (Connect()!=0 ){return -1;} 
     }
 

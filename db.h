@@ -82,6 +82,9 @@ public:
 
     int FnGetDatabaseErrorFlag();
     int clearexpiredseason();
+    int updateEntryTrans(string lpn, string sTransID);
+
+    long  glToalRowAffed;
 
 
     /**

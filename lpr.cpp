@@ -534,7 +534,7 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
         if (LPN == "0000000000")
         {
             struct LPREventData data;
-            data.camType = m_CType;
+            data.camType = camType;
             data.LPN = LPN;
             data.TransID = TransID;
             data.imagePath = imagePath;
@@ -549,7 +549,7 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
         else
         {
             struct LPREventData data;
-            data.camType = m_CType;
+            data.camType = camType;
             data.LPN = LPN;
             data.TransID = TransID;
             data.imagePath = imagePath;
@@ -576,7 +576,7 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
                 if (LPN == "0000000000")
                 {
                     struct LPREventData data;
-                    data.camType = m_CType;
+                    data.camType = camType;
                     data.LPN = LPN;
                     data.TransID = TransID;
                     data.imagePath = imagePath;
@@ -591,7 +591,7 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
                 else
                 {
                     struct LPREventData data;
-                    data.camType = m_CType;
+                    data.camType = camType;
                     data.LPN = LPN;
                     data.TransID = TransID;
                     data.imagePath = imagePath;

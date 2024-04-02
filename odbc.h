@@ -39,7 +39,7 @@ public:
 
   int Disconnect();
   int IsConnected();
-  long int NumberOfRowsAffected;
+  long NumberOfRowsAffected;
 
 
 int isValidSeason(const std::string & sSeasonNo,

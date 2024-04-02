@@ -1037,7 +1037,7 @@ void Antenna::handleReadIUTimerExpiration()
 
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
-        startSendReadIUCmdTimer(200);
+        startSendReadIUCmdTimer(100);
         if (antIUCmdSendCount_ > 10) {
             EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 2);
             antIUCmdSendCount_ = 0;

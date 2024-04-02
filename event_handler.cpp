@@ -86,12 +86,14 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent == true) 
+        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent == true && operation::getInstance()->tEntry.sIUTKNo == "") 
         { 
             operation :: getInstance()->writelog("No IU detected!", "OPR");
-            if (operation::getInstance()->tEntry.gbEntryOK == false and operation::getInstance()->tEntry.sIUTKNo == "" and operation::getInstance()->tProcess.giCardIsIn == 0) 
+            if (operation::getInstance()->tEntry.sEnableReader == false) 
             {
                 operation::getInstance()->ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
+                operation::getInstance()->EnableCashcard(true);
+
             }
         }
         else  
@@ -724,18 +726,17 @@ bool EventHandler::handleLPRReceive(const BaseEvent* event)
         }
         
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << "camType : " << eventData->camType;
+        ss << __func__ << " Successfully, Event Data : " << "camType : " << static_cast<int>(eventData->camType);
         ss << ", LPN : " << eventData->LPN;
         ss << ", TransID : " << eventData->TransID;
         ss << ", imagePath : " << eventData->imagePath;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        std::string camType = eventData->camType;
+        Lpr::CType camType = eventData->camType;
         std::string LPN = eventData->LPN;
         std::string TransID = eventData->TransID;
         std::string imagePath = eventData->imagePath;
-
-        // Handle the LPR 
+        operation::getInstance()->ReceivedLPR(camType,LPN, TransID, imagePath);
     }
     else
     {

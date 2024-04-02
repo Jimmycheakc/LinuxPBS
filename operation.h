@@ -8,6 +8,7 @@
 #include "structuredata.h"
 #include "db.h"
 #include "udp.h"
+#include "lpr.h"
 
 class operation
 {
@@ -76,7 +77,7 @@ public:
     void KSM_CardTakeAway();
     bool AntennaOK();
     void CheckReader();
-
+    void ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation);
 
     void Openbarrier();
 
