@@ -76,8 +76,9 @@ LCSCReader* LCSCReader::getInstance()
     return lcscReader_;
 }
 
-void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
+int LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
+    int ret = static_cast<int>(mCSCEvents::iCommPortError);
     pMainIOContext_ = &mainIOContext;
     uploadCDFilesTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
@@ -113,6 +114,7 @@ void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsign
         ss << "Successfully open serial port for LCSC Reader Communication: " << comPortName;
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
         Logger::getInstance()->FnLog("LCSC Reader initialization completed.");
+        ret = 1;
     }
     else
     {
@@ -120,6 +122,8 @@ void LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsign
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
     }
+
+    return ret;
 }
 
 void LCSCReader::FnSendGetStatusCmd()
@@ -128,9 +132,10 @@ void LCSCReader::FnSendGetStatusCmd()
     EventManager::getInstance()->FnEnqueueEvent("Evt_LcscReaderStatus", ret);
 }
 
-void LCSCReader::FnSendGetLoginCmd()
+int LCSCReader::FnSendGetLoginCmd()
 {
     int ret;
+    int iRet = 0;
     reader_challenge_ = {};
 
     ret = lcscCmd(LcscCmd::LOGIN_1);
@@ -138,9 +143,15 @@ void LCSCReader::FnSendGetLoginCmd()
     if (ret == static_cast<int>(mCSCEvents::sLogin1Success))
     {
         ret = lcscCmd(LcscCmd::LOGIN_2);
+
+        if (ret == static_cast<int>(mCSCEvents::sLoginSuccess))
+        {
+            iRet = 1;
+        }
     }
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_LcscReaderLogin", ret);
+    return iRet;
 }
 
 void LCSCReader::FnSendGetLogoutCmd()
@@ -1108,7 +1119,7 @@ LCSCReader::ReadResult LCSCReader::lcscReadWithTimeout(int milliseconds)
             if (responseIsComplete(buffer, total_bytes_transferred))
             {
                 std::stringstream ss;
-                ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
+                ss << __func__ << "Async Read Timeout Occurred - Rx Completed." << " Total bytes Received : " << total_bytes_transferred;
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
                 pSerialPort_->cancel();
                 success = true;
@@ -1116,7 +1127,7 @@ LCSCReader::ReadResult LCSCReader::lcscReadWithTimeout(int milliseconds)
             else
             {
                 std::stringstream ss;
-                ss << __func__ << "Async Read Timeout Occurred - Rx Not Completed.";
+                ss << __func__ << "Async Read Timeout Occurred - Rx Not Completed." << " Total bytes Received : " << total_bytes_transferred;
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
                 pSerialPort_->cancel();
                 resetRxBuffer();

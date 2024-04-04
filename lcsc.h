@@ -90,6 +90,7 @@ public:
         sCILUploadCorrupt   = -32,
         sCFGUploadCorrupt   = -33,
         sWrongCDfileSize    = -34,
+        iCommPortError      = -35,
 
         sIni                = 100,
         sTimeout            = -100,
@@ -122,10 +123,10 @@ public:
     static const int RX_BUF_SIZE = 1024;
 
     static LCSCReader* getInstance();
-    void FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
+    int FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
     void FnLCSCReaderStopRead();
     void FnSendGetStatusCmd();
-    void FnSendGetLoginCmd();
+    int FnSendGetLoginCmd();
     void FnSendGetLogoutCmd();
     void FnSendGetCardIDCmd();
     void FnSendGetCardBalance();

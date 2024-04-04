@@ -337,7 +337,11 @@ void operation::Initdevice(io_context& ioContext)
 
     if (tParas.giCommPortLCSC > 0)
     {
-        LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
+        int iRet = LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
+        if (iRet == -35) { 
+            tPBSError[iLCSC].ErrNo = -4;
+            HandlePBSError(LCSCError);
+        }
     }
 
     if (tParas.giCommPortLED > 0)
@@ -1400,13 +1404,13 @@ void operation:: CheckReader()
             writelog ("KDE Reader Error","OPR");
         }
     }
-    if (tParas.giCommPortLCSC > 0) {
+    if (tParas.giCommPortLCSC > 0 && tPBSError[iLCSC].ErrNo != -4) {
         writelog("Check LCSC Status...", "OPR");
         LCSCReader::getInstance()->FnSendGetStatusCmd();
         if (LCSCReader::getInstance()->FnGetReaderMode() != 1) {
-            LCSCReader::getInstance()->FnSendGetLoginCmd();
+           int iRet = LCSCReader::getInstance()->FnSendGetLoginCmd();
             LCSCReader::getInstance()->FnSendGetStatusCmd();
-            if (LCSCReader::getInstance()->FnGetReaderMode() != 1) {
+            if (LCSCReader::getInstance()->FnGetReaderMode() != 1 && iRet != 1) {
                 writelog ("LCSC Reader Error","OPR");
                 HandlePBSError(LCSCError);
                 return;
@@ -1420,7 +1424,7 @@ void operation:: CheckReader()
 void operation:: EnableLCSC(bool bEnable)
 {
     int iRet;
-    if (tPBSError[10].ErrNo == -1) return;
+    if (tPBSError[10].ErrNo != 0) return;
     //-------
     if (tProcess.WaitForLCSCReturn) return;
     if (bEnable && (LCSCReader::getInstance()->FnGetIsCmdExecuting())) return;
