@@ -29,7 +29,7 @@ Antenna::Antenna()
     IUNumber_ = "";
     IUNumberPrev_ = "";
     antennaCmdTimeoutInMillisec_ = operation::getInstance()->tParas.giAntInqTO;//IniParser::getInstance()->FnGetAntennaInqTO();
-    antennaCmdMaxRetry_ = operation::getInstance()->tParas.giAntMaxRetry;//IniParser::getInstance()->FnGetAntennaMaxRetry();
+    antennaCmdMaxRetry_ = 3; //operation::getInstance()->tParas.giAntMaxRetry;//IniParser::getInstance()->FnGetAntennaMaxRetry();
     antennaIUCmdMinOKtimes_ = operation::getInstance()->tParas.giAntMinOKTimes;//IniParser::getInstance()->FnGetAntennaMinOKtimes();
     logFileName_ = "antenna";
 }
