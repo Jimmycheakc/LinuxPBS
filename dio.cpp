@@ -96,16 +96,16 @@ void DIO::monitoringDIOChangeThreadFunction()
 {
     while (isDIOMonitoringThreadRunning_)
     {
-        int loop_a_curr_val = GPIOManager::getInstance()->FnGetGPIO(loop_a_di_)->FnGetValue();
-        int loop_b_curr_val = GPIOManager::getInstance()->FnGetGPIO(loop_b_di_)->FnGetValue();
-        int loop_c_curr_val = GPIOManager::getInstance()->FnGetGPIO(loop_c_di_)->FnGetValue();
-        int intercom_curr_val = GPIOManager::getInstance()->FnGetGPIO(intercom_di_)->FnGetValue();
-        int station_door_open_curr_val = GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_)->FnGetValue();
-        int barrier_door_open_curr_val = GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue();
-        int barrier_status_curr_value = GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue();
-        int manual_open_barrier_status_curr_value = GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue();
-        int lorry_sensor_curr_val = GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_)->FnGetValue();
-        int arm_broken_curr_val = GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_)->FnGetValue();
+        int loop_a_curr_val = (GPIOManager::getInstance()->FnGetGPIO(loop_a_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_a_di_)->FnGetValue() : 0;
+        int loop_b_curr_val = (GPIOManager::getInstance()->FnGetGPIO(loop_b_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_b_di_)->FnGetValue() : 0;
+        int loop_c_curr_val = (GPIOManager::getInstance()->FnGetGPIO(loop_c_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_c_di_)->FnGetValue() : 0;
+        int intercom_curr_val = (GPIOManager::getInstance()->FnGetGPIO(intercom_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(intercom_di_)->FnGetValue() : 0;
+        int station_door_open_curr_val = (GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_)->FnGetValue() : 0;
+        int barrier_door_open_curr_val = (GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue() : 0;
+        int barrier_status_curr_value = (GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue() : 0;
+        int manual_open_barrier_status_curr_value = (GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue() : 0;
+        int lorry_sensor_curr_val = (GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_)->FnGetValue() : 0;
+        int arm_broken_curr_val = (GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_)->FnGetValue() : 0;
         
         // Case : Loop A on, Loop B off 
         if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
@@ -310,105 +310,132 @@ void DIO::FnSetOpenBarrier(int value)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    GPIOManager::getInstance()->FnGetGPIO(open_barrier_do_)->FnSetValue(value);
+    if (GPIOManager::getInstance()->FnGetGPIO(open_barrier_do_) != nullptr)
+    {
+        GPIOManager::getInstance()->FnGetGPIO(open_barrier_do_)->FnSetValue(value);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Nullptr, Unable to set open barrier DO pin : " << open_barrier_do_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "DIO");
+    }
 }
 
 void DIO::FnSetCloseBarrier(int value)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    GPIOManager::getInstance()->FnGetGPIO(close_barrier_do_)->FnSetValue(value);
+    if (GPIOManager::getInstance()->FnGetGPIO(close_barrier_do_) != nullptr)
+    {
+        GPIOManager::getInstance()->FnGetGPIO(close_barrier_do_)->FnSetValue(value);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Nullptr, Unable to set close barrier DO pin : " << close_barrier_do_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "DIO");
+    }
 }
 
 int DIO::FnGetOpenBarrier() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(open_barrier_do_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(open_barrier_do_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(open_barrier_do_)->FnGetValue() : 0;
 }
 
 void DIO::FnSetLCDBacklight(int value)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_)->FnSetValue(value);
+    if (GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_) != nullptr)
+    {
+        GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_)->FnSetValue(value);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Nullptr, Unable to set backlight DO pin : " << lcd_backlight_do_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "DIO");
+    }
 }
 
 int DIO::FnGetLCDBacklight() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(lcd_backlight_do_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetLoopAStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(loop_a_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(loop_a_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_a_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetLoopBStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(loop_b_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(loop_b_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_b_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetLoopCStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(loop_c_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(loop_c_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_c_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetIntercomStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(intercom_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(intercom_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(intercom_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetStationDoorStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(station_door_open_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetBarrierDoorStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(barrier_door_open_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetBarrierStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(barrier_status_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetManualOpenBarrierStatus() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetLorrySensor() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetArmbroken() const
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    return GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_)->FnGetValue();
+    return (GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_)->FnGetValue() : 0;
 }
 
 int DIO::FnGetOutputPinNum(int pinNum)

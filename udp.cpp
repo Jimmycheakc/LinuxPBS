@@ -10,6 +10,7 @@
 #include "operation.h"
 #include "db.h"
 #include "log.h"
+#include "version.h"
 
 void udpclient::processmonitordata (const char* data, std::size_t length) 
 {
@@ -78,7 +79,14 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 
 				if ((actualDIOPinNum != 0) && (pinValue == 0 || pinValue == 1))
 				{
-					GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+					if (GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum) != nullptr)
+					{
+						GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+					}
+					else
+					{
+						operation::getInstance()->writelog("Nullptr, Invalid DIO", "UDP");
+					}
 				}
 				else
 				{
@@ -131,6 +139,18 @@ void udpclient::processmonitordata (const char* data, std::size_t length)
 			operation::getInstance()->SendMsg2Monitor("11", "99");
 
 			std::exit(0);
+			break;
+		}
+		case CmdMonitorStationVersion:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->SendMsg2Monitor("313", SW_VERSION);
+			break;
+		}
+		case CmdMonitorGetStationCurrLog:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->FnSendCmdGetStationCurrLogToMonitor();
 			break;
 		}
 		default:
@@ -192,6 +212,13 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("download LED message","UDP");
 			operation::getInstance()->m_db->downloadledmessage();
 			operation::getInstance()->m_db->loadmessage();
+			if (operation::getInstance()->tProcess.gbcarparkfull != 1){
+				operation::getInstance()->tProcess.IdleMsg[0] = operation::getInstance()->tMsg.Msg_DefaultLED[0];
+				operation::getInstance()->tProcess.IdleMsg[1] = operation::getInstance()->tMsg.Msg_DefaultLED[1];
+				if (operation::getInstance()->tProcess.gbLoopApresent == false) {
+					operation::getInstance()->ShowLEDMsg(operation::getInstance()->tProcess.IdleMsg[0],operation::getInstance()->tProcess.IdleMsg[1]);
+				}
+			}
 			break;
 		}
 		case CmdDownloadTariff:
@@ -291,7 +318,14 @@ void udpclient::processdata (const char* data, std::size_t length)
 
 			if ((actualDIOPinNum != 0) && (pinValue == 0 || pinValue == 1))
 			{
-				GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+				if (GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum) != nullptr)
+				{
+					GPIOManager::getInstance()->FnGetGPIO(actualDIOPinNum)->FnSetValue(pinValue);
+				}
+				else
+				{
+					operation::getInstance()->writelog("Nullptr, Invalid DIO", "UDP");
+				}
 			}
 			else
 			{

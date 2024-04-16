@@ -40,7 +40,9 @@ typedef enum : unsigned int{
 	CmdDownloadIni = 309,
 	CmdDownloadParam = 310,
     CmdMonitorSyncTime = 311,
-    CmdMonitorStatus = 312
+    CmdMonitorStatus = 312,
+    CmdMonitorStationVersion = 313,
+    CmdMonitorGetStationCurrLog = 314
 } monitorudp_rx_command;
 
 class udpclient {

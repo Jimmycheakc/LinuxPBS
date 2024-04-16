@@ -52,6 +52,7 @@ public:
     void FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg);
     void FnSendCmdDownloadParamAckToMonitor(bool success);
     void FnSendCmdDownloadIniAckToMonitor(bool success);
+    void FnSendCmdGetStationCurrLogToMonitor();
     bool CopyIniFile(const std::string& serverIpAddress, const std::string& stationID);
     void SendMsg2Monitor(string cmdcode,string dstr);
     void SendMsg2Server(string cmdcode,string dstr);

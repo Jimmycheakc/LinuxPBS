@@ -147,9 +147,10 @@ int db::local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID)
 
 
 		sqlStmt="Select season_type,s_status,date_from,date_to,vehicle_no,rate_type,multi_season_no,zone_id,redeem_amt,redeem_time,holder_type,sub_zone_id ";
-		sqlStmt= sqlStmt +  " FROM " + tbName + " where season_no='";
+		sqlStmt= sqlStmt +  " FROM " + tbName + " where (season_no='";
 		sqlStmt=sqlStmt + L_sSeasonNo;
-		sqlStmt=sqlStmt + "' AND date_from < now() AND date_to >= now() AND zone_id = "+ to_string(iZoneID);
+		sqlStmt=sqlStmt + "' or instr(multi_season_no," + "'" + L_sSeasonNo + "') >0 ) ";
+		sqlStmt=sqlStmt + "AND date_from < now() AND date_to >= now() AND (zone_id = '0' or zone_id = "+ to_string(iZoneID)+ ")";
 
 		//operation::getInstance()->writelog(sqlStmt,"DB");
 

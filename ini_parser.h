@@ -18,6 +18,8 @@ public:
     std::string FnGetLocalDB() const;
     std::string FnGetCentralDBName() const;
     std::string FnGetCentralDBServer() const;
+    std::string FnGetCentralUsername() const;
+    std::string FnGetCentralPassword() const;
     std::string FnGetLocalUDPPort() const;
     std::string FnGetRemoteUDPPort() const;
     std::string FnGetSeasonOnly() const;
@@ -65,6 +67,8 @@ private:
     std::string LocalDB_;
     std::string CentralDBName_;
     std::string CentralDBServer_;
+    std::string CentralUsername_;
+    std::string CentralPassword_;
     std::string LocalUDPPort_;
     std::string RemoteUDPPort_;
     std::string SeasonOnly_;

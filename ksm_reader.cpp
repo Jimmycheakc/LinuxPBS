@@ -46,6 +46,7 @@ int KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned
     pMainIOContext_ = &mainIOContext;
     pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
     pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
+    int ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
 
     try 
     {
@@ -54,44 +55,47 @@ int KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned
         pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
-    } catch (const boost::system::system_error& e) {
-    // Handle error
-    std::cerr << "Error setting serial port options: " << e.what() << std::endl;
-    // You may choose to throw the error again to propagate it to the caller or handle it differently
-    }
 
-    Logger::getInstance()->FnCreateLogFile(logFileName_);
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    int ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
-    std::stringstream ss;
-    if (pSerialPort_->is_open())
-    {
-        ss << "Successfully open serial port for KSM Reader Communication: " << comPortName;
-        ret = 1;
-    }
-    else
-    {
-        ss << "Failed to open serial port for KSM Reader Communication: " << comPortName;
-        Logger::getInstance()->FnLog(ss.str());
-    }
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-
-    if (pSerialPort_->is_open())
-    {
-        std::stringstream initSS;
-        int cmdRet = ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
-        if (cmdRet == 1)
+        std::stringstream ss;
+        if (pSerialPort_->is_open())
         {
-            initSS << "KSM Reader initialization completed.";
-            ret = cmdRet;
+            ss << "Successfully open serial port for KSM Reader Communication: " << comPortName;
+            ret = 1;
         }
         else
         {
-            initSS << "KSM Reader initialization failed.";
-            ret = cmdRet;
+            ss << "Failed to open serial port for KSM Reader Communication: " << comPortName;
+            Logger::getInstance()->FnLog(ss.str());
         }
-        Logger::getInstance()->FnLog(initSS.str());
-        Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
+
+        if (pSerialPort_->is_open())
+        {
+            std::stringstream initSS;
+            int cmdRet = ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
+            if (cmdRet == 1)
+            {
+                initSS << "KSM Reader initialization completed.";
+                ret = cmdRet;
+            }
+            else
+            {
+                initSS << "KSM Reader initialization failed.";
+                ret = cmdRet;
+            }
+            Logger::getInstance()->FnLog(initSS.str());
+            Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
+        std::stringstream ss;
+        ss << "Exception during KSM Reader Initialization: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
     }
     return ret;
 }
@@ -112,6 +116,11 @@ void KSM_Reader::sendEnq()
 
 int KSM_Reader::FnKSMReaderSendInit()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return -1;
+    }
+
     Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
 
     return ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
@@ -119,6 +128,11 @@ int KSM_Reader::FnKSMReaderSendInit()
 
 int KSM_Reader::FnKSMReaderSendGetStatus()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return -1;
+    }
+
     Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
 
     return ksmReaderCmd(KSMReaderCmdID::GET_STATUS_CMD);
@@ -126,6 +140,11 @@ int KSM_Reader::FnKSMReaderSendGetStatus()
 
 int KSM_Reader::FnKSMReaderSendEjectToFront()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return -1;
+    }
+
     Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
 
     return ksmReaderCmd(KSMReaderCmdID::EJECT_TO_FRONT_CMD);
@@ -984,6 +1003,11 @@ void KSM_Reader::startReadCardStatusTimer(int milliseconds)
 
 int KSM_Reader::FnKSMReaderReadCardInfo()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return -1;
+    }
+
     Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
 
     int retCode = 1;
@@ -1049,6 +1073,11 @@ cleanup:
 
 int KSM_Reader::FnKSMReaderEnable(bool enable)
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return -1;
+    }
+
     std::stringstream ss;
     ss << __func__ << " : " << enable;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
@@ -1094,6 +1123,11 @@ bool KSM_Reader::FnKSMReaderGetCardExpired()
 
 void KSM_Reader::FnKSMReaderStartGetStatus()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     continueReadFlag_.store(true);
     startReadCardStatusTimer(100);
 }

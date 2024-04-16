@@ -79,48 +79,59 @@ LCSCReader* LCSCReader::getInstance()
 int LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
     int ret = static_cast<int>(mCSCEvents::iCommPortError);
-    pMainIOContext_ = &mainIOContext;
-    uploadCDFilesTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
-    pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
-    pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
-    pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
-    pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
-    pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
-    pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
-
-    Logger::getInstance()->FnCreateLogFile(logFileName_);
-
-    // Create local LCSC folder
     try
     {
-        if (!(boost::filesystem::exists(LOCAL_LCSC_FOLDER_PATH)))
+        pMainIOContext_ = &mainIOContext;
+        uploadCDFilesTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
+        pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
+        pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
+
+        pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
+        pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
+        pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
+        pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+        pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
+
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
+
+        // Create local LCSC folder
+        try
         {
-            if (!(boost::filesystem::create_directories(LOCAL_LCSC_FOLDER_PATH)))
+            if (!(boost::filesystem::exists(LOCAL_LCSC_FOLDER_PATH)))
             {
-                std::cerr << "Failed to create directory: " << LOCAL_LCSC_FOLDER_PATH << std::endl;
+                if (!(boost::filesystem::create_directories(LOCAL_LCSC_FOLDER_PATH)))
+                {
+                    std::cerr << "Failed to create directory: " << LOCAL_LCSC_FOLDER_PATH << std::endl;
+                }
             }
+        }
+        catch (const std::exception &ex)
+        {
+            std::cerr << "Exception: " << ex.what() << std::endl;
+        }
+
+        std::stringstream ss;
+        if (pSerialPort_->is_open())
+        {
+            ss << "Successfully open serial port for LCSC Reader Communication: " << comPortName;
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog("LCSC Reader initialization completed.");
+            ret = 1;
+        }
+        else
+        {
+            ss << "Failed to open serial port for LCSC Reader Communication: " << comPortName;
+            Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
         }
     }
     catch (const std::exception &ex)
     {
-        std::cerr << "Exception: " << ex.what() << std::endl;
-    }
-
-    std::stringstream ss;
-    if (pSerialPort_->is_open())
-    {
-        ss << "Successfully open serial port for LCSC Reader Communication: " << comPortName;
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
-        Logger::getInstance()->FnLog("LCSC Reader initialization completed.");
-        ret = 1;
-    }
-    else
-    {
-        ss << "Failed to open serial port for LCSC Reader Communication: " << comPortName;
+        std::stringstream ss;
+        ss << "Exception during LCSC Reader Initialization: " << ex.what();
         Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LCSC");
     }
 
     return ret;
@@ -128,12 +139,22 @@ int LCSCReader::FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigne
 
 void LCSCReader::FnSendGetStatusCmd()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     int ret = lcscCmd(LcscCmd::GET_STATUS_CMD);
     EventManager::getInstance()->FnEnqueueEvent("Evt_LcscReaderStatus", ret);
 }
 
 int LCSCReader::FnSendGetLoginCmd()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return static_cast<int>(mCSCEvents::iCommPortError);
+    }
+
     int ret;
     int iRet = 0;
     reader_challenge_ = {};
@@ -156,6 +177,11 @@ int LCSCReader::FnSendGetLoginCmd()
 
 void LCSCReader::FnSendGetLogoutCmd()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     int ret = lcscCmd(LcscCmd::LOGOUT);
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderLogout", ret);
@@ -198,6 +224,11 @@ void LCSCReader::startGetCardIDTimer(int milliseconds)
 
 void LCSCReader::FnSendGetCardIDCmd()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     continueReadFlag_.store(true);
     startGetCardIDTimer(100);
 }
@@ -239,12 +270,22 @@ void LCSCReader::startGetCardBalanceTimer(int milliseconds)
 
 void LCSCReader::FnSendGetCardBalance()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     continueReadFlag_.store(true);
     startGetCardBalanceTimer(100);
 }
 
 void LCSCReader::FnSendGetTime()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     int ret = lcscCmd(LcscCmd::GET_TIME);
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetTime", ret);
@@ -252,6 +293,11 @@ void LCSCReader::FnSendGetTime()
 
 void LCSCReader::FnSendSetTime()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     int ret = lcscCmd(LcscCmd::SET_TIME);
 
     EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderSetTime", ret);
@@ -259,6 +305,11 @@ void LCSCReader::FnSendSetTime()
 
 int LCSCReader::FnSendUploadCFGFile(const std::string& path)
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return static_cast<int>(mCSCEvents::iCommPortError);
+    }
+
     int ret;
     const std::filesystem::path filePath(path);
 
@@ -444,6 +495,11 @@ int LCSCReader::uploadCFGComplete()
 
 int LCSCReader::FnSendUploadCILFile(const std::string& path)
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return static_cast<int>(mCSCEvents::iCommPortError);
+    }
+
     int ret;
     const std::filesystem::path filePath(path);
 
@@ -590,6 +646,11 @@ int LCSCReader::uploadCILComplete()
 
 int LCSCReader::FnSendUploadBLFile(const std::string& path)
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return static_cast<int>(mCSCEvents::iCommPortError);
+    }
+
     int ret;
     const std::filesystem::path filePath(path);
 
@@ -2021,8 +2082,8 @@ bool LCSCReader::FnMoveCDAckFile()
 
     std::string mountPoint = "/mnt/cdack";
     std::string sharedFolderPath = folderPath;
-    std::string username = "sunpark";
-    std::string password = "Tdxh638*";
+    std::string username = IniParser::getInstance()->FnGetCentralUsername();
+    std::string password = IniParser::getInstance()->FnGetCentralPassword();
     std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
     // Create the mount point directory if doesn't exist
@@ -2249,8 +2310,8 @@ bool LCSCReader::FnDownloadCDFiles()
 
     std::string mountPoint = "/mnt/cd";
     std::string sharedFolderPath = folderPath;
-    std::string username = "sunpark";
-    std::string password = "Tdxh638*";
+    std::string username = IniParser::getInstance()->FnGetCentralUsername();
+    std::string password = IniParser::getInstance()->FnGetCentralPassword();
     std::string outputFolderPath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
     // Create the mount point directory if doesn't exist

@@ -6,6 +6,7 @@
 #include <string>
 #include "common.h"
 #include "log.h"
+#include "version.h"
 
 Common* Common::common_;
 
@@ -26,7 +27,7 @@ Common* Common::getInstance()
 void Common::FnLogExecutableInfo(const std::string& str)
 {
     std::ostringstream info;
-    info << "start " << Common::getInstance()->FnGetFileName(str) << " , version: 1.1.2 build:" << __DATE__ << " " << __TIME__;
+    info << "start " << Common::getInstance()->FnGetFileName(str) << " , version: " << SW_VERSION << " build:" << __DATE__ << " " << __TIME__;
     Logger::getInstance()->FnLog(info.str());
 }
 

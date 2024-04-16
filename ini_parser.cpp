@@ -49,6 +49,8 @@ void IniParser::FnReadIniFile()
     LocalDB_                        = pt.get<std::string>("setting.LocalDB", "");
     CentralDBName_                  = pt.get<std::string>("setting.CentralDBName", "");
     CentralDBServer_                = pt.get<std::string>("setting.CentralDBServer", "");
+    CentralUsername_                = pt.get<std::string>("setting.CentralUsername", "");
+    CentralPassword_                = pt.get<std::string>("setting.CentralPassword", "");
     LocalUDPPort_                   = pt.get<std::string>("setting.LocalUDPPort", "");
     RemoteUDPPort_                  = pt.get<std::string>("setting.RemoteUDPPort", "");
     SeasonOnly_                     = pt.get<std::string>("setting.SeasonOnly", "");
@@ -123,6 +125,16 @@ std::string IniParser::FnGetCentralDBName() const
 std::string IniParser::FnGetCentralDBServer() const
 {
     return CentralDBServer_;
+}
+
+std::string IniParser::FnGetCentralUsername() const
+{
+    return CentralUsername_;
+}
+
+std::string IniParser::FnGetCentralPassword() const
+{
+    return CentralPassword_;
 }
 
 std::string IniParser::FnGetLocalUDPPort() const

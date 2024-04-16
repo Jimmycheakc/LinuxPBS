@@ -45,44 +45,55 @@ Antenna* Antenna::getInstance()
 
 void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
-    pMainIOContext_ = &mainIOContext;
-    pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
+    try
+    {
+        pMainIOContext_ = &mainIOContext;
+        pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
+        pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
-    pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
-    pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
-    pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::even));
-    pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
-    pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
+        pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
+        pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
+        pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::even));
+        pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+        pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
 
-    Logger::getInstance()->FnCreateLogFile(logFileName_);
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    std::stringstream ss;
-    if (pSerialPort_->is_open())
-    {
-        ss << "Successfully open serial port for Antenna Communication: " << comPortName;
+        std::stringstream ss;
+        if (pSerialPort_->is_open())
+        {
+            ss << "Successfully open serial port for Antenna Communication: " << comPortName;
+        }
+        else
+        {
+            ss << "Failed to open serial port for Antenna Communication: " << comPortName;
+            Logger::getInstance()->FnLog(ss.str());
+        }
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
+        
+        int result = antennaInit();
+        if (result == 1)
+        {
+            // raise antenna power event success
+            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
+            Logger::getInstance()->FnLog("Antenna initialization completed.");
+            Logger::getInstance()->FnLog("Antenna initialization completed.", logFileName_, "ANT");
+        }
+        else
+        {
+            // raise antenna power event failed
+            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
+            Logger::getInstance()->FnLog("Antenna initialization failed.");
+            Logger::getInstance()->FnLog("Antenna initialization failed.", logFileName_, "ANT");
+        }
     }
-    else
+    catch (const std::exception& e)
     {
-        ss << "Failed to open serial port for Antenna Communication: " << comPortName;
-        Logger::getInstance()->FnLog(ss.str());
-    }
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
-    
-    int result = antennaInit();
-    if (result == 1)
-    {
-        // raise antenna power event success
-        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
-        Logger::getInstance()->FnLog("Antenna initialization completed.");
-        Logger::getInstance()->FnLog("Antenna initialization completed.", logFileName_, "ANT");
-    }
-    else
-    {
-        // raise antenna power event failed
+        std::stringstream ss;
+        ss << "Exception during Antenna Initialization: " << e.what();
         EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
-        Logger::getInstance()->FnLog("Antenna initialization failed.");
-        Logger::getInstance()->FnLog("Antenna initialization failed.", logFileName_, "ANT");
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");
     }
 }
 
@@ -1081,6 +1092,11 @@ void Antenna::startSendReadIUCmdTimer(int milliseconds)
 
 void Antenna::FnAntennaSendReadIUCmd()
 {
+    if (pSerialPort_ == nullptr)
+    {
+        return;
+    }
+
     antIUCmdSendCount_ = 0;
     continueReadFlag_.store(true);
     startSendReadIUCmdTimer(100);
