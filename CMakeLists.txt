@@ -12,27 +12,18 @@ set(CMAKE_CXX_STANDARD 17)
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
 # Set the root directory for the target environment
-set(CMAKE_FIND_ROOT_PATH /home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux)
+set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux)
 
 # Specify the sysroot directory
-set(CMAKE_SYSROOT /home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux)
+set(CMAKE_SYSROOT ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux)
 # Add include directories
-include_directories(/home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/include)
-include_directories(/home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/include/spdlog)
-include_directories(/home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/include/boost)
+include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
+include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/spdlog)
+include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/boost)
 
 # Add link directories
-link_directories(/home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/lib)
-link_directories(/home/sunpark/workspace/x7v2_20222_D/sysroots/cortexa72-cortexa53-xilinx-linux/usr/lib)
-
-# Add include directories
-# include_directories(/usr/local/include)
-# include_directories(/usr/local/include/spdlog)
-# include_directories(/usr/local/include/boost)
-
-# Add link directories
-# link_directories(/usr/local/lib)
-# link_directories(/usr/lib)
+link_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/lib)
+link_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/lib)
 
 # Lisy your source files
 set(SOURCE_FILES
@@ -84,4 +75,4 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/LinuxPBS.ini ${CMAKE_CURRENT_BINARY_D
 add_executable(linuxpbs ${SOURCE_FILES})
 
 # Link against libraries
-target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto ${ODBC_LIBRARIES})
+target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto ${ODBC_LIBRARIES} fmt)
