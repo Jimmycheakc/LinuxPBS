@@ -16,6 +16,9 @@ set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xil
 
 # Specify the sysroot directory
 set(CMAKE_SYSROOT ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux)
+
+add_definitions(-DFMT_HEADER_ONLY)
+
 # Add include directories
 include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
 include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/spdlog)
@@ -75,4 +78,4 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/LinuxPBS.ini ${CMAKE_CURRENT_BINARY_D
 add_executable(linuxpbs ${SOURCE_FILES})
 
 # Link against libraries
-target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto ${ODBC_LIBRARIES} fmt)
+target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto ${ODBC_LIBRARIES})
