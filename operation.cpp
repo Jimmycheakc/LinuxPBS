@@ -696,6 +696,7 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
             }
         }
 
+        bool copyFileFail = false;
         if (foundNo_ > 0)
         {
             std::stringstream ss;
@@ -761,6 +762,8 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
                         std::stringstream ss;
                         ss << "Failed to copy log file : " << entry.path();
                         Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        copyFileFail = true;
+                        break;
                     }
                 }
             }
@@ -784,7 +787,14 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
             throw std::runtime_error("No Log files to upload.");
         }
 
-        SendMsg2Monitor("314", "99");
+        if (!copyFileFail)
+        {
+            SendMsg2Monitor("314", "99");
+        }
+        else
+        {
+            SendMsg2Monitor("314", "98");
+        }
     }
     catch (const std::exception& ex)
     {

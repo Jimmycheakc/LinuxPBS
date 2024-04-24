@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Check if the build folder exists
+if [ ! -d "build" ]; then
+    mkdir build
+fi
+
 cd build/
 
 source ~/workspace2/SDK_2022.1/environment-setup-cortexa72-cortexa53-xilinx-linux

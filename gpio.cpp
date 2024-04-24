@@ -142,7 +142,7 @@ void GPIOManager::FnGPIOInit()
     FnInitSetGPIODirection(PIN_DO7, GPIO_OUT);
     FnInitSetGPIODirection(PIN_DO8, GPIO_OUT);
     FnInitSetGPIODirection(PIN_DO9, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO10, GPIO_OUT);
+    //FnInitSetGPIODirection(PIN_DO10, GPIO_OUT); (Disabled :Use for USB Hub Reset)
 
     FnInitSetGPIODirection(PIN_DI1, GPIO_IN);
     FnInitSetGPIODirection(PIN_DI2, GPIO_IN);

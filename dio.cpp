@@ -528,9 +528,12 @@ int DIO::getOutputPinNum(int pinNum)
         case 9:
             ret = GPIOManager::PIN_DO9;
             break;
+        // (Disabled :Use for USB Hub Reset)
+        /*
         case 10:
             ret = GPIOManager::PIN_DO10;
             break;
+        */
         default:
             ret = 0;
             break;

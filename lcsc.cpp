@@ -1177,7 +1177,9 @@ LCSCReader::ReadResult LCSCReader::lcscReadWithTimeout(int milliseconds)
         }
         else
         {
-            if (responseIsComplete(buffer, total_bytes_transferred))
+            std::vector<char> charBuffer(getRxBuf(), getRxBuf() + getRxNum());
+
+            if (responseIsComplete(charBuffer, getRxNum()))
             {
                 std::stringstream ss;
                 ss << __func__ << "Async Read Timeout Occurred - Rx Completed." << " Total bytes Received : " << total_bytes_transferred;

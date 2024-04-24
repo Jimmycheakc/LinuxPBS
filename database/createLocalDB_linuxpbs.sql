@@ -91,3 +91,8 @@ CREATE TABLE IF NOT EXISTS Vehicle_type (
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME
 );
+
+-- Create a new user and grant privileges
+CREATE USER IF NOT EXISTS 'linuxpbs'@'localhost' IDENTIFIED BY 'SJ2001';
+GRANT ALL PRIVILEGES ON linux_pbs.* TO 'linuxpbs'@'localhost';
+FLUSH PRIVILEGES;

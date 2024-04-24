@@ -10,7 +10,7 @@
 #include "event_manager.h"
 #include "ksm_reader.h"
 #include "log.h"
-
+#include <iomanip>
 
 KSM_Reader* KSM_Reader::ksm_reader_ = nullptr;
 
@@ -310,6 +310,11 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
 
         if (result.success)
         {
+            // Discard last element BCC from received data buffer
+            if (!result.data.empty())
+            {
+                result.data.pop_back();
+            }
             ret = static_cast<int>(ksmReaderHandleCmdResponse(cmdID, result.data));
         }
     }
@@ -629,7 +634,9 @@ KSM_Reader::ReadResult KSM_Reader::ksmReaderReadWithTimeout(int milliseconds)
         }
         else
         {
-            if (responseIsComplete(buffer, total_bytes_transferred))
+            std::vector<char> charBuffer(getRxBuff(), getRxBuff() + getRxNum());
+
+            if (responseIsComplete(charBuffer, getRxNum()))
             {
                 std::stringstream ss;
                 ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
@@ -696,6 +703,7 @@ int KSM_Reader::receiveRxDataByte(char c)
     }
     else if ((rxBuff[RxNum_ - 1] == KSM_Reader::ETX) && (c == recvbcc_))
     {
+        rxBuff[RxNum_++] = c;
         ret = RxNum_;
         recvbcc_ = 0;
     }

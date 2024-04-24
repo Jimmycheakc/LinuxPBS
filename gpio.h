@@ -48,7 +48,7 @@ public:
     static const int PIN_DO7               = 507;   // J2 01
     static const int PIN_DO8               = 506;   // J2 03
     static const int PIN_DO9               = 505;   // J2 07
-    static const int PIN_DO10              = 504;   // J2 09
+    //static const int PIN_DO10              = 504;   // J2 09 (Disabled :Use for USB Hub Reset)
 
     // Define PININ
     static const int PIN_DI1               = 362;
