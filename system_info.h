@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 
 class SystemInfo
 {
@@ -21,5 +22,6 @@ public:
 
 private:
     static SystemInfo* systeminfo_;
+    static std::mutex mutex_;
     SystemInfo();
 };

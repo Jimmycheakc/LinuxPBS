@@ -1,6 +1,7 @@
 #include "crc.h"
 
 CRC32* CRC32::crc32_;
+std::mutex CRC32::mutex_;
 
 const uint32_t CRC32::mTable[] =
 {
@@ -45,6 +46,7 @@ CRC32::CRC32()
 
 CRC32* CRC32::getInstance()
 {
+	std::lock_guard<std::mutex> lock(mutex_);
     if (crc32_ == nullptr)
     {
         crc32_ = new CRC32();

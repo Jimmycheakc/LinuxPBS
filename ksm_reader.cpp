@@ -13,6 +13,7 @@
 #include <iomanip>
 
 KSM_Reader* KSM_Reader::ksm_reader_ = nullptr;
+std::mutex KSM_Reader::mutex_;
 
 KSM_Reader::KSM_Reader()
     : io_serial_context(),
@@ -21,6 +22,7 @@ KSM_Reader::KSM_Reader()
     continueReadFlag_(false),
     isCmdExecuting_(false),
     recvbcc_(0),
+    rxState_(KSM_Reader::RX_STATE::IDLE),
     cardPresented_(false),
     cardNum_(""),
     cardExpiryYearMonth_(0),
@@ -34,6 +36,7 @@ KSM_Reader::KSM_Reader()
 
 KSM_Reader* KSM_Reader::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (ksm_reader_ == nullptr)
     {
         ksm_reader_ = new KSM_Reader();
@@ -304,7 +307,7 @@ int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
         readerCmdSend(dataBuffer);
         result = ksmReaderReadWithTimeout(2000);
 
-        resetRxBuffer();
+        resetRxState();
 
         isCmdExecuting_.store(false);
 
@@ -562,8 +565,8 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
                     // Temp: raise event card info
                     EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardInfo", true);
                 }
-                Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
             }
+            Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
         }
         // Unknown Command Response
         else
@@ -629,7 +632,7 @@ KSM_Reader::ReadResult KSM_Reader::ksmReaderReadWithTimeout(int milliseconds)
             ss << __func__ << "Async Read Timeout Occurred.";
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
             pSerialPort_->cancel();
-            resetRxBuffer();
+            resetRxState();
             success = false;
         }
         else
@@ -650,7 +653,7 @@ KSM_Reader::ReadResult KSM_Reader::ksmReaderReadWithTimeout(int milliseconds)
                 ss << __func__ << "Async Read Timeout Occurred - Rx Not Completed.";
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
                 pSerialPort_->cancel();
-                resetRxBuffer();
+                resetRxState();
                 success = false;
             }
         }
@@ -697,6 +700,37 @@ int KSM_Reader::receiveRxDataByte(char c)
 {
     int ret = 0;
 
+    switch (rxState_)
+    {
+        case KSM_Reader::RX_STATE::IDLE:
+        {
+            if (c == KSM_Reader::ACK)
+            {
+                sendEnq();
+                rxState_ = KSM_Reader::RX_STATE::RECEIVING;
+            }
+            break;
+        }
+        case KSM_Reader::RX_STATE::RECEIVING:
+        {
+            if ((rxBuff[RxNum_ - 1] == KSM_Reader::ETX) && (c == recvbcc_))
+            {
+                rxBuff[RxNum_++] = c;
+                ret = RxNum_;
+                recvbcc_ = 0;
+                KSM_Reader::RX_STATE::IDLE;
+            }
+            else
+            {
+                RxNum_ %= KSM_Reader::RX_BUF_SIZE;
+                rxBuff[RxNum_++] = c;
+                recvbcc_ ^= c;
+            }
+            break;
+        }
+    }
+
+    /*
     if (c == KSM_Reader::ACK)
     {
         sendEnq();
@@ -713,6 +747,7 @@ int KSM_Reader::receiveRxDataByte(char c)
         rxBuff[RxNum_++] = c;
         recvbcc_ ^= c;
     }
+    */
 
     return ret;
 }
@@ -952,8 +987,9 @@ void KSM_Reader::readerCmdSend(const std::vector<unsigned char>& dataBuff)
     boost::asio::write(*pSerialPort_, boost::asio::buffer(getTxBuff(), getTxNum()));
 }
 
-void KSM_Reader::resetRxBuffer()
+void KSM_Reader::resetRxState()
 {
+    rxState_ = RX_STATE::IDLE;
     memset(rxBuff, 0, sizeof(rxBuff));
     RxNum_ = 0;
 }

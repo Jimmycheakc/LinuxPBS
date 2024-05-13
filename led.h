@@ -3,6 +3,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
+#include <mutex>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
 
@@ -61,6 +62,7 @@ class LEDManager
 
 public:
     static LEDManager* getInstance();
+    static std::mutex mutex_;
     void createLED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow);
     LED* getLED(const std::string& ledComPort);
 

@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
@@ -28,6 +29,7 @@ public:
 
 private:
     static Upt* upt_;
+    static std::mutex mutex_;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     bool initialized;

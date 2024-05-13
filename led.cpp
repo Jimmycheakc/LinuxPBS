@@ -212,6 +212,7 @@ void LED::FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string te
 
 // LED Manager
 LEDManager* LEDManager::ledManager_ = nullptr;
+std::mutex LEDManager::mutex_;
 
 LEDManager::LEDManager()
 {
@@ -220,6 +221,7 @@ LEDManager::LEDManager()
 
 LEDManager* LEDManager::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (ledManager_ == nullptr)
     {
         ledManager_ = new LEDManager();

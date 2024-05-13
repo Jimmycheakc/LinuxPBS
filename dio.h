@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include "boost/asio.hpp"
 #include "boost/asio/posix/stream_descriptor.hpp"
@@ -69,6 +70,7 @@ public:
 
 private:
     static DIO* dio_;
+    static std::mutex mutex_;
     std::string logFileName_;
     int loop_a_di_;
     int loop_b_di_;

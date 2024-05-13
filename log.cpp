@@ -8,6 +8,7 @@
 #include "log.h"
 
 Logger* Logger::logger_ = nullptr;
+std::mutex Logger::mutex_;
 
 Logger::Logger()
 {
@@ -22,6 +23,7 @@ Logger::~Logger()
 
 Logger* Logger::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (logger_ == nullptr)
     {
         logger_ = new Logger();

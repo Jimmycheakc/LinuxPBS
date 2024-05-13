@@ -9,6 +9,7 @@
 #include "version.h"
 
 Common* Common::common_;
+std::mutex Common::mutex_;
 
 Common::Common()
 {
@@ -17,6 +18,7 @@ Common::Common()
 
 Common* Common::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (common_ == nullptr)
     {
         common_ = new Common();
@@ -42,6 +44,18 @@ std::string Common::FnGetDateTime()
     std::ostringstream oss;
     oss << std::put_time(&timeinfo, "%d/%m/%y %H:%M:%S");
     oss << "." << std::setfill('0') << std::setw(3) << ms.count() << " ";
+    return oss.str();
+}
+
+std::string Common::FnGetDateTimeFormat_ddmmyyy_hhmmss()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%d/%m/%Y  %H:%M:%S");
     return oss.str();
 }
 

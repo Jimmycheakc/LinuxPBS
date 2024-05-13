@@ -26,6 +26,7 @@
 #include "lpr.h"
 
 operation* operation::operation_ = nullptr;
+std::mutex operation::mutex_;
 
 operation::operation()
 {
@@ -34,6 +35,7 @@ operation::operation()
 
 operation* operation::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (operation_ == nullptr)
     {
         operation_ = new operation();
@@ -99,11 +101,10 @@ void operation::OperationInit(io_context& ioContext)
     if (LoadParameter()) {
         Initdevice(ioContext);
         //----
-        ShowLEDMsg(tMsg.Msg_DefaultLED[0], tMsg.Msg_DefaultLED[1]);
         writelog("EPS in operation","OPR");
         //------
-        tProcess.IdleMsg[0] = tMsg.Msg_DefaultLED[0];
-        tProcess.IdleMsg[1] = tMsg.Msg_DefaultLED[1];
+        tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+        tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
         //-------
         Clearme();
         CheckReader();
@@ -181,10 +182,37 @@ bool operation::FnIsOperationInitialized() const
     return isOperationInitialized_.load();
 }
 
+void operation::FnLoopATimeoutHandler()
+{
+    Logger::getInstance()->FnLog("Loop A Timeout handler.", "", "OPR");
+    LoopACome();
+}
+
 void operation::LoopACome()
 {
     //--------
     writelog ("Loop A Come.","OPR");
+
+    // Loop A timer - To prevent loop A hang
+    pLoopATimer_->expires_from_now(boost::posix_time::seconds(operation::getInstance()->tParas.giOperationTO));
+    pLoopATimer_->async_wait([this] (const boost::system::error_code &ec)
+    {
+        if (!ec)
+        {
+            this->FnLoopATimeoutHandler();
+        }
+        else if (ec == boost::asio::error::operation_aborted)
+        {
+            Logger::getInstance()->FnLog("Loop A timer cancelled.", "", "OPR");
+        }
+        else
+        {
+            std::stringstream ss;
+            ss << "Loop A timer timeout error :" << ec.message();
+            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+        }
+    });
+
     ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
     Clearme();
     DIO::getInstance()->FnSetLCDBacklight(1);
@@ -201,6 +229,10 @@ void operation::LoopACome()
 void operation::LoopAGone()
 {
     writelog ("Loop A End.","OPR");
+
+    // Cancel the loop A timer 
+    pLoopATimer_->cancel();
+
     //------
     DIO::getInstance()->FnSetLCDBacklight(0);
      //
@@ -208,7 +240,6 @@ void operation::LoopAGone()
         EnableCashcard(false);
         Antenna::getInstance()->FnAntennaStopRead();
     }
-    ShowLEDMsg(tProcess.IdleMsg[0], tProcess.IdleMsg[1]);
 }
 void operation::LoopCCome()
 {
@@ -219,8 +250,10 @@ void operation::LoopCCome()
 void operation::LoopCGone()
 {
     writelog ("Loop C End.","OPR");
-    if (tProcess.gbLoopApresent == false) ShowLEDMsg(tProcess.IdleMsg[0], tProcess.IdleMsg[1]);
-
+    if (tProcess.gbLoopApresent.load() == true)
+    {
+        LoopACome();
+    }
 }
 void operation::VehicleCome(string sNo)
 {
@@ -381,34 +414,59 @@ void operation::Initdevice(io_context& ioContext)
         if (iRet == -4) { tPBSError[iReader].ErrNo = -4;}
     }
 
-    LCD::getInstance()->FnLCDInit();
+    if (LCD::getInstance()->FnLCDInit())
+    {
+        pLCDIdleTimer_ = std::make_unique<Timer>();
+        auto callback = std::bind(&operation::LcdIdleTimerTimeoutHandler, this);
+        pLCDIdleTimer_->start(1000, callback);
+    }
     GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
     Lpr::getInstance()->FnLprInit(ioContext);
+
+    // Loop A timer
+    pLoopATimer_ = std::make_unique<boost::asio::deadline_timer>(ioContext);
+}
+
+void operation::LcdIdleTimerTimeoutHandler()
+{
+    if ((tProcess.gbcarparkfull.load() == false) && (tProcess.gbLoopApresent.load() == false))
+    {
+        ShowLEDMsg(tProcess.getIdleMsg(0), tProcess.getIdleMsg(1));
+        std::string LCDMsg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
+        char * sLCDMsg = const_cast<char*>(LCDMsg.data());
+        LCD::getInstance()->FnLCDDisplayRow(2, sLCDMsg);
+    }
+    else if ((tProcess.gbcarparkfull.load() == true) && (tProcess.gbLoopApresent.load() == false))
+    {
+        ShowLEDMsg(tProcess.getIdleMsg(0), tProcess.getIdleMsg(1));
+    }
 }
 
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 {
-    
-    static string sLastLEDMsg;
-    //------
-    if (sLastLEDMsg == LEDMsg) return;
-    sLastLEDMsg = LEDMsg;
-    //----
-    writelog ("LED Message:" + LEDMsg,"OPR");
-    if (LEDMsg != LCDMsg)
-    {
-        writelog ("LCD Message:" + LCDMsg,"OPR");
-    }
-    //-------
-    char* sLCDMsg = const_cast<char*>(LCDMsg.data());
-    LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
+    static std::string sLastLEDMsg;
+    static std::string sLastLCDMsg;
 
-    if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED))) != nullptr)
+    if (sLastLEDMsg != LEDMsg)
     {
-        LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
+        sLastLEDMsg = LEDMsg;
+        writelog ("LED Message:" + LEDMsg,"OPR");
+
+        if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED))) != nullptr)
+        {
+            LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
+        }
     }
-  //  usleep(100000);
+
+    if (sLastLCDMsg != LCDMsg)
+    {
+        sLastLCDMsg = LCDMsg;
+        writelog ("LCD Message:" + LCDMsg,"OPR");
+
+        char* sLCDMsg = const_cast<char*>(LCDMsg.data());
+        LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
+    }
 }
 
 void operation::PBSEntry(string sIU)
@@ -449,7 +507,7 @@ void operation::PBSEntry(string sIU)
         Openbarrier();
         return;
     }
-    if (tProcess.gbcarparkfull ==1 and tParas.giFullAction == iLock)
+    if (tProcess.gbcarparkfull.load() == true and tParas.giFullAction == iLock)
     {   
         ShowLEDMsg(tMsg.Msg_LockStation[0], tMsg.Msg_LockStation[1]);
         writelog("Loop A while station Locked","OPR");
@@ -458,13 +516,13 @@ void operation::PBSEntry(string sIU)
     tEntry.iVehcileType = (tEntry.iTransType -1 )/3;
     iRet = CheckSeason(sIU,1);
 
-    if (tProcess.gbcarparkfull ==1 and iRet == 1 and (std::stoi(tSeason.rate_type) !=0) and tParas.giFullAction ==iNoPartial )
+    if (tProcess.gbcarparkfull.load() == true and iRet == 1 and (std::stoi(tSeason.rate_type) !=0) and tParas.giFullAction ==iNoPartial )
     {   
         writelog ("VIP Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^VIP Season Only", "Carpark Full!^VIP Season Only");
         return;
     } 
-    if (tProcess.gbcarparkfull ==1 and iRet != 1 )
+    if (tProcess.gbcarparkfull.load() == true and iRet != 1 )
     {   
         writelog ("Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^Season only", "Carpark Full!^Season only");
@@ -514,7 +572,8 @@ void operation:: Setdefaultparameter()
         tPBSError[i].ErrCode =0;
 	    tPBSError[i].ErrMsg = "";
     }
-    tProcess.gbLoopApresent = false;
+    tProcess.gbcarparkfull.store(false);
+    tProcess.gbLoopApresent.store(false);
     tProcess.gbLoopAIsOn = false;
     tProcess.gbLoopBIsOn = false;
     tProcess.gbLoopCIsOn = false;
@@ -529,7 +588,7 @@ void operation:: Setdefaultparameter()
     tProcess.gbInitParamFail = 0;
     tProcess.giCardIsIn = 0;
     //-------
-    tProcess.WaitForLCSCReturn = false;
+    tProcess.WaitForLCSCReturn.store(false);
     tProcess.giLastHousekeepingDate = 0;
     tProcess.fsLastIUNo = "";
     //---
@@ -1571,7 +1630,7 @@ void operation:: EnableLCSC(bool bEnable)
     int iRet;
     if (tPBSError[10].ErrNo != 0) return;
     //-------
-    if (tProcess.WaitForLCSCReturn) return;
+    if (tProcess.WaitForLCSCReturn.load()) return;
     if (bEnable && (LCSCReader::getInstance()->FnGetIsCmdExecuting())) return;
     
     if (!bEnable && !LCSCReader::getInstance()->FnGetIsCmdExecuting()) {
@@ -1649,7 +1708,7 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
         case LCSCReader::mCSCEvents::sBLUploadCorrupt:
         case LCSCReader::mCSCEvents::sCFGUploadCorrupt:
         case LCSCReader::mCSCEvents::sCILUploadCorrupt:
-            tProcess.WaitForLCSCReturn = false;
+            tProcess.WaitForLCSCReturn.store(false);
             writelog("received ACK from LCSC", "OPR");
             break;
         case LCSCReader::mCSCEvents::sGetIDSuccess:
@@ -1686,7 +1745,7 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
             break;
          default:
             writelog ("Received Error Event" + std::to_string(static_cast<int>(iEvent)), "OPR");
-            if (tProcess.gbLoopApresent == true && tEntry.gbEntryOK == false) {
+            if (tProcess.gbLoopApresent.load() == true && tEntry.gbEntryOK == false) {
                 ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
                 SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
                 EnableLCSC(true);
@@ -1743,7 +1802,7 @@ void operation:: KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCard
     }
     else
     {
-        if (tProcess.gbcarparkfull && tEntry.sIUTKNo != "" ) return;
+        if (tProcess.gbcarparkfull.load() == true && tEntry.sIUTKNo != "" ) return;
         ShowLEDMsg(tMsg.Msg_InsertCashcard[0], tMsg.Msg_InsertCashcard[1]);   
     }                    
     //--------
@@ -1785,7 +1844,7 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
 
     int i = static_cast<int>(CType);
 
-    if (tEntry.gsTransID == sTransid && tProcess.gbLoopApresent == true && tProcess.gbsavedtrans == false)
+    if (tEntry.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
     {
        if (gtStation.iType == tientry)  tEntry.sLPN[i]=LPN;
     }

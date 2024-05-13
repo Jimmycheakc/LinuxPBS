@@ -6,6 +6,7 @@
 #include "ini_parser.h"
 
 IniParser* IniParser::iniParser_;
+std::mutex IniParser::mutex_;
 
 IniParser::IniParser()
 {
@@ -14,6 +15,7 @@ IniParser::IniParser()
 
 IniParser* IniParser::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (iniParser_ == nullptr)
     {
         iniParser_ = new IniParser();
@@ -57,6 +59,7 @@ void IniParser::FnReadIniFile()
     NotAllowHourly_                 = pt.get<std::string>("setting.NotAllowHourly", "");
     LPRIP4Front_                    = pt.get<std::string>("setting.LPRIP4Front", "");
     LPRIP4Rear_                     = pt.get<std::string>("setting.LPRIP4Rear", "");
+    LPRPort_                        = pt.get<std::string>("setting.LPRPort", "");
     WaitLPRNoTime_                  = pt.get<std::string>("setting.WaitLPRNoTime", "");
     LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");
     LPRErrorCount_                  = pt.get<std::string>("setting.LPRErrorCount", "");
@@ -165,6 +168,11 @@ std::string IniParser::FnGetLPRIP4Front() const
 std::string IniParser::FnGetLPRIP4Rear() const
 {
     return LPRIP4Rear_;
+}
+
+std::string IniParser::FnGetLPRPort() const
+{
+    return LPRPort_;
 }
 
 std::string IniParser::FnGetWaitLPRNoTime() const

@@ -9,6 +9,7 @@
 #include "operation.h"
 
 db* db::db_ = nullptr;
+std::mutex db::mutex_;
 
 db::db()
 {
@@ -17,6 +18,7 @@ db::db()
 
 db* db::getInstance()
 {
+	std::lock_guard<std::mutex> lock(mutex_);
     if (db_ == nullptr)
     {
         db_ = new db();
@@ -150,7 +152,7 @@ int db::local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID)
 		sqlStmt= sqlStmt +  " FROM " + tbName + " where (season_no='";
 		sqlStmt=sqlStmt + L_sSeasonNo;
 		sqlStmt=sqlStmt + "' or instr(multi_season_no," + "'" + L_sSeasonNo + "') >0 ) ";
-		sqlStmt=sqlStmt + "AND date_from < now() AND date_to >= now() AND (zone_id = '0' or zone_id = "+ to_string(iZoneID)+ ")";
+		sqlStmt=sqlStmt + "AND date_from <= now() AND DATE(date_to) >= DATE(now()) AND (zone_id = '0' or zone_id = "+ to_string(iZoneID)+ ")";
 
 		//operation::getInstance()->writelog(sqlStmt,"DB");
 

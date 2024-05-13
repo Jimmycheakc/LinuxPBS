@@ -7,6 +7,7 @@
 #include <sys/sysinfo.h>
 
 SystemInfo* SystemInfo::systeminfo_;
+std::mutex SystemInfo::mutex_;
 
 SystemInfo::SystemInfo()
 {
@@ -15,6 +16,7 @@ SystemInfo::SystemInfo()
 
 SystemInfo* SystemInfo::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (systeminfo_ == nullptr)
     {
         systeminfo_ = new SystemInfo();

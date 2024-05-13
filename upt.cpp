@@ -2,6 +2,7 @@
 #include "upt.h"
 
 Upt* Upt::upt_;
+std::mutex Upt::mutex_;
 
 Upt::Upt()
     : initialized(false)
@@ -11,6 +12,7 @@ Upt::Upt()
 
 Upt* Upt::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (upt_ == nullptr)
     {
         upt_ = new Upt();

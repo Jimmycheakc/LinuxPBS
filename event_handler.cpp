@@ -12,6 +12,7 @@
 #include "lpr.h"
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
+std::mutex EventHandler::mutex_;
 
 std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap = 
 {
@@ -42,6 +43,7 @@ EventHandler::EventHandler()
 
 EventHandler* EventHandler::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (eventHandler_ == nullptr)
     {
         eventHandler_ = new EventHandler();
@@ -86,7 +88,7 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent == true && operation::getInstance()->tEntry.sIUTKNo == "") 
+        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent.load() && operation::getInstance()->tEntry.sIUTKNo == "") 
         { 
             operation :: getInstance()->writelog("No IU detected!", "OPR");
             if (operation::getInstance()->tEntry.sEnableReader == false) 
@@ -373,6 +375,11 @@ bool EventHandler::handleLcscReaderUploadCFGFile(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == LCSCReader::mCSCEvents::sCFGUploadSuccess)
+        {
+            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
+        }
     }
     else
     {
@@ -399,6 +406,11 @@ bool EventHandler::handleLcscReaderUploadCILFile(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == LCSCReader::mCSCEvents::sCILUploadSuccess)
+        {
+            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
+        }
     }
     else
     {
@@ -425,6 +437,11 @@ bool EventHandler::handleLcscReaderUploadBLFile(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == LCSCReader::mCSCEvents::sBLUploadSuccess)
+        {
+            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
+        }
     }
     else
     {
@@ -453,14 +470,14 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
             {
               //  Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_ON_EVENT");
-                operation::getInstance()->tProcess.gbLoopApresent = true;
+                operation::getInstance()->tProcess.gbLoopApresent.store(true);
                 operation::getInstance()->LoopACome();
                 break;
             }
             case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
             {
              //   Logger::getInstance()->FnLog("DIO::DIO_EVENT::LOOP_A_OFF_EVENT");
-                operation::getInstance()->tProcess.gbLoopApresent = false;
+                operation::getInstance()->tProcess.gbLoopApresent.store(false);
                 operation::getInstance()->LoopAGone();
                 break;
             }
@@ -715,27 +732,23 @@ bool EventHandler::handleLPRReceive(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<const void*>* typedEvent = dynamic_cast<const Event<const void*>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (typedEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        const struct Lpr::LPREventData* eventData = static_cast<const struct Lpr::LPREventData*>(typedEvent->data);
-        if (!eventData) {
-            // Handle invalid data pointer
-            return false;
-        }
+        struct Lpr::LPREventData eventData = Lpr::getInstance()->deserializeEventData(strEvent->data);
         
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << "camType : " << static_cast<int>(eventData->camType);
-        ss << ", LPN : " << eventData->LPN;
-        ss << ", TransID : " << eventData->TransID;
-        ss << ", imagePath : " << eventData->imagePath;
+        ss << __func__ << " Successfully, Event Data : " << "camType : " << static_cast<int>(eventData.camType);
+        ss << ", LPN : " << eventData.LPN;
+        ss << ", TransID : " << eventData.TransID;
+        ss << ", imagePath : " << eventData.imagePath;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        Lpr::CType camType = eventData->camType;
-        std::string LPN = eventData->LPN;
-        std::string TransID = eventData->TransID;
-        std::string imagePath = eventData->imagePath;
+        Lpr::CType camType = eventData.camType;
+        std::string LPN = eventData.LPN;
+        std::string TransID = eventData.TransID;
+        std::string imagePath = eventData.imagePath;
         operation::getInstance()->ReceivedLPR(camType,LPN, TransID, imagePath);
     }
     else

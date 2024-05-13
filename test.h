@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mutex>
+
 class Test
 {
 
@@ -19,6 +21,7 @@ public:
 
 private:
     static Test* test_;
+    static std::mutex mutex_;
     Test();
     void common_test(char* argv);
     void systeminfo_test();

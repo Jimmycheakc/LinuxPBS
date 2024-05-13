@@ -133,6 +133,7 @@ private:
 	odbc *localdb;
 
     static db* db_;
+    static std::mutex mutex_;
     db();
 
 };

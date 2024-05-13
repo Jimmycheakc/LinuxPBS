@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <mutex>
 #include "boost/asio.hpp"
 #include "boost/thread.hpp"
 #include "boost/asio/serial_port.hpp"
@@ -116,7 +117,7 @@ public:
 
 private:
 
-    boost::mutex mutex_;
+    static std::mutex mutex_;
     boost::asio::io_context* pMainIOContext_;
     static Antenna* antenna_;
     boost::asio::io_context io_serial_context;

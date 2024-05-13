@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 
 class LCD
 {
@@ -11,12 +12,13 @@ public:
     static const char BLOCK                     = 219;
 
     static LCD* getInstance();
-    void FnLCDInit();
+    bool FnLCDInit();
     void FnLCDClear();
     void FnLCDHome();
     void FnLCDDisplayCharacter(char aChar);
     void FnLCDDisplayString(std::uint8_t row, std::uint8_t col, char* str);
     void FnLCDDisplayStringCentered(std::uint8_t row, char* str);
+    void FnLCDClearDisplayRow(std::uint8_t row);
     void FnLCDDisplayRow(std::uint8_t row, char* str);
     void FnLCDDisplayScreen(char* str);
     void FnLCDWipeOnLR(char* str);
@@ -45,6 +47,7 @@ public:
 
 private:
     static LCD* lcd_;
+    static std::mutex mutex_;
     int lcdFd_;
     bool lcdInitialized_;
     LCD();

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <mutex>
 #include "ce_time.h"
 
 typedef enum {
@@ -284,7 +286,7 @@ struct  tProcess_Struct
 {
 	
 	bool gbsavedtrans;
-	bool gbcarparkfull;
+	atomic<bool> gbcarparkfull;
 	long glNoofOfflineData;
 	string fsLastIUNo;
 	string fsLastCardNo;
@@ -296,7 +298,7 @@ struct  tProcess_Struct
 	string fsLastReadCard;
 	string gsDefaultIU; 
 	string gsBroadCastIP;
-	bool gbLoopApresent;
+	atomic<bool> gbLoopApresent;
 	bool gbLoopAIsOn;
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
@@ -307,11 +309,31 @@ struct  tProcess_Struct
 	bool gbloadedLEDMsg;
 	bool gbloadedStnSetup;
 	int gbInitParamFail;
-	bool WaitForLCSCReturn;
+	atomic<bool> WaitForLCSCReturn;
 	int giCardIsIn;
 	int giLastHousekeepingDate;
 //	bool gbwaitLoopA;
 	std::string IdleMsg[2];
+	std::mutex idleMsgMutex;
+
+	void setIdleMsg(int index, const std::string& msg)
+	{
+		std::lock_guard<std::mutex> lock(idleMsgMutex);
+		if (index >=0 && index < 2)
+		{
+			IdleMsg[index] = msg;
+		}
+	}
+
+	std::string getIdleMsg(int index)
+	{
+		std::lock_guard<std::mutex> lock(idleMsgMutex);
+		if (index >=0 && index < 2)
+		{
+			return IdleMsg[index];
+		}
+		return "";
+	}
 	
 };
 

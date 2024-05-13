@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <mutex>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
 
@@ -11,6 +12,12 @@ public:
     {
         std::vector<char> data;
         bool success;
+    };
+
+    enum class RX_STATE
+    {
+        IDLE,
+        RECEIVING
     };
 
     enum class KSMReaderCmdID
@@ -80,6 +87,7 @@ public:
 
 private:
     static KSM_Reader* ksm_reader_;
+    static std::mutex mutex_;
     boost::asio::io_context* pMainIOContext_;
     boost::asio::io_context io_serial_context;
     std::unique_ptr<boost::asio::io_context::strand> pStrand_;
@@ -92,13 +100,14 @@ private:
     int TxNum_;
     int RxNum_;
     char recvbcc_;
+    RX_STATE rxState_;
     bool cardPresented_;
     std::string cardNum_;
     int cardExpiryYearMonth_;
     bool cardExpired_;
     long cardBalance_;
     KSM_Reader();
-    void resetRxBuffer();
+    void resetRxState();
     unsigned char* getTxBuff();
     unsigned char* getRxBuff();
     int getTxNum();

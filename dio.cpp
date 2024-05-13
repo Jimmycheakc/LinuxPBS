@@ -9,6 +9,7 @@
 #include "operation.h"
 
 DIO* DIO::dio_ = nullptr;
+std::mutex DIO::mutex_;
 
 DIO::DIO()
     : loop_a_di_(0),
@@ -41,6 +42,7 @@ DIO::DIO()
 
 DIO* DIO::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (dio_ == nullptr)
     {
         dio_ = new DIO();

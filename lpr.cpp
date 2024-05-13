@@ -9,11 +9,13 @@
 #include "event_manager.h"
 
 Lpr* Lpr::lpr_ = nullptr;
+std::mutex Lpr::mutex_;
 
 Lpr::Lpr()
     : cameraNo_(0),
     lprIp4Front_(""),
     lprIp4Rear_(""),
+    lprPort_(0),
     reconnTime_(0),
     reconnTime2_(0),
     stdID_(""),
@@ -26,6 +28,7 @@ Lpr::Lpr()
 
 Lpr* Lpr::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (lpr_ == nullptr)
     {
         lpr_ = new Lpr();
@@ -44,11 +47,12 @@ void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
     reconnTime2_ = 10000;
     commErrorTimeCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorTime());
     transErrorCountCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorCount());
+    lprPort_ = std::stoi(IniParser::getInstance()->FnGetLPRPort());
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    initFrontCamera (mainIOContext, lprIp4Front_, 5272, "CH1");
-    initRearCamera(mainIOContext, lprIp4Rear_, 5272, "CH1");
+    initFrontCamera (mainIOContext, lprIp4Front_, lprPort_, "CH1");
+    initRearCamera(mainIOContext, lprIp4Rear_, lprPort_, "CH1");
 }
 
 void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH)
@@ -95,7 +99,7 @@ void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
 
 void Lpr::handleReconnectTimerTimeout()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
     if (!pFrontCamera_->isStatusGood())
     {
@@ -111,7 +115,7 @@ void Lpr::handleReconnectTimerTimeout()
 
 void Lpr::startReconnectTimer()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
     int milliseconds = reconnTime_; 
     std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
@@ -225,7 +229,7 @@ void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
 
 void Lpr::handleReconnectTimer2Timeout()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
     if (!pRearCamera_->isStatusGood())
     {
@@ -241,7 +245,7 @@ void Lpr::handleReconnectTimer2Timeout()
 
 void Lpr::startReconnectTimer2()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
     int milliseconds = reconnTime2_; 
     std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
@@ -538,7 +542,9 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
             data.LPN = LPN;
             data.TransID = TransID;
             data.imagePath = imagePath;
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
+
+            std::string serializedData = serializeEventData(data);
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", serializedData);
 
             std::stringstream ss;
             ss << "Raise LPRReceive. LPN Not recognized. @ " << m_CType;
@@ -553,7 +559,11 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
             data.LPN = LPN;
             data.TransID = TransID;
             data.imagePath = imagePath;
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
+
+            std::string serializedData = serializeEventData(data);
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", serializedData);
+
+            Logger::getInstance()->FnLog("data.TransID : " + data.TransID);
 
             std::stringstream ss;
             ss << "Raise LPRReceive. @ " << m_CType;
@@ -580,7 +590,9 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
                     data.LPN = LPN;
                     data.TransID = TransID;
                     data.imagePath = imagePath;
-                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
+
+                    std::string serializedData = serializeEventData(data);
+                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", serializedData);
 
                     std::stringstream ss;
                     ss << "Raise LPRReceive. LPN Not recognized. @ " << m_CType;
@@ -595,7 +607,9 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
                     data.LPN = LPN;
                     data.TransID = TransID;
                     data.imagePath = imagePath;
-                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", (const void*)&data);
+
+                    std::string serializedData = serializeEventData(data);
+                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleLPRReceive", serializedData);
 
                     std::stringstream ss;
                     ss << "Raise LPRReceive. @ " << m_CType;
@@ -628,4 +642,33 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
         }
     }
+}
+
+std::string Lpr::serializeEventData(const LPREventData& eventData)
+{
+    std::stringstream ss;
+    ss << static_cast<int>(eventData.camType) << "," << eventData.LPN << "," << eventData.TransID << "," << eventData.imagePath;
+    return ss.str();
+}
+
+struct Lpr::LPREventData Lpr::deserializeEventData(const std::string& serializeData)
+{
+    struct LPREventData eventData;
+    std::stringstream ss(serializeData);
+    std::string token;
+
+    std::getline(ss, token, ',');
+    int camTypeValue = std::stoi(token);
+    eventData.camType = static_cast<Lpr::CType>(camTypeValue);
+
+    std::getline(ss, token, ',');
+    eventData.LPN = token;
+
+    std::getline(ss, token, ',');
+    eventData.TransID = token;
+
+    std::getline(ss, token, ',');
+    eventData.imagePath = token;
+
+    return eventData;
 }

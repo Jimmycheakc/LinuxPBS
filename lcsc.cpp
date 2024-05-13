@@ -22,6 +22,7 @@
 #include "log.h"
 
 LCSCReader* LCSCReader::lcscReader_ = nullptr;
+std::mutex LCSCReader::mutex_;
 
 LCSCReader::LCSCReader()
     : io_serial_context(),
@@ -69,6 +70,7 @@ LCSCReader::LCSCReader()
 
 LCSCReader* LCSCReader::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (lcscReader_ == nullptr)
     {
         lcscReader_ = new LCSCReader();
@@ -319,7 +321,7 @@ int LCSCReader::FnSendUploadCFGFile(const std::string& path)
 
         if (!fileData.empty())
         {
-            std::size_t chunkSize = 256;
+            std::size_t chunkSize = 512;
             std::vector<std::vector<unsigned char>> chunks = chunkData(fileData, chunkSize);
 
             for (const auto& chunk : chunks)
@@ -509,7 +511,7 @@ int LCSCReader::FnSendUploadCILFile(const std::string& path)
 
         if (!fileData.empty() && (fileData.size() > 6))
         {
-            std::size_t chunkSize = 256;
+            std::size_t chunkSize = 512;
             std::vector<std::vector<unsigned char>> chunks = chunkData(fileData, chunkSize);
 
             bool isSubSequence = false;
@@ -660,7 +662,7 @@ int LCSCReader::FnSendUploadBLFile(const std::string& path)
 
         if (!fileData.empty() && (fileData.size() > 6))
         {
-            std::size_t chunkSize = 256;
+            std::size_t chunkSize = 512;
             std::vector<std::vector<unsigned char>> chunks = chunkData(fileData, chunkSize);
 
             bool isSubSequence = false;
@@ -2404,7 +2406,8 @@ bool LCSCReader::FnDownloadCDFiles()
                 downloadTotal++;
 
                 std::stringstream ss;
-                ss << "Download " << entry.path() << " to " << dest_file << " successfully";
+                ss << "Download " << entry.path() << " to " << dest_file << " successfully.";
+                Logger::getInstance()->FnLog(ss.str());
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
             }
         }
@@ -2417,7 +2420,8 @@ bool LCSCReader::FnDownloadCDFiles()
     }
 
     std::stringstream ss;
-    ss << "Total " << downloadTotal << " cd files downloaded";
+    ss << "Total " << downloadTotal << " cd files downloaded successfully.";
+    Logger::getInstance()->FnLog(ss.str());
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 
     // Unmount the shared folder
@@ -2439,8 +2443,8 @@ bool LCSCReader::FnDownloadCDFiles()
 void LCSCReader::FnUploadLCSCCDFiles()
 {
     if ((operation::getInstance()->tParas.giCommPortLCSC > 0)
-        && (!operation::getInstance()->tProcess.gbLoopApresent)
-        && (operation::getInstance()->tProcess.WaitForLCSCReturn == false)
+        && (operation::getInstance()->tProcess.gbLoopApresent.load() == false)
+        && (operation::getInstance()->tProcess.WaitForLCSCReturn.load() == false)
         && (Common::getInstance()->FnGetCurrentHour() < 20))
     {
         if ((HasCDFileToUpload_ == false)
@@ -2483,9 +2487,9 @@ void LCSCReader::FnUploadLCSCCDFiles()
             if (fileCount > 0)
             {
                 HasCDFileToUpload_ = true;
-                uploadCDFilesRet = FnUploadCDFile2(cdFileName);
-                operation::getInstance()->tProcess.WaitForLCSCReturn = true;
+                operation::getInstance()->tProcess.WaitForLCSCReturn.store(true);
                 CDUploadTimeOut_ = 0;
+                uploadCDFilesRet = FnUploadCDFile2(cdFileName);
 
                 std::stringstream ss;
                 ss << "Call upload CD file: " << cdFileName;
@@ -2561,11 +2565,11 @@ void LCSCReader::FnUploadLCSCCDFiles()
         }
     }
 
-    if (operation::getInstance()->tProcess.WaitForLCSCReturn == true)
+    if (operation::getInstance()->tProcess.WaitForLCSCReturn.load() == true)
     {
         if (CDUploadTimeOut_ > 6)
         {
-            operation::getInstance()->tProcess.WaitForLCSCReturn = false;
+            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
         }
         else
         {
@@ -2574,7 +2578,7 @@ void LCSCReader::FnUploadLCSCCDFiles()
     }
 
     if ((Common::getInstance()->FnGetCurrentHour() > 20)
-        && (HasCDFileToUpload_ || operation::getInstance()->tProcess.WaitForLCSCReturn))
+        && (HasCDFileToUpload_ || operation::getInstance()->tProcess.WaitForLCSCReturn.load()))
     {
         std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
         std::filesystem::path folder(localLCSCFolder);
@@ -2592,38 +2596,80 @@ void LCSCReader::FnUploadLCSCCDFiles()
                 Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
             }
         }
-        operation::getInstance()->tProcess.WaitForLCSCReturn = false;
+        operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
         HasCDFileToUpload_ = false;
     }
 }
 
-void LCSCReader::handleUploadCDFilesTimerTimeout()
+bool LCSCReader::FnUploadCDFile2(std::string path)
 {
+    CDFPath_ = path;
+    bool bRet = false;
+
     if (!CDFPath_.empty())
     {
         int ret = 0;
         if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".zip"))
         {
+            std::stringstream ss;
+            ss << "Uploading the CFG file :" << CDFPath_ << " to LCSC device.";
+            Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
             ret = FnSendUploadCFGFile(CDFPath_);
             if ((ret == static_cast<int>(mCSCEvents::sCFGUploadSuccess)) || (ret == static_cast<int>(mCSCEvents::sWrongCDfileSize)))
             {
+                std::string result = (ret == static_cast<int>(mCSCEvents::sCFGUploadSuccess)) ? "SUCCEED" : "FALIED"; 
+                std::stringstream ss;
+                ss << "Upload " << result << ".";
+                Logger::getInstance()->FnLog(ss.str());
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
                 std::filesystem::remove(CDFPath_.c_str());
+
+                bRet = (ret == static_cast<int>(mCSCEvents::sCFGUploadSuccess)) ? true : false; 
             }
         }
         else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".sys"))
         {
+            std::stringstream ss;
+            ss << "Uploading the CIL file :" << CDFPath_ << " to LCSC device.";
+            Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
             ret = FnSendUploadCILFile(CDFPath_);
             if ((ret == static_cast<int>(mCSCEvents::sCILUploadSuccess)) || (ret == static_cast<int>(mCSCEvents::sWrongCDfileSize)))
             {
+                std::string result = (ret == static_cast<int>(mCSCEvents::sCILUploadSuccess)) ? "SUCCEED" : "FALIED"; 
+                std::stringstream ss;
+                ss << "Upload " << result << ".";
+                Logger::getInstance()->FnLog(ss.str());
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
                 std::filesystem::remove(CDFPath_.c_str());
+
+                bRet = (ret == static_cast<int>(mCSCEvents::sCILUploadSuccess)) ? true : false;
             }
         }
         else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".blk"))
         {
+            std::stringstream ss;
+            ss << "Uploading the BL file :" << CDFPath_ << " to LCSC device.";
+            Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
             ret = FnSendUploadBLFile(CDFPath_);
             if ((ret == static_cast<int>(mCSCEvents::sBLUploadSuccess)) || (ret == static_cast<int>(mCSCEvents::sWrongCDfileSize)))
             {
+                std::string result = (ret == static_cast<int>(mCSCEvents::sBLUploadSuccess)) ? "SUCCEED" : "FALIED"; 
+                std::stringstream ss;
+                ss << "Upload " << result << ".";
+                Logger::getInstance()->FnLog(ss.str());
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
+
                 std::filesystem::remove(CDFPath_.c_str());
+
+                bRet = (ret == static_cast<int>(mCSCEvents::sBLUploadSuccess)) ? true : false;
             }
         }
         else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".lbs"))
@@ -2637,18 +2683,8 @@ void LCSCReader::handleUploadCDFilesTimerTimeout()
         {
             FnSendGetLoginCmd();
         }
+
     }
-}
 
-bool LCSCReader::FnUploadCDFile2(std::string path)
-{
-    CDFPath_ = path;
-    uploadCDFilesTimer_->expires_from_now(boost::posix_time::milliseconds(10));
-    uploadCDFilesTimer_->async_wait([this](const boost::system::error_code& error) {
-            if (!error) {
-                handleUploadCDFilesTimerTimeout();
-            }
-    });
-
-    return true;
+    return bRet;
 }

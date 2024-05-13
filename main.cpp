@@ -1,3 +1,4 @@
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -30,44 +31,63 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
 {
     auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
 
-    //Sync PMS time counter
-     operation:: getInstance()->tProcess.giSyncTimeCnt = operation:: getInstance()->tProcess.giSyncTimeCnt+ 1;
-    //------ timer process start
-    if (operation::getInstance()->FnIsOperationInitialized()) {
+    // Print the start time in HH:MM:SS format
+    //auto startTime = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    //std::cout << "Start Time: " << std::put_time(std::localtime(&startTime), "%T") << std::endl;
 
-        if (operation::getInstance()->tProcess.gbLoopApresent == false) {
-            if (operation::getInstance()->tProcess.giSystemOnline = 0 and operation::getInstance()->tProcess.glNoofOfflineData > 0) {
+    //Sync PMS time duration
+    static auto lastSyncTime = std::chrono::steady_clock::now();
+    auto durationSinceSync = std::chrono::duration_cast<std::chrono::hours>(start - lastSyncTime);
+
+    //------ timer process start
+    if (operation::getInstance()->FnIsOperationInitialized())
+    {
+        if (operation::getInstance()->tProcess.gbLoopApresent.load() == false) 
+        {
+            if (operation::getInstance()->tProcess.giSystemOnline == 0 && operation::getInstance()->tProcess.glNoofOfflineData > 0)
+            {
                 db::getInstance()->moveOfflineTransToCentral();
             }
+
             // Sysnc time from PMS per hour
-            if (operation::getInstance()->tProcess.giSyncTimeCnt > 6*60 ) {
+            if (durationSinceSync >= std::chrono::hours(1))
+            {
                 db::getInstance()->synccentraltime();
-                operation::getInstance()->tProcess.giSyncTimeCnt = 0;
+                lastSyncTime = start;
                 //-----
                 operation::getInstance()->CheckReader();
-            } 
+            }
+
             // check central DB
             if (operation::getInstance()->tProcess.giSystemOnline != 0) {
                 
                 
             }
+
+            // Check the LCSC CD files- download and upload
             LCSCReader::getInstance()->FnUploadLCSCCDFiles();
-            //---- clear expired season
-            if (operation::getInstance()->tProcess.giLastHousekeepingDate != Common::getInstance()->FnGetCurrentDay()){
+
+            // Clear expired season
+            if (operation::getInstance()->tProcess.giLastHousekeepingDate != Common::getInstance()->FnGetCurrentDay())
+            {
                 db::getInstance()->clearexpiredseason();
                 operation::getInstance()->tProcess.giLastHousekeepingDate = Common::getInstance()->FnGetCurrentDay();
             }
         }
         // Send DateTime to Monitor
         operation::getInstance()->FnSendDateTimeToMonitor();
-    } else {
-        if (operation::getInstance()->tProcess.gbInitParamFail==1) {
+    }
+    else
+    {
+        if (operation::getInstance()->tProcess.gbInitParamFail == 1)
+        {
             if (operation::getInstance()->LoadedparameterOK())
             {
                 operation::getInstance()->tProcess.gbInitParamFail = 0;
                 operation::getInstance()->Initdevice(*(operation::getInstance()->iCurrentContext));
                 operation::getInstance()->isOperationInitialized_.store(true);
-                operation::getInstance()->ShowLEDMsg(operation::getInstance()->tMsg.Msg_DefaultLED[0], operation::getInstance()->tMsg.Msg_DefaultLED[1]);
+                operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+                operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
                 operation::getInstance()->writelog("EPS in operation","OPR");
             }
         }
@@ -75,9 +95,14 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
 
     //--------
     auto end = std::chrono::steady_clock::now(); // Measure the end time of the handler execution
+
+    // Print the end time in HH:MM:SS format
+    //auto endTimeConverted = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    //std::cout << "End Time: " << std::put_time(std::localtime(&endTimeConverted), "%T") << std::endl;
+
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start); // Calculate the duration of the handler execution
 
-    timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(10) + duration);
+    timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(5) + duration);
     timer->async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, timer, io));
 }
 
@@ -207,8 +232,28 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
     timer->async_wait(boost::bind(dailyLogHandler, boost::asio::placeholders::error, timer));
 }
 
+void signalHandler(int signal)
+{
+    if (signal == SIGINT || signal == SIGTERM)
+    {
+        Logger::getInstance()->FnLog("Terminal signal received. Station Program terminated.");
+        operation::getInstance()->SendMsg2Server("09","11Stopping...");
+
+        // Display Station Stopped on LCD
+        std::string LCDMsg = "Station Stopped!";
+        char* sLCDMsg = const_cast<char*>(LCDMsg.data());
+        LCD::getInstance()->FnLCDClearDisplayRow(1);
+        LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
+
+        exit(signal);
+    }
+}
+
 int main (int agrc, char* argv[])
 {
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+    
     // Initialization
     boost::asio::io_context ioContext;
     boost::asio::io_context dailyLogIoContext;

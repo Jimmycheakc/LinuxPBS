@@ -6,6 +6,7 @@
 #include "ps_par.h"
 
 LCD* LCD::lcd_ = nullptr;
+std::mutex LCD::mutex_;
 
 LCD::LCD()
     : lcdFd_(0),
@@ -16,6 +17,7 @@ LCD::LCD()
 
 LCD* LCD::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (lcd_ == nullptr)
     {
         lcd_ = new LCD();
@@ -23,7 +25,7 @@ LCD* LCD::getInstance()
     return lcd_;
 }
 
-void LCD::FnLCDInit()
+bool LCD::FnLCDInit()
 {
     FnLCDInitDriver();
     FnLCDClear();
@@ -31,7 +33,16 @@ void LCD::FnLCDInit()
     FnLCDHome();
     usleep(250000); // Sleep for 0.25 seconds
 
-    Logger::getInstance()->FnLog("LCD initialization completed.");
+    if (lcdInitialized_)
+    {
+        Logger::getInstance()->FnLog("LCD initialization completed.");
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("LCD initialization failed.");
+    }
+
+    return lcdInitialized_;
 }
 
 void LCD::FnLCDInitDriver()
@@ -130,6 +141,15 @@ void LCD::FnLCDDisplayStringCentered(std::uint8_t row, char* str)
     else
     {
         FnLCDDisplayString(row, 1, str);
+    }
+}
+
+void LCD::FnLCDClearDisplayRow(std::uint8_t row)
+{
+    FnLCDCursor(row, 1);
+    for (int i = 0; i < 20; i ++)
+    {
+        FnLCDDisplayCharacter(' ');
     }
 }
 

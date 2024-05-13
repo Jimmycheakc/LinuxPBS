@@ -25,6 +25,7 @@
 #include "boost/date_time/posix_time/posix_time.hpp"
 
 Test* Test::test_ = nullptr;
+std::mutex Test::mutex_;
 
 Test::Test()
 {
@@ -33,6 +34,7 @@ Test::Test()
 
 Test* Test::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (test_ == nullptr)
     {
         test_ = new Test();

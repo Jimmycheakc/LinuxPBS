@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
+#include <mutex>
 #include "tcp.h"
 
 class Lpr
@@ -27,6 +28,7 @@ public:
 
     void FnLprInit(boost::asio::io_context& mainIOContext);
     void FnSendTransIDToLPR(const std::string& transID);
+    struct LPREventData deserializeEventData(const std::string& serializeData);
 
     /**
      * Singleton Lpr should not be cloneable.
@@ -40,6 +42,7 @@ public:
 
 private:
     static Lpr* lpr_;
+    static std::mutex mutex_;
     int cameraNo_;
     std::string lprIp4Front_;
     std::string lprIp4Rear_;
@@ -53,6 +56,7 @@ private:
     std::string rearCamCH_;
     std::unique_ptr<TcpClient> pFrontCamera_;
     std::unique_ptr<TcpClient> pRearCamera_;
+    int lprPort_;
     std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer_;
     std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer2_;
     std::unique_ptr<boost::asio::deadline_timer> periodicStatusTimer_;
@@ -82,4 +86,5 @@ private:
     std::string extractSTX(const std::string& sMsg);
     std::string extractETX(const std::string& sMsg);
     void extractLPRData(const std::string& tcpData, CType camType);
+    std::string serializeEventData(const struct LPREventData& eventData);
 };

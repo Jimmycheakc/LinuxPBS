@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 
 class IniParser
@@ -26,6 +27,7 @@ public:
     std::string FnGetNotAllowHourly() const;
     std::string FnGetLPRIP4Front() const;
     std::string FnGetLPRIP4Rear() const;
+    std::string FnGetLPRPort() const;
     std::string FnGetWaitLPRNoTime() const;
     std::string FnGetLPRErrorTime() const;
     std::string FnGetLPRErrorCount() const;
@@ -60,6 +62,7 @@ public:
 
 private:
     static IniParser* iniParser_;
+    static std::mutex mutex_;
     IniParser();
 
     std::string StationID_;
@@ -75,6 +78,7 @@ private:
     std::string NotAllowHourly_;
     std::string LPRIP4Front_;
     std::string LPRIP4Rear_;
+    std::string LPRPort_;
     std::string WaitLPRNoTime_;
     std::string LPRErrorTime_;
     std::string LPRErrorCount_;

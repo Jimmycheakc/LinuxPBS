@@ -4,11 +4,13 @@
 #include <string>
 #include <sstream>
 #include <iostream>
+#include <mutex>
 #include "lcsc.h"
 #include "structuredata.h"
 #include "db.h"
 #include "udp.h"
 #include "lpr.h"
+#include "timer.h"
 
 class operation
 {
@@ -82,6 +84,9 @@ public:
 
     void Openbarrier();
 
+    void LcdIdleTimerTimeoutHandler();
+    void FnLoopATimeoutHandler();
+
     void Clearme();
 
      /**
@@ -98,6 +103,9 @@ public:
 private:
     
     static operation* operation_;
+    static std::mutex mutex_;
+    std::unique_ptr<Timer> pLCDIdleTimer_;
+    std::unique_ptr<boost::asio::deadline_timer> pLoopATimer_;
     operation();
     ~operation() {
         delete m_udp;

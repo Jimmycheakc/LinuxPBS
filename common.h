@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
-
+#include <mutex>
 
 #define DATE_TIME_FORMAT_SPACE  32
 
@@ -14,6 +14,7 @@ public:
     static Common* getInstance();
     void FnLogExecutableInfo(const std::string& str);
     std::string FnGetDateTime();
+    std::string FnGetDateTimeFormat_ddmmyyy_hhmmss();
     std::string FnGetDateTimeFormat_yyyymm();
     std::string FnGetDateTimeFormat_yyyymmddhhmmss();
     std::string FnGetDateTimeFormat_yyyymmdd_hhmmss();
@@ -48,5 +49,6 @@ public:
 
 private:
     static Common* common_;
+    static std::mutex mutex_;
     Common();
 };

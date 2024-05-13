@@ -4,6 +4,7 @@
 #include "log.h"
 
 EventManager* EventManager::eventManager_ = nullptr;
+std::mutex EventManager::mutex_;
 const std::string eventLogFileName = "event";
 
 EventManager::EventManager()
@@ -15,6 +16,7 @@ EventManager::EventManager()
 
 EventManager* EventManager::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (eventManager_ == nullptr)
     {
         eventManager_ = new EventManager();
@@ -62,7 +64,7 @@ void EventManager::FnEnqueueEvent(const std::string& eventName, EventType eventD
     auto event = std::make_unique<Event<EventType>>(std::move(eventData));
 
     {
-        std::unique_lock<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(eventThreadMutex_);
         eventQueue.push_back(std::make_pair(eventName, std::move(event)));
     }
     
@@ -73,7 +75,7 @@ void EventManager::processEventsFromQueue()
 {
     while (isEventThreadRunning_)
     {
-        std::unique_lock<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(eventThreadMutex_);
 
         condition_.wait(lock, [this] { return !eventQueue.empty() || !isEventThreadRunning_;});
 
@@ -99,4 +101,3 @@ void EventManager::processEvent(const std::string& eventName, BaseEvent* event)
 template void EventManager::FnEnqueueEvent<int>(const std::string&, int);
 template void EventManager::FnEnqueueEvent<bool>(const std::string&, bool);
 template void EventManager::FnEnqueueEvent<std::string>(const std::string&, std::string);
-template void EventManager::FnEnqueueEvent<const void*>(const std::string&, const void* eventData);

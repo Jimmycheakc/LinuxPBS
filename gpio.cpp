@@ -110,6 +110,7 @@ std::string SysfsGPIO::FnGetGPIOPath() const
 
 // GPIO Manager Code
 GPIOManager* GPIOManager::GPIOManager_;
+std::mutex GPIOManager::mutex_;
 
 GPIOManager::GPIOManager()
 {
@@ -123,6 +124,7 @@ GPIOManager::~GPIOManager()
 
 GPIOManager* GPIOManager::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (GPIOManager_ == nullptr)
     {
         GPIOManager_ = new GPIOManager();

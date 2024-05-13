@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -86,6 +87,7 @@ public:
 
 private:
     static GPIOManager* GPIOManager_;
+    static std::mutex mutex_;
     std::unordered_map<int, std::unique_ptr<SysfsGPIO>> gpioPins_;
     GPIOManager();
     ~GPIOManager();

@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include "ini_parser.h"
@@ -31,6 +32,7 @@ public:
 
 private:
     static Logger* logger_;
+    static std::mutex mutex_;
     Logger();
     ~Logger();
 };

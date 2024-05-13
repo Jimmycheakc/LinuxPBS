@@ -3,6 +3,7 @@
 #include <iostream>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include "event_manager.h"
 
@@ -29,6 +30,7 @@ public:
 
 private:
     static EventHandler* eventHandler_;
+    static std::mutex mutex_;
     EventHandler();
     bool handleAntennaFail(const BaseEvent* event);
     bool handleAntennaPower(const BaseEvent* event);

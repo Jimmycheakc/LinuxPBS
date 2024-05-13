@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <memory>
+#include <mutex>
 #include <vector>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
@@ -172,6 +173,7 @@ public:
 
 private:
     static LCSCReader* lcscReader_;
+    static std::mutex mutex_;
     boost::asio::io_context* pMainIOContext_;
     std::unique_ptr<boost::asio::deadline_timer> uploadCDFilesTimer_;
     boost::asio::io_context io_serial_context;
@@ -244,7 +246,6 @@ private:
     int getRxNum();
     void encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge);
     std::string calculateSHA256(const std::string& data);
-    void handleUploadCDFilesTimerTimeout();
     void startGetCardIDTimer(int milliseconds);
     void startGetCardBalanceTimer(int milliseconds);
 };

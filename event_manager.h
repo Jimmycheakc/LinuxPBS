@@ -56,9 +56,10 @@ public:
 
 private:
     static EventManager* eventManager_;
+    static std::mutex mutex_;
     EventSignal eventSignal_;
     std::deque<std::pair<std::string, std::unique_ptr<BaseEvent>>> eventQueue;
-    std::mutex mutex_;
+    std::mutex eventThreadMutex_;
     std::condition_variable condition_;
     bool isEventThreadRunning_;
     std::thread eventThread_;

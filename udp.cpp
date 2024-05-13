@@ -9,6 +9,7 @@
 #include "parsedata.h"
 #include "operation.h"
 #include "db.h"
+#include "lcd.h"
 #include "log.h"
 #include "version.h"
 
@@ -186,6 +187,13 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->SendMsg2Server("09","11Stopping...");
+			operation::getInstance()->writelog("Exit by PMS", "UDP");
+
+			// Display Station Stopped on LCD
+			std::string LCDMsg = "Station Stopped!";
+        	char* sLCDMsg = const_cast<char*>(LCDMsg.data());
+			LCD::getInstance()->FnLCDClearDisplayRow(1);
+        	LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
 
 			std::exit(0);
 			break;
@@ -212,12 +220,9 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("download LED message","UDP");
 			operation::getInstance()->m_db->downloadledmessage();
 			operation::getInstance()->m_db->loadmessage();
-			if (operation::getInstance()->tProcess.gbcarparkfull != 1){
-				operation::getInstance()->tProcess.IdleMsg[0] = operation::getInstance()->tMsg.Msg_DefaultLED[0];
-				operation::getInstance()->tProcess.IdleMsg[1] = operation::getInstance()->tMsg.Msg_DefaultLED[1];
-				if (operation::getInstance()->tProcess.gbLoopApresent == false) {
-					operation::getInstance()->ShowLEDMsg(operation::getInstance()->tProcess.IdleMsg[0],operation::getInstance()->tProcess.IdleMsg[1]);
-				}
+			if (operation::getInstance()->tProcess.gbcarparkfull.load() == false){
+				operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+				operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
 			}
 			break;
 		}
@@ -265,22 +270,20 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			i=stoi(pField.Field(3));
-			if (i != operation::getInstance()->tProcess.gbcarparkfull) {
-				operation::getInstance()->tProcess.gbcarparkfull = i;
-				if (i == 0) {
+			bool bCarparkFull = static_cast<bool>(i);
+			if (bCarparkFull != operation::getInstance()->tProcess.gbcarparkfull.load()) {
+				operation::getInstance()->tProcess.gbcarparkfull.store(bCarparkFull);
+				if (bCarparkFull == false) {
 					string sIUNo = operation:: getInstance()->tEntry.sIUTKNo; 
-					if (operation::getInstance()->tProcess.gbLoopApresent == true and sIUNo != "" ){
+					if (operation::getInstance()->tProcess.gbLoopApresent.load() == true and sIUNo != "" ){
 						operation::getInstance()->PBSEntry(sIUNo);
 					}
-					operation::getInstance()->tProcess.IdleMsg[0] = operation::getInstance()->tMsg.Msg_DefaultLED[0];
-					operation::getInstance()->tProcess.IdleMsg[1] = operation::getInstance()->tMsg.Msg_DefaultLED[1];
+					operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+					operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
 				}
 				else {
-					operation::getInstance()->tProcess.IdleMsg[0] = operation::getInstance()->tMsg.Msg_CarParkFull2LED[0];
-					operation::getInstance()->tProcess.IdleMsg[1] = operation::getInstance()->tMsg.Msg_CarParkFull2LED[1];
-				}
-				if (operation::getInstance()->tProcess.gbLoopApresent == false) {
-					operation::getInstance()->ShowLEDMsg(operation::getInstance()->tProcess.IdleMsg[0],operation::getInstance()->tProcess.IdleMsg[1]);
+					operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_CarParkFull2LED[0]);
+					operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_CarParkFull2LED[1]);
 				}
 			}
 			break;

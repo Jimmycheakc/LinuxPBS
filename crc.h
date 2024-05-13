@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <stdint.h>
+#include <mutex>
 
 class CRC32
 {
@@ -24,6 +25,7 @@ public:
 
 private:
     static CRC32* crc32_;
+    static std::mutex mutex_;
     uint32_t mValue;
     CRC32();
 };

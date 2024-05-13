@@ -10,6 +10,7 @@
 #include "operation.h"
 
 Antenna* Antenna::antenna_ = nullptr;
+std::mutex Antenna::mutex_;
 unsigned char Antenna::SEQUENCE_NO = 0;
 
 Antenna::Antenna()
@@ -36,6 +37,7 @@ Antenna::Antenna()
 
 Antenna* Antenna::getInstance()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (antenna_ == nullptr)
     {
         antenna_ = new Antenna();
