@@ -180,33 +180,33 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
             else
             {
                 Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
-            }
 
-            // Copy files to mount folder
-            for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
-            {
-                if ((entry.path().filename().string().find(todayDateStr) == std::string::npos) &&
-                    (entry.path().extension() == ".log"))
+                // Copy files to mount folder
+                for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
                 {
-                    std::error_code ec;
-                    std::filesystem::copy(entry.path(), mountPoint / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-                    
-                    if (!ec)
+                    if ((entry.path().filename().string().find(todayDateStr) == std::string::npos) &&
+                        (entry.path().extension() == ".log"))
                     {
-                        std::stringstream ss;
-                        ss << "Copy file : " << entry.path() << " successfully.";
-                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                        
-                        std::filesystem::remove(entry.path());
-                        ss.str("");
-                        ss << "Removed log file : " << entry.path() << " successfully";
-                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                    }
-                    else
-                    {
-                        std::stringstream ss;
-                        ss << "Failed to copy log file : " << entry.path();
-                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        std::error_code ec;
+                        std::filesystem::copy(entry.path(), mountPoint / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+
+                        if (!ec)
+                        {
+                            std::stringstream ss;
+                            ss << "Copy file : " << entry.path() << " successfully.";
+                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                            
+                            std::filesystem::remove(entry.path());
+                            ss.str("");
+                            ss << "Removed log file : " << entry.path() << " successfully";
+                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        }
+                        else
+                        {
+                            std::stringstream ss;
+                            ss << "Failed to copy log file : " << entry.path();
+                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        }
                     }
                 }
             }
