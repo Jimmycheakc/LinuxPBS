@@ -46,20 +46,21 @@ KSM_Reader* KSM_Reader::getInstance()
 
 int KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
 {
-    pMainIOContext_ = &mainIOContext;
-    pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
     int ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
 
     try 
     {
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
+
+        pMainIOContext_ = &mainIOContext;
+        pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
+        pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
+
         pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
         pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
-
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
         std::stringstream ss;
         if (pSerialPort_->is_open())
@@ -92,11 +93,27 @@ int KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned
             Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
         }
     }
+    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+    {
+        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
+        std::stringstream ss;
+        ss << "Boost.Asio Exception during KSM Reader Initialization: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
+    }
     catch (const std::exception& e)
     {
         ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
         std::stringstream ss;
         ss << "Exception during KSM Reader Initialization: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
+    }
+    catch (...)
+    {
+        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
+        std::stringstream ss;
+        ss << "Unknown Exception during KSM Reader Initialization.";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
     }

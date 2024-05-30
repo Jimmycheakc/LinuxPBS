@@ -7,7 +7,7 @@ const char LED::ETX1 = 0x0D;
 const char LED::ETX2 = 0x0A;
 
 LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
-    : serialPort_(io_context, comPortName),
+    : serialPort_(io_context),
     baudRate_(baudRate),
     comPortName_(comPortName),
     maxCharPerRow_(maxCharacterPerRow)
@@ -30,15 +30,16 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
         logFileName_ = "led226";
     }
 
+    Logger::getInstance()->FnCreateLogFile(logFileName_);
+
     try
     {
+        serialPort_.open(comPortName);
         serialPort_.set_option(boost::asio::serial_port_base::baud_rate(baudRate));
         serialPort_.set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
         serialPort_.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         serialPort_.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         serialPort_.set_option(boost::asio::serial_port_base::character_size(8));
-
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
         if (serialPort_.is_open())
         {
@@ -59,10 +60,24 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LED");
         }
     }
-    catch(const std::exception& e)
+    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
         std::stringstream ss;
-        ss << "Exception during LED Initialization: " << e.what() << std::endl;
+        ss << "Boost.Asio Exception during LED Initialization: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << "Exception during LED Initialization: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << "Unknown exception caught during LED Initialization.";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
     }

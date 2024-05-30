@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
     gst_amt DECIMAL(10, 2) DEFAULT 0,
     Card_Type INT DEFAULT 0,
     Owe_Amt DECIMAL(10,2) DEFAULT 0,
-    lpr VARCHAR(20),
+    lpn VARCHAR(20),
     entry_lpn_SID VARCHAR(32),
     add_dt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

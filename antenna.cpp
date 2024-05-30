@@ -49,6 +49,8 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
 {
     try
     {
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
+
         pMainIOContext_ = &mainIOContext;
         pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
         pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
@@ -58,8 +60,6 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
         pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::even));
         pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
-
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
         std::stringstream ss;
         if (pSerialPort_->is_open())
@@ -89,10 +89,26 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
             Logger::getInstance()->FnLog("Antenna initialization failed.", logFileName_, "ANT");
         }
     }
+    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+    {
+        std::stringstream ss;
+        ss << "Boost.Asio Exception during Antenna Initialization: " << e.what();
+        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");
+    }
     catch (const std::exception& e)
     {
         std::stringstream ss;
         ss << "Exception during Antenna Initialization: " << e.what();
+        EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << "Unknown Exception during Antenna Initialization.";
         EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");

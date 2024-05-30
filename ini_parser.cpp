@@ -37,9 +37,17 @@ void IniParser::FnReadIniFile()
             }
         }
     }
-    catch (const std::exception &ex)
+    catch (const boost::filesystem::filesystem_error& e)
     {
-        std::cerr << "Exception: " << ex.what() << std::endl;
+        std::cerr << "Boost.Filesystem Exception during reading Ini file: " << e.what() << std::endl;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Exception during reading Ini file: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "Unknown Exception during reading Ini file." << std::endl;
     }
 
     boost::property_tree::ptree pt;

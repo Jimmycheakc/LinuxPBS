@@ -55,21 +55,41 @@ void operation::OperationInit(io_context& ioContext)
     Setdefaultparameter();
     //--- broad cast UDP
     tProcess.gsBroadCastIP = getIPAddress();
-    try {
+    try
+    {
         m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
         m_udp->socket_.set_option(socket_base::broadcast(true));
     }
+    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+    {
+        std::string cppString(e.what());
+        writelog ("Boost.Asio Exception during PMS UDP initialization: "+ cppString,"OPR");
+    }
     catch (const std::exception& e) {
         std::string cppString(e.what());
-        writelog ("Exception: "+ cppString,"OPR");
+        writelog ("Exception during PMS UDP initialization: "+ cppString,"OPR");
+    }
+    catch (...)
+    {
+        writelog ("Unknown Exception during PMS UDP initialization.","OPR");
     }
     // monitor UDP
-    try {
+    try
+    {
         m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
+    }
+    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+    {
+        std::string cppString1(e.what());
+        writelog ("Boost.Asio Exception during Monitor UDP initialization: "+ cppString1,"OPR");
     }
     catch (const std::exception& e) {
         std::string cppString1(e.what());
-        writelog ("Exception: "+ cppString1,"OPR");
+        writelog ("Exception during Monitor UDP initialization: "+ cppString1,"OPR");
+    }
+    catch (...)
+    {
+        writelog ("Unknown Exception during Monitor UDP initialization.","OPR");
     }
     //
     int iRet = 0;
@@ -856,9 +876,18 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
             SendMsg2Monitor("314", "98");
         }
     }
-    catch (const std::exception& ex)
+    catch (const std::exception& e)
     {
-        Logger::getInstance()->FnLog(ex.what(), "", "OPR");
+        std::stringstream ss;
+        ss << __func__ << " Exception: " << e.what();
+        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+        SendMsg2Monitor("314", "98");
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Unknown Exception.";
+        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
         SendMsg2Monitor("314", "98");
     }
 }
@@ -1282,6 +1311,7 @@ int operation::GetVTypeFromLoop()
 void operation::SaveEntry()
 {
     int iRet;
+    std::string sLPRNo = "";
     
     if (tEntry.sIUTKNo== "") return;
     writelog ("Save Entry trans:"+ tEntry.sIUTKNo, "OPR");
@@ -1292,9 +1322,21 @@ void operation::SaveEntry()
     //-------
     tPBSError[iDB].ErrNo = (iRet == iDBSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
 
+    if ((tEntry.sLPN[0] != "")|| (tEntry.sLPN[1] != ""))
+	{
+		if((tEntry.iTransType == 7) || (tEntry.iTransType == 8) || (tEntry.iTransType == 22))
+		{
+			sLPRNo = tEntry.sLPN[1];
+		}
+		else
+		{
+			sLPRNo = tEntry.sLPN[0];
+		}
+	}
+
     std::string sMsg2Send = (iRet == iDBSuccess) ? "Entry OK" : (iRet == iCentralFail) ? "Entry Central Failed" : "Entry Local Failed";
 
-    sMsg2Send = tEntry.sIUTKNo + ",,,," + std::to_string(tEntry.giShowType) + ","+sMsg2Send;
+    sMsg2Send = tEntry.sIUTKNo + ",,," + sLPRNo + "," + std::to_string(tEntry.giShowType) + "," + sMsg2Send;
 
     if (tEntry.iStatus == 0) {
         SendMsg2Server("90", sMsg2Send);

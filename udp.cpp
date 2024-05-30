@@ -211,14 +211,26 @@ void udpclient::processdata (const char* data, std::size_t length)
 		case CmdUpdateSeason:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
-			operation::getInstance()->m_db->downloadseason();
+			int ret = operation::getInstance()->m_db->downloadseason();
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Season";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
 			break;
 		}
 		case CmdDownloadMsg:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("download LED message","UDP");
-			operation::getInstance()->m_db->downloadledmessage();
+			int ret = operation::getInstance()->m_db->downloadledmessage();
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Messages";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
 			operation::getInstance()->m_db->loadmessage();
 			if (operation::getInstance()->tProcess.gbcarparkfull.load() == false){
 				operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
@@ -234,15 +246,27 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("download Parameter","UDP");
-			operation::getInstance()->m_db->downloadparameter();
+			int ret = operation::getInstance()->m_db->downloadparameter();
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Parameter";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
 			operation::getInstance()->m_db->loadParam();
 			break;
 		}
 		case CmdDownloadtype:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
-			operation::getInstance()->writelog("download Vheicle Type","UDP");
-			operation::getInstance()->m_db->downloadvehicletype();
+			operation::getInstance()->writelog("download Vehicle Type","UDP");
+			int ret = operation::getInstance()->m_db->downloadvehicletype();
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Vehicle Type";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
 			operation::getInstance()->m_db->loadvehicletype();
 			break;
 		}
@@ -299,7 +323,13 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("download station set up","UDP");
-			operation::getInstance()->m_db->downloadstationsetup();
+			int ret = operation::getInstance()->m_db->downloadstationsetup();
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Station Setup";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
 			operation::getInstance()->m_db->loadstationsetup();
 			break;
 		}

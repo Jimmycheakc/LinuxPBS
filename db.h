@@ -47,15 +47,15 @@ public:
 
 	int isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID);
     void synccentraltime ();
-    void downloadseason();
+    int downloadseason();
     int writeseason2local(tseason_struct& v);
-    void downloadvehicletype();
+    int downloadvehicletype();
     int writevehicletype2local(string iucode,string iutype);
-    void downloadledmessage();
+    int downloadledmessage();
     int writeledmessage2local(string m_id,string m_body, string m_status);
-    void downloadparameter();
+    int downloadparameter();
     int writeparameter2local(string name,string value);
-    void downloadstationsetup();
+    int downloadstationsetup();
     int writestationsetup2local(tstation_struct& v);
 
 	

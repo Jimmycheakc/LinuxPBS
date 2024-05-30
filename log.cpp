@@ -45,9 +45,19 @@ void Logger::FnCreateLogFile(std::string filename)
             }
         }
     }
-    catch (const std::exception &ex)
+    catch (const boost::filesystem::filesystem_error& e)
     {
-        std::cerr << "Exception: " << ex.what() << std::endl;
+        std::cerr << "Boost.Filesystem Exception during creating log file: " << e.what() << std::endl;
+        return;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Exception during creating log file: " << e.what() << std::endl;
+        return;
+    }
+    catch (...)
+    {
+        std::cerr << "Unknown Exception during creating log file." << std::endl;
         return;
     }
 
@@ -71,9 +81,9 @@ void Logger::FnCreateLogFile(std::string filename)
         asyncFile->set_level(spdlog::level::info);
         asyncFile->flush_on(spdlog::level::info);
     }
-    catch(const spdlog::spdlog_ex &ex)
+    catch(const spdlog::spdlog_ex &e)
     {
-        std::cerr << "SPDLog init failed: " << ex.what() << std::endl;
+        std::cerr << "SPDLog init failed: " << e.what() << std::endl;
         return;
     }
 }

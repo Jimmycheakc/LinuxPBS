@@ -88,10 +88,24 @@ void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
         Logger::getInstance()->FnLog("Front camera:: TCP initialization completed.", logFileName_, "LPR");
         frontCameraInitialized_ = true;
     }
+    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+    {
+        std::stringstream ss;
+        ss << "Front camera: TCP init error. Boost.Asio Error Exception: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
     catch (const std::exception& e)
     {
         std::stringstream ss;
         ss << "Front camera: TCP init error. Error Exception: " << e.what();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << "Front camera: TCP init error. Unknown Exception.";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
     }
@@ -217,10 +231,24 @@ void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
 
             rearCameraInitialized_ = true;
         }
+        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        {
+            std::stringstream ss;
+            ss << "Rear camera: TCP init error. Boost.Asio Error Exception: " << e.what();
+            Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        }
         catch (const std::exception& e)
         {
             std::stringstream ss;
             ss << "Rear camera: TCP init error. Error Exception: " << e.what();
+            Logger::getInstance()->FnLog(ss.str());
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << "Rear camera: TCP init error. Unknown Error Exception.";
             Logger::getInstance()->FnLog(ss.str());
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
         }
@@ -350,10 +378,22 @@ void Lpr::SendTransIDToLPR_Front(const std::string& transID)
 
             pFrontCamera_->send(transID);
         }
+        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        {
+            std::stringstream ss;
+            ss << "Front camera. " << __func__ << " Boost.Asio Error Exception: " << e.what();
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        }
         catch (const std::exception& e)
         {
             std::stringstream ss;
-            ss << "Front camera. " << __func__ << " Error : " << e.what();
+            ss << "Front camera. " << __func__ << " Error Exception: " << e.what();
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << "Front camera. " << __func__ << " Unknown Error Exception.";
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
         }
     }
@@ -377,10 +417,22 @@ void Lpr::SendTransIDToLPR_Rear(const std::string& transID)
 
             pRearCamera_->send(transID);
         }
+        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        {
+            std::stringstream ss;
+            ss << "Rear camera. " << __func__ << " Boost.Asio Error Exception: " << e.what();
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        }
         catch (const std::exception& e)
         {
             std::stringstream ss;
-            ss << "Rear camera. " << __func__ << " Error : " << e.what();
+            ss << "Rear camera. " << __func__ << " Error Exception: " << e.what();
+            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << "Rear camera. " << __func__ << " Unknown Error Exception.";
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
         }
     }
