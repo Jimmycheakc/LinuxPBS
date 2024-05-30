@@ -9,7 +9,7 @@ find_package(ODBC REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
 
 # Set the root directory for the target environment
 set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux)

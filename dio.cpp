@@ -109,13 +109,13 @@ void DIO::monitoringDIOChangeThreadFunction()
         int lorry_sensor_curr_val = (GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_)->FnGetValue() : 0;
         int arm_broken_curr_val = (GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_)->FnGetValue() : 0;
         
-        // Case : Loop A on, Loop B off 
+        // Case : Loop A on, Loop B no change 
         if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
             && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
         }
-        // Case : Loop B on, Loop A off
+        // Case : Loop B on, Loop A no change
         else if ((loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW) 
                 && (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_LOW))
         {
@@ -128,15 +128,21 @@ void DIO::monitoringDIOChangeThreadFunction()
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
         }
 
-        // Case : Loop A off, Loop B off
+        // Case : Loop A off, Loop B no change
         if ((loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
             && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
         }
-        // Case : Loop B off, Loop A off
+        // Case : Loop B off, Loop A no change
         else if ((loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH)
                 && (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_LOW))
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
+        }
+        // Case : Loop A off, Loop B off
+        else if ((loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
+            && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH))
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
         }
@@ -304,7 +310,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         lorry_sensor_di_last_val_ = lorry_sensor_curr_val;
         arm_broken_di_last_val_ = arm_broken_curr_val;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
