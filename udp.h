@@ -94,3 +94,75 @@ public:
     } 
 
 };
+
+
+class HeartbeatUdpServer
+{
+public:
+    HeartbeatUdpServer(boost::asio::io_context& io_context, const std::string& serverAddress, int serverPort)
+        : socket_(io_context, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(serverAddress), 0)),
+        remoteEndpoint_(boost::asio::ip::make_address(serverAddress), serverPort),
+        timer_(io_context)
+    {
+
+    }
+
+    void start()
+    {
+        sendHeartbeat();
+    }
+
+private:
+    void sendHeartbeat()
+    {
+        std::string message = "Heartbeat";
+        socket_.async_send_to(boost::asio::buffer(message), remoteEndpoint_,
+            [&](const boost::system::error_code& error, std::size_t /*bytes_transferred*/) {
+                if (!error)
+                {
+                    //std::cout << "Heartbeat sent." << std::endl;
+                }
+                else
+                {
+                    std::stringstream ss;
+                    ss << "Error sending heartbeat: " << error.message();
+                    Logger::getInstance()->FnLog(ss.str(), "", "UDP");
+                }
+            });
+        
+        // Schedule the next heartbeat
+        timer_.expires_after(std::chrono::minutes(1));
+        timer_.async_wait([this](const boost::system::error_code& error) {
+            if (!error)
+            {
+                sendHeartbeat();
+            }
+            else
+            {
+                handleTimerError(error);
+            }
+        });
+    }
+
+    void handleTimerError(const boost::system::error_code& error)
+    {
+        std::stringstream ss;
+        ss << "Heartbeat Timer error: " << error.message();
+        Logger::getInstance()->FnLog(ss.str(), "", "UDP");
+
+        try
+        {
+            sendHeartbeat();
+        }
+        catch (const std::exception& e)
+        {
+            std::stringstream ss;
+            ss << "Exception while handling timer error: " << e.what();
+            Logger::getInstance()->FnLog(ss.str(), "", "UDP");
+        }
+    }
+
+    boost::asio::ip::udp::socket socket_;
+    boost::asio::ip::udp::endpoint remoteEndpoint_;
+    boost::asio::steady_timer timer_;
+};

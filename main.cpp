@@ -258,6 +258,10 @@ int main (int agrc, char* argv[])
     boost::asio::io_context ioContext;
     boost::asio::io_context dailyLogIoContext;
 
+    // Start heartbeat
+    HeartbeatUdpServer heartbeatUdpServer_(ioContext, "127.0.0.1", 9000);
+    heartbeatUdpServer_.start();
+
     IniParser::getInstance()->FnReadIniFile();
     Logger::getInstance();
     Common::getInstance()->FnLogExecutableInfo(argv[0]);
