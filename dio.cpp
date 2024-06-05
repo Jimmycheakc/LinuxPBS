@@ -255,6 +255,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         if (manual_open_barrier_status_curr_value == GPIOManager::GPIO_HIGH && manual_open_barrier_di_last_val_ == GPIOManager::GPIO_LOW)
         {
             EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT));
+            FnSetManualOpenBarrierStatusFlag(1);
             
             // Send to Input Pin Status to Monitor
             operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetManualOpenBarrier(), 1);
@@ -548,4 +549,16 @@ int DIO::getOutputPinNum(int pinNum)
     }
 
     return ret;
+}
+
+void DIO::FnSetManualOpenBarrierStatusFlag(int flag)
+{
+    std::lock_guard<std::mutex> lock(manual_open_barrier_status_flag_mutex_);
+    manual_open_barrier_status_flag_ = 1;
+}
+
+int DIO::FnGetManualOpenBarrierStatusFlag()
+{
+    std::lock_guard<std::mutex> lock(manual_open_barrier_status_flag_mutex_);
+    return manual_open_barrier_status_flag_;
 }

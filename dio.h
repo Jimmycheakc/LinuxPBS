@@ -58,6 +58,9 @@ public:
 
     int FnGetOutputPinNum(int pinNum);
 
+    void FnSetManualOpenBarrierStatusFlag(int flag);
+    int FnGetManualOpenBarrierStatusFlag();
+
     /**
      * Singleton DIO should not be cloneable.
      */
@@ -97,6 +100,8 @@ private:
     int close_barrier_do_;
     bool isDIOMonitoringThreadRunning_;
     std::thread dioMonitoringThread_;
+    int manual_open_barrier_status_flag_;
+    std::mutex manual_open_barrier_status_flag_mutex_;
     DIO();
     int getInputPinNum(int pinNum);
     int getOutputPinNum(int pinNum);

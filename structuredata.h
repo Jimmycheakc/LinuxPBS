@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include "ce_time.h"
 
@@ -288,7 +289,6 @@ struct  tProcess_Struct
 	bool gbsavedtrans;
 	atomic<bool> gbcarparkfull;
 	long glNoofOfflineData;
-	string fsLastIUNo;
 	string fsLastCardNo;
 	int is_season;
 	int online_status;
@@ -313,8 +313,13 @@ struct  tProcess_Struct
 	int giCardIsIn;
 	int giLastHousekeepingDate;
 //	bool gbwaitLoopA;
+
 	std::string IdleMsg[2];
 	std::mutex idleMsgMutex;
+	std::string fsLastIUNo;
+	std::mutex fsLastIUNoMutex;
+	std::chrono::time_point<std::chrono::steady_clock> lastIUEntryTime;
+	std::mutex lastIUEntryTimeMutex;
 
 	void setIdleMsg(int index, const std::string& msg)
 	{
@@ -334,7 +339,30 @@ struct  tProcess_Struct
 		}
 		return "";
 	}
-	
+
+	void setLastIUNo(const std::string& msg)
+	{
+		std::lock_guard<std::mutex> lock(fsLastIUNoMutex);
+		fsLastIUNo = msg;
+	}
+
+	std::string getLastIUNo()
+	{
+		std::lock_guard<std::mutex> lock(fsLastIUNoMutex);
+		return fsLastIUNo;
+	}
+
+	void setLastIUEntryTime(const std::chrono::time_point<std::chrono::steady_clock>& time)
+	{
+		std::lock_guard<std::mutex> lock(lastIUEntryTimeMutex);
+		lastIUEntryTime = time;
+	}
+
+	std::chrono::time_point<std::chrono::steady_clock> getLastIUEntryTime()
+	{
+		std::lock_guard<std::mutex> lock(lastIUEntryTimeMutex);
+		return lastIUEntryTime;
+	}
 };
 
 
@@ -419,6 +447,8 @@ struct  tParas_Struct
 	int not_allow_hourly; //not in current central DB
 	int cepas_enable; //not in current central DB
 
+	int giMaxTransInterval;
+
 
 	//int giCommPortPrinter;
 	//int giCommPortLED2;
@@ -495,7 +525,6 @@ struct  tParas_Struct
 	//int giHasLorry;
 	//int giHasContainer;
 	//int giLorryRelayTime;
-	//int giMaxTransInterval;
 	//int giMOBRelayTimes;
 	
 	//int giUpdateAfterExit;

@@ -160,7 +160,21 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        operation::getInstance()->VehicleCome(value);
+        auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - operation::getInstance()->tProcess.getLastIUEntryTime());
+
+        if ((value.length() == 10) && (operation::getInstance()->tProcess.getLastIUNo() == value)
+            && (sameAsLastIUDuration.count() <= operation::getInstance()->tParas.giMaxTransInterval))
+        {
+            std::stringstream ss;
+            ss << "Same as last IU, duration :" << sameAsLastIUDuration.count() << " less than Maximum interval: " << operation::getInstance()->tParas.giMaxTransInterval;
+            Logger::getInstance()->FnLog(ss.str());
+            operation::getInstance()->Openbarrier();
+        }
+        else
+        {
+            operation::getInstance()->VehicleCome(value);
+        }
+
         if (operation::getInstance()->tPBSError[iAntenna].ErrNo != 0)
         {
             operation:: getInstance()->HandlePBSError(AntennaNoError);
@@ -540,7 +554,11 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT");
-                db::getInstance()->AddSysEvent("Barrier up");
+                if (DIO::getInstance()->FnGetManualOpenBarrierStatusFlag() == 1)
+                {
+                    DIO::getInstance()->FnSetManualOpenBarrierStatusFlag(0);
+                    db::getInstance()->AddSysEvent("Barrier up");
+                }
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:

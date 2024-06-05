@@ -1855,6 +1855,11 @@ DBError db::loadParam()
 				{
 				    operation::getInstance()->tParas.glMaxLocalDBSize = std::stol(readerItem.GetDataItem(1));
 				}
+
+				if (readerItem.GetDataItem(0) == "MaxTransInterval")
+				{
+				    operation::getInstance()->tParas.giMaxTransInterval = std::stol(readerItem.GetDataItem(1));
+				}
 			}
 		}
 		operation::getInstance()->tProcess.gbloadedParam = true;

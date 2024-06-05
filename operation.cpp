@@ -610,7 +610,8 @@ void operation:: Setdefaultparameter()
     //-------
     tProcess.WaitForLCSCReturn.store(false);
     tProcess.giLastHousekeepingDate = 0;
-    tProcess.fsLastIUNo = "";
+    tProcess.setLastIUNo("");
+    tProcess.setLastIUEntryTime(std::chrono::steady_clock::now());
     //---
 
 }
@@ -1318,7 +1319,11 @@ void operation::SaveEntry()
 
     iRet = db::getInstance()->insertentrytrans(tEntry);
     //----
-    if (iRet == iDBSuccess) tProcess.fsLastIUNo = tEntry.sIUTKNo;
+    if (iRet == iDBSuccess)
+    {
+        tProcess.setLastIUNo(tEntry.sIUTKNo);
+        tProcess.setLastIUEntryTime(std::chrono::steady_clock::now());
+    }
     //-------
     tPBSError[iDB].ErrNo = (iRet == iDBSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
 
