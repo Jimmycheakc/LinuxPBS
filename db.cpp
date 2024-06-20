@@ -1899,7 +1899,7 @@ DBError db::loadvehicletype()
 
 int db::FnGetVehicleType(std::string IUCode)
 {
-	int ret = -1;
+	int ret = 1;
 
 	for (auto &item : operation::getInstance()->tVType)
 	{

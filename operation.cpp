@@ -211,7 +211,7 @@ void operation::FnLoopATimeoutHandler()
 void operation::LoopACome()
 {
     //--------
-    writelog ("Loop A Come.","OPR");
+    writelog ("Loop A Come","OPR");
 
     // Loop A timer - To prevent loop A hang
     pLoopATimer_->expires_from_now(boost::posix_time::seconds(operation::getInstance()->tParas.giOperationTO));
@@ -248,7 +248,7 @@ void operation::LoopACome()
 
 void operation::LoopAGone()
 {
-    writelog ("Loop A End.","OPR");
+    writelog ("Loop A End","OPR");
 
     // Cancel the loop A timer 
     pLoopATimer_->cancel();
@@ -263,13 +263,13 @@ void operation::LoopAGone()
 }
 void operation::LoopCCome()
 {
-    writelog ("Loop C Come.","OPR");
+    writelog ("Loop C Come","OPR");
 
 
 }
 void operation::LoopCGone()
 {
-    writelog ("Loop C End.","OPR");
+    writelog ("Loop C End","OPR");
     if (tProcess.gbLoopApresent.load() == true)
     {
         LoopACome();
@@ -311,7 +311,7 @@ void operation::Openbarrier()
         ShowLEDMsg ("Please Take^CashCard.","Please Take^Cashcard.");
         return;
     }
-    writelog ("Station Open Barrier.","OPR");
+    writelog ("Open Barrier","OPR");
 
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
 
@@ -331,7 +331,7 @@ void operation::Clearme()
         tEntry.sSerialNo = "";     
         tEntry.sIUTKNo = "";
         tEntry.sEntryTime = "";
-        tEntry.iTransType = 0;
+        tEntry.iTransType = 1;
         tEntry.iRateType = 0;
         tEntry.iStatus = 0;      
 

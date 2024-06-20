@@ -43,7 +43,7 @@ std::string Common::FnGetDateTime()
 
     std::ostringstream oss;
     oss << std::put_time(&timeinfo, "%d/%m/%y %H:%M:%S");
-    oss << "." << std::setfill('0') << std::setw(3) << ms.count() << " ";
+    oss << "." << std::setfill('0') << std::setw(3) << ms.count();
     return oss.str();
 }
 

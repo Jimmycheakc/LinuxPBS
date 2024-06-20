@@ -92,9 +92,10 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
 {
     std::stringstream sLogMsg;
 
+    sOption += ":";
     sLogMsg << Common::getInstance()->FnGetDateTime();
-    sLogMsg << std::setw(3) << std::setfill(' ');
-    sLogMsg << std::setw(10) << std::left << sOption;
+    sLogMsg << std::setw(3) << std::setfill(' ') << "";
+    sLogMsg << std::setw(8) << std::left << sOption;
     sLogMsg << sMsg;
 
     // Check whether file exists or not, if not exists, then create a new file
