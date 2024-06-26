@@ -1,8 +1,11 @@
 #pragma once
 
+#include <boost/endian/conversion.hpp>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <mutex>
 
@@ -23,8 +26,11 @@ public:
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::time_t FnGetEpochSeconds();
     std::string FnGetDateTimeSpace();
+    std::string FnGetDate();
+    std::string FnGetTime();
     int FnGetCurrentHour();
     int FnGetCurrentDay();
+    uint64_t FnGetSecondsSince1January0000();
     std::string FnGetFileName(const std::string& str);
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
@@ -36,6 +42,24 @@ public:
     bool FnIsStringNumeric(const std::string& str);
     std::string FnPadRightSpace(int length, const std::string& str);
     std::string FnPadLeft0(int width, int count);
+    template <typename T>
+    std::string FnToHexLittleEndianStringWithZeros(T value);
+    template <typename T>
+    T FnLittleEndianStringToUnsignedInteger(const std::string& littleEndianStr);
+    std::vector<uint8_t> FnLittleEndianHexStringToVector(const std::string& hexStr);
+    std::string FnConvertLittleEndianVectorToHexString(const std::vector<uint8_t>& data, std::size_t start, std::size_t end);
+    std::string FnConvertuint8ToHexString(uint8_t value);
+    std::vector<uint8_t> FnConvertAsciiToUint8Vector(const std::string& asciiStr);
+    std::vector<uint8_t> FnGetDateInArrayBytes();
+    std::vector<uint8_t> FnGetTimeInArrayBytes();
+    std::vector<uint8_t> FnConvertUint32ToVector(uint32_t value);
+    std::vector<uint8_t> FnConvertToLittleEndian(std::vector<uint8_t> bigEndianVec);
+    std::vector<uint8_t> FnConvertStringToUint8Vector(const std::string& str);
+    std::vector<uint8_t> FnExtractSubVector(const std::vector<uint8_t>& source, std::size_t offset, std::size_t length);
+    uint8_t FnConvertToUint8(const std::vector<uint8_t>& vec, std::size_t offset = 0);
+    uint16_t FnConvertToUint16(const std::vector<uint8_t>& vec, std::size_t offset = 0);
+    uint32_t FnConvertToUint32(const std::vector<uint8_t>& vec, std::size_t offset = 0);
+    uint64_t FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t offset = 0);
 
     /**
      * Singleton Common should not be cloneable.
@@ -52,3 +76,52 @@ private:
     static std::mutex mutex_;
     Common();
 };
+
+
+template <typename T>
+std::string Common::FnToHexLittleEndianStringWithZeros(T value)
+{
+    static_assert(std::is_integral<T>::value, "T must be an integral type.");
+
+    T reversed_value = boost::endian::endian_reverse(value);
+
+    std::ostringstream stream;
+    stream << std::hex << std::setfill('0');
+
+    if constexpr (sizeof(T) <= sizeof(uint32_t))
+    {
+        stream << std::setw(sizeof(T) * 2) << static_cast<uint32_t>(reversed_value);
+    }
+    else
+    {
+        stream << std::setw(sizeof(T) * 2) << static_cast<uint64_t>(reversed_value);
+    }
+
+    return stream.str();
+}
+
+template <typename T>
+T Common::FnLittleEndianStringToUnsignedInteger(const std::string& littleEndianStr)
+{
+    static_assert(std::is_integral<T>::value, "T must be an integral type.");
+    T result = 0;
+
+    if (littleEndianStr.length() != sizeof(T) * 2)
+    {
+        throw std::invalid_argument("Input string length does not match the size of the target type.");
+    }
+
+    for (std::size_t i = 0; i < sizeof(T); i++)
+    {
+        std::string byteStr = littleEndianStr.substr(i * 2, 2);
+        unsigned int byteValue;
+
+        if (std::sscanf(byteStr.c_str(), "%2x", &byteValue) != 1)
+        {
+            throw std::runtime_error("Conversion from string to integer failed.");
+        }
+        result |= (static_cast<T>(byteValue) << (i * 8));
+    }
+
+    return result;
+}

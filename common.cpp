@@ -150,6 +150,30 @@ std::string Common::FnGetDateTimeSpace()
     return oss.str();
 }
 
+std::string Common::FnGetDate()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m%d");
+    return oss.str();
+}
+
+std::string Common::FnGetTime()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%H%M%S");
+    return oss.str();
+}
+
 int Common::FnGetCurrentHour()
 {
     auto now = std::chrono::system_clock::now();
@@ -164,6 +188,26 @@ int Common::FnGetCurrentDay()
     auto now_time = std::chrono::system_clock::to_time_t(now);
     auto local_now = *std::localtime(&now_time);
     return local_now.tm_mday; // Returns the day of the month (1-31)
+}
+
+uint64_t Common::FnGetSecondsSince1January0000()
+{
+    auto now = std::chrono::system_clock::now();
+    auto now_time = std::chrono::system_clock::to_time_t(now);
+
+    // Calculate the number of seconds from epoch to now
+    uint64_t seconds_since_epoch = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+    // Calculate the number of days between January 1, 0000 and January 1, 1970
+    const uint64_t days_between_0000_and_1970 = 719527;
+
+    // Calculate the number of seconds between January 1, 0000 and January 1, 1970
+    const uint64_t seconds_between_0000_and_1970 = days_between_0000_and_1970 * 24 * 3600;
+
+    // Calculate the total number of seconds from January 1, 0000 to now
+    uint64_t seconds_since_0000 = seconds_since_epoch + seconds_between_0000_and_1970;
+
+    return seconds_since_0000;
 }
 
 std::string Common::FnGetFileName(const std::string& str)
@@ -293,4 +337,141 @@ std::string Common::FnPadLeft0(int width, int count)
     std::stringstream ss;
     ss << std::setw(width) << std::setfill('0') << count;
     return ss.str();
+}
+
+std::vector<uint8_t> Common::FnLittleEndianHexStringToVector(const std::string& hexStr)
+{
+    std::vector<uint8_t> result;
+
+    for (int i = hexStr.length() - 2; i >= 0; i -= 2)
+    {
+        std::string byteStr = hexStr.substr(i, 2);
+        uint8_t byte = static_cast<uint8_t>(stoul(byteStr, nullptr, 16));
+        result.push_back(byte);
+    }
+
+    return result;
+}
+
+std::string Common::FnConvertLittleEndianVectorToHexString(const std::vector<uint8_t>& data, std::size_t start, std::size_t end)
+{
+    std::ostringstream oss;
+
+    if (start >= data.size() || end > data.size() || start > end)
+    {
+        throw std::out_of_range("Invalid range specified.");
+    }
+
+    for (auto it = data.rbegin() + (data.size() - end); it != data.rend() + (data.size() - start); ++it)
+    {
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(*it);
+    }
+
+    return oss.str();
+}
+
+std::string Common::FnConvertuint8ToHexString(uint8_t value)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(value);
+    return oss.str();
+}
+
+std::vector<uint8_t> Common::FnConvertAsciiToUint8Vector(const std::string& asciiStr)
+{
+    std::vector<uint8_t> uint8Vec(asciiStr.begin(), asciiStr.end());
+    return uint8Vec;
+}
+
+std::vector<uint8_t> Common::FnGetDateInArrayBytes()
+{
+    std::string hexAscii = FnGetDate();
+    return FnConvertAsciiToUint8Vector(hexAscii);
+}
+
+std::vector<uint8_t> Common::FnGetTimeInArrayBytes()
+{
+    std::string hexAscii = FnGetTime();
+    return FnConvertAsciiToUint8Vector(hexAscii);
+}
+
+std::vector<uint8_t> Common::FnConvertUint32ToVector(uint32_t value)
+{
+    std::vector<uint8_t> bytes(4);
+    bytes[0] = static_cast<uint8_t>((value >> 24) & 0xFF);
+    bytes[1] = static_cast<uint8_t>((value >> 16) & 0xFF);
+    bytes[2] = static_cast<uint8_t>((value >> 8) & 0xFF);
+    bytes[3] = static_cast<uint8_t>(value & 0xFF);
+
+    return bytes;
+}
+
+std::vector<uint8_t> Common::FnConvertToLittleEndian(std::vector<uint8_t> bigEndianVec)
+{
+    std::reverse(bigEndianVec.begin(), bigEndianVec.end());
+    return bigEndianVec;
+}
+
+std::vector<uint8_t> Common::FnConvertStringToUint8Vector(const std::string& str)
+{
+    std::vector<uint8_t> uint8Vec(str.begin(), str.end());
+    return uint8Vec;
+}
+
+std::vector<uint8_t> Common::FnExtractSubVector(const std::vector<uint8_t>& source, std::size_t offset, std::size_t length)
+{
+    if (offset >= source.size())
+    {
+        return {};
+    }
+
+    // Calculate the end position
+    auto end = std::min(source.begin() + offset + length, source.end());
+
+    // Create and return the subvector
+    return std::vector<uint8_t>(source.begin() + offset, end);
+}
+
+uint8_t Common::FnConvertToUint8(const std::vector<uint8_t>& vec, std::size_t offset)
+{
+    if (offset + sizeof(uint8_t) > vec.size())
+    {
+        throw std::out_of_range("Offset out of range");
+    }
+    return vec[offset];
+}
+
+uint16_t Common::FnConvertToUint16(const std::vector<uint8_t>& vec, std::size_t offset)
+{
+    if (offset + sizeof(uint16_t) > vec.size())
+    {
+        throw std::out_of_range("Offset out of range");
+    }
+    uint16_t value;
+    std::memcpy(&value, vec.data() + offset, sizeof(uint16_t));
+    return boost::endian::endian_reverse(value);
+}
+
+uint32_t Common::FnConvertToUint32(const std::vector<uint8_t>& vec, std::size_t offset)
+{
+    if (offset + sizeof(uint32_t) > vec.size())
+    {
+        throw std::out_of_range("Offset out of range");
+    }
+
+    uint32_t value;
+    std::memcpy(&value, vec.data() + offset, sizeof(uint32_t));
+    return boost::endian::endian_reverse(value);
+}
+
+uint64_t Common::FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t offset)
+{
+    if (offset + sizeof(uint64_t) > vec.size())
+    {
+        throw std::out_of_range("Offset out of range");
+    }
+
+    uint64_t value;
+    std::memcpy(&value, vec.data() + offset, sizeof(uint64_t));
+    return boost::endian::endian_reverse(value);
 }

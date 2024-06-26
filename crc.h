@@ -12,6 +12,7 @@ public:
     static CRC32* getInstance();
     uint32_t Value();
     void Update(uint8_t* Data, uint32_t Length);
+    void Clear();
 
     /**
      * Singleton CRC32 should not be cloneable.

@@ -206,11 +206,7 @@ void Test::gpio_test()
 
 void Test::upt_test()
 {
-    boost::asio::io_context io;
-    Upt::getInstance()->FnUptInit(io, 115200, "/dev/ttyCH9344USB5");
-    Upt::getInstance()->FnUptCleanUp();
 
-    io.run();
 }
 
 void Test::lcd_test_ascii()

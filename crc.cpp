@@ -68,3 +68,8 @@ void CRC32::Update(uint8_t* Data, uint32_t Length)
         mValue = (mTable[((uint16_t)mValue ^ *(Data + count)) & 0xFF] ^ ((mValue >> 8) & 0x00FFFFFF));
     }
 }
+
+void CRC32::Clear()
+{
+	mValue = 0xFFFFFFFF;
+}
