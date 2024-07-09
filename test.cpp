@@ -147,12 +147,7 @@ void Test::iniparser_test()
 
 void Test::crc_test()
 {
-    const char* pdata = "Hello, CRC32!";
-    CRC32::getInstance()->Update(reinterpret_cast<uint8_t*>(const_cast<char*>(pdata)), strlen(pdata));
 
-    uint32_t value = CRC32::getInstance()->Value();
-
-    std::cout << "CRC value : " << std::hex << value << std::dec << std::endl;
 }
 
 void Test::gpio_test()

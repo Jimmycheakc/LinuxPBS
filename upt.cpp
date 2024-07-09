@@ -1,4 +1,5 @@
 #include <boost/asio.hpp>
+#include <endian.h>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -36,7 +37,7 @@ MessageHeader::MessageHeader()
 
 MessageHeader::~MessageHeader()
 {
-
+    clear();
 }
 
 void MessageHeader::setLength(uint32_t length)
@@ -222,6 +223,62 @@ std::vector<uint8_t> MessageHeader::getEncryptionMAC() const
     return encryptionMAC_;
 }
 
+void MessageHeader::clear()
+{
+    length_ = 0;
+    integrityCRC32_ = 0;
+    msgVersion_ = 0;
+    msgDirection_ = 0;
+    msgTime_ = 0;
+    msgSequence_ = 0;
+    msgClass_ = 0;
+    msgType_ = 0;
+    msgCode_ = 0;
+    msgCompletion_ = 0;
+    msgNotification_ = 0;
+    msgStatus_ = 0;
+    deviceProvider_ = 0;
+    deviceType_ = 0;
+    deviceNumber_ = 0;
+    encryptionAlgorithm_ = 0;
+    encryptionKeyIndex_ = 0;
+    encryptionMAC_.clear();
+}
+
+template<typename T>
+void MessageHeader::appendToBuffer(std::vector<uint8_t>& buffer, T value) const
+{
+    uint8_t* bytePtr = reinterpret_cast<uint8_t*>(&value);
+    buffer.insert(buffer.end(), bytePtr, bytePtr + sizeof(T));
+}
+
+std::vector<uint8_t> MessageHeader::toByteArray() const
+{
+    std::vector<uint8_t> buffer;
+
+    appendToBuffer(buffer, length_);
+    appendToBuffer(buffer, integrityCRC32_);
+    appendToBuffer(buffer, msgVersion_);
+    appendToBuffer(buffer, msgDirection_);
+    appendToBuffer(buffer, msgTime_);
+    appendToBuffer(buffer, msgSequence_);
+    appendToBuffer(buffer, msgClass_);
+    appendToBuffer(buffer, msgType_);
+    appendToBuffer(buffer, msgCode_);
+    appendToBuffer(buffer, msgCompletion_);
+    appendToBuffer(buffer, msgNotification_);
+    appendToBuffer(buffer, msgStatus_);
+    appendToBuffer(buffer, deviceProvider_);
+    appendToBuffer(buffer, deviceType_);
+    appendToBuffer(buffer, deviceNumber_);
+    appendToBuffer(buffer, encryptionAlgorithm_);
+    appendToBuffer(buffer, encryptionKeyIndex_);
+    
+    buffer.insert(buffer.end(), encryptionMAC_.begin(), encryptionMAC_.end());
+
+    return buffer;
+}
+
 // UPOS Message Payload Fields
 PayloadField::PayloadField()
     : payloadFieldLength_(0),
@@ -235,7 +292,7 @@ PayloadField::PayloadField()
 
 PayloadField::~PayloadField()
 {
-
+    clear();
 }
 
 void PayloadField::setPayloadFieldLength(uint32_t length)
@@ -291,11 +348,42 @@ std::vector<uint8_t> PayloadField::getFieldData() const
     return fieldData_;
 }
 
+void PayloadField::clear()
+{
+    payloadFieldLength_ = 0;
+    payloadFieldId_ = 0;
+    fieldReserve_ = 0;
+    fieldEncoding_ = 0;
+    fieldData_.clear();
+}
+
+template<typename T>
+void PayloadField::appendToBuffer(std::vector<uint8_t>& buffer, T value) const
+{
+    uint8_t* bytePtr = reinterpret_cast<uint8_t*>(&value);
+    buffer.insert(buffer.end(), bytePtr, bytePtr + sizeof(T));
+}
+
+std::vector<uint8_t> PayloadField::toByteArray() const
+{
+    std::vector<uint8_t> buffer;
+
+    appendToBuffer(buffer, payloadFieldLength_);
+    appendToBuffer(buffer, payloadFieldId_);
+    appendToBuffer(buffer, fieldReserve_);
+    appendToBuffer(buffer, fieldEncoding_);
+
+    buffer.insert(buffer.end(), fieldData_.begin(), fieldData_.end());
+
+    return buffer;
+}
+
 
 // Upos Terminal Class
 Upt* Upt::upt_;
 std::mutex Upt::mutex_;
-uint32_t Upt::sequenceNo_ = 1;
+uint32_t Upt::sequenceNo_ = 0;
+std::mutex Upt::sequenceNoMutex_;
 
 Upt::Upt()
     : ioContext_(),
@@ -303,8 +391,15 @@ Upt::Upt()
     work_(ioContext_),
     ackTimer_(ioContext_),
     rspTimer_(ioContext_),
+    pendingRspTimer_(ioContext_),
+    serialWriteDelayTimer_(ioContext_),
+    ackRecv_(false),
+    rspRecv_(false),
+    pendingRspRecv_(false),
     write_in_progress_(false),
     rxState_(Upt::RX_STATE::RX_START),
+    currentState_(Upt::STATE::IDLE),
+    lastSerialReadTime_(std::chrono::steady_clock::now()),
     logFileName_("upos")
 {
     resetRxBuffer();
@@ -376,6 +471,34 @@ void Upt::startIoContextThread()
     {
         ioContextThread_ = std::thread([this]() { ioContext_.run(); });
     }
+}
+
+void Upt::incrementSequenceNo()
+{
+    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
+
+    if (sequenceNo_ == 0xFFFFFFFF)
+    {
+        sequenceNo_ = 1;
+    }
+    else
+    {
+        ++sequenceNo_;
+    }
+}
+
+void Upt::setSequenceNo(uint32_t sequenceNo)
+{
+    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
+
+    sequenceNo_ = sequenceNo;
+}
+
+uint32_t Upt::getSequenceNo()
+{
+    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
+
+    return sequenceNo_;
 }
 
 std::string Upt::getCommandString(Upt::UPT_CMD cmd)
@@ -590,6 +713,1361 @@ std::string Upt::getCommandString(Upt::UPT_CMD cmd)
     return cmdStr;
 }
 
+std::string Upt::getMsgStatusString(uint32_t msgStatus)
+{
+    std::string msgStatusStr = "";
+
+    switch (static_cast<MSG_STATUS>(msgStatus))
+    {
+        case MSG_STATUS::SUCCESS:
+        {
+            msgStatusStr = "SUCCESS";
+            break;
+        }
+        case MSG_STATUS::PENDING:
+        {
+            msgStatusStr = "PENDING";
+            break;
+        }
+        case MSG_STATUS::TIMEOUT:
+        {
+            msgStatusStr = "TIMEOUT";
+            break;
+        }
+        case MSG_STATUS::INVALID_PARAMETER:
+        {
+            msgStatusStr = "INVALID_PARAMETER";
+            break;
+        }
+        case MSG_STATUS::INCORRECT_FLOW:
+        {
+            msgStatusStr = "INCORRECT_FLOW";
+            break;
+        }
+        case MSG_STATUS::MSG_INTEGRITY_FAILED:
+        {
+            msgStatusStr = "MSG_INTEGRITY_FAILED";
+            break;
+        }
+        case MSG_STATUS::MSG_TYPE_NOT_SUPPORTED:
+        {
+            msgStatusStr = "MSG_TYPE_NOT_SUPPORTED";
+            break;
+        }
+        case MSG_STATUS::MSG_CODE_NOT_SUPPORTED:
+        {
+            msgStatusStr = "MSG_CODE_NOT_SUPPORTED";
+            break;
+        }
+        case MSG_STATUS::MSG_AUTHENTICATION_REQUIRED:
+        {
+            msgStatusStr = "MSG_AUTHENTICATION_REQUIRED";
+            break;
+        }
+        case MSG_STATUS::MSG_AUTHENTICATION_FAILED:
+        {
+            msgStatusStr = "MSG_AUTHENTICATION_FAILED";
+            break;
+        }
+        case MSG_STATUS::MSG_MAC_FAILED:
+        {
+            msgStatusStr = "MSG_MAC_FAILED";
+            break;
+        }
+        case MSG_STATUS::MSG_LENGTH_MISMATCH:
+        {
+            msgStatusStr = "MSG_LENGTH_MISMATCH";
+            break;
+        }
+        case MSG_STATUS::MSG_LENGTH_MINIMUM:
+        {
+            msgStatusStr = "MSG_LENGTH_MINIMUM";
+            break;
+        }
+        case MSG_STATUS::MSG_LENGTH_MAXIMUM:
+        {
+            msgStatusStr = "MSG_LENGTH_MAXIMUM";
+            break;
+        }
+        case MSG_STATUS::MSG_VERSION_INVALID:
+        {
+            msgStatusStr = "MSG_VERSION_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_CLASS_INVALID:
+        {
+            msgStatusStr = "MSG_CLASS_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_STATUS_INVALID:
+        {
+            msgStatusStr = "MSG_STATUS_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_ALGORITHM_INVALID:
+        {
+            msgStatusStr = "MSG_ALGORITHM_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_ALGORITHM_IS_MANDATORY:
+        {
+            msgStatusStr = "MSG_ALGORITHM_IS_MANDATORY";
+            break;
+        }
+        case MSG_STATUS::MSG_KEY_INDEX_INVALID:
+        {
+            msgStatusStr = "MSG_KEY_INDEX_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_NOTIFICATION_INVALID:
+        {
+            msgStatusStr = "MSG_NOTIFICATION_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_COMPLETION_INVALID:
+        {
+            msgStatusStr = "MSG_COMPLETION_INVALID";
+            break;
+        }
+        case MSG_STATUS::MSG_DATA_TRANSPARENCY_ERROR:
+        {
+            msgStatusStr = "MSG_DATA_TRANSPARENCY_ERROR";
+            break;
+        }
+        case MSG_STATUS::MSG_INCOMPLETE:
+        {
+            msgStatusStr = "MSG_INCOMPLETE";
+            break;
+        }
+        case MSG_STATUS::FIELD_MANDATORY_MISSING:
+        {
+            msgStatusStr = "FIELD_MANDATORY_MISSING";
+            break;
+        }
+        case MSG_STATUS::FIELD_LENGTH_MINIMUM:
+        {
+            msgStatusStr = "FIELD_LENGTH_MINIMUM";
+            break;
+        }
+        case MSG_STATUS::FIELD_LENGTH_INVALID:
+        {
+            msgStatusStr = "FIELD_LENGTH_INVALID";
+            break;
+        }
+        case MSG_STATUS::FIELD_TYPE_INVALID:
+        {
+            msgStatusStr = "FIELD_TYPE_INVALID";
+            break;
+        }
+        case MSG_STATUS::FIELD_ENCODING_INVALID:
+        {
+            msgStatusStr = "FIELD_ENCODING_INVALID";
+            break;
+        }
+        case MSG_STATUS::FIELD_DATA_INVALID:
+        {
+            msgStatusStr = "FIELD_DATA_INVALID";
+            break;
+        }
+        case MSG_STATUS::FIELD_PARSING_ERROR:
+        {
+            msgStatusStr = "FIELD_PARSING_ERROR";
+            break;
+        }
+        case MSG_STATUS::CARD_NOT_DETECTED:
+        {
+            msgStatusStr = "CARD_NOT_DETECTED";
+            break;
+        }
+        case MSG_STATUS::CARD_ERROR:
+        {
+            msgStatusStr = "CARD_ERROR";
+            break;
+        }
+        case MSG_STATUS::CARD_BLACKLISTED:
+        {
+            msgStatusStr = "CARD_BLACKLISTED";
+            break;
+        }
+        case MSG_STATUS::CARD_BLOCKED:
+        {
+            msgStatusStr = "CARD_BLOCKED";
+            break;
+        }
+        case MSG_STATUS::CARD_EXPIRED:
+        {
+            msgStatusStr = "CARD_EXPIRED";
+            break;
+        }
+        case MSG_STATUS::CARD_INVALID_ISSUER_ID:
+        {
+            msgStatusStr = "CARD_INVALID_ISSUER_ID";
+            break;
+        }
+        case MSG_STATUS::CARD_INVALID_PURSE_VALUE:
+        {
+            msgStatusStr = "CARD_INVALID_PURSE_VALUE";
+            break;
+        }
+        case MSG_STATUS::CARD_CREDIT_NOT_ALLOWED:
+        {
+            msgStatusStr = "CARD_CREDIT_NOT_ALLOWED";
+            break;
+        }
+        case MSG_STATUS::CARD_DEBIT_NOT_ALLOWED:
+        {
+            msgStatusStr = "CARD_DEBIT_NOT_ALLOWED";
+            break;
+        }
+        case MSG_STATUS::CARD_INSUFFICIENT_FUND:
+        {
+            msgStatusStr = "CARD_INSUFFICIENT_FUND";
+            break;
+        }
+        case MSG_STATUS::CARD_EXCEEDED_PURSE_VALUE:
+        {
+            msgStatusStr = "CARD_EXCEEDED_PURSE_VALUE";
+            break;
+        }
+        case MSG_STATUS::CARD_CREDIT_FAILED:
+        {
+            msgStatusStr = "CARD_CREDIT_FAILED";
+            break;
+        }
+        case MSG_STATUS::CARD_CREDIT_UNCONFIRMED:
+        {
+            msgStatusStr = "CARD_CREDIT_UNCONFIRMED";
+            break;
+        }
+        case MSG_STATUS::CARD_DEBIT_FAILED:
+        {
+            msgStatusStr = "CARD_DEBIT_FAILED";
+            break;
+        }
+        case MSG_STATUS::CARD_DEBIT_UNCONFIRMED:
+        {
+            msgStatusStr = "CARD_DEBIT_UNCONFIRMED";
+            break;
+        }
+        case MSG_STATUS::COMMUNICATION_NO_RESPONSE:
+        {
+            msgStatusStr = "COMMUNICATION_NO_RESPONSE";
+            break;
+        }
+        case MSG_STATUS::COMMUNICATION_ERROR:
+        {
+            msgStatusStr = "COMMUNICATION_ERROR";
+            break;
+        }
+        case MSG_STATUS::SOF_INVALID_CARD:
+        {
+            msgStatusStr = "SOF_INVALID_CARD";
+            break;
+        }
+        case MSG_STATUS::SOF_INCORRECT_PIN:
+        {
+            msgStatusStr = "SOF_INCORRECT_PIN";
+            break;
+        }
+        case MSG_STATUS::SOF_INSUFFICIENT_FUND:
+        {
+            msgStatusStr = "SOF_INSUFFICIENT_FUND";
+            break;
+        }
+        case MSG_STATUS::SOF_CLOSED:
+        {
+            msgStatusStr = "SOF_CLOSED";
+            break;
+        }
+        case MSG_STATUS::SOF_BLOCKED:
+        {
+            msgStatusStr = "SOF_BLOCKED";
+            break;
+        }
+        case MSG_STATUS::SOF_REFER_TO_BANK:
+        {
+            msgStatusStr = "SOF_REFER_TO_BANK";
+            break;
+        }
+        case MSG_STATUS::SOF_CANCEL:
+        {
+            msgStatusStr = "SOF_CANCEL";
+            break;
+        }
+        case MSG_STATUS::SOF_HOST_RESPONSE_DECLINE:
+        {
+            msgStatusStr = "SOF_HOST_RESPONSE_DECLINE";
+            break;
+        }
+        case MSG_STATUS::SOF_LOGON_REQUIRED:
+        {
+            msgStatusStr = "SOF_LOGON_REQUIRED";
+            break;
+        }
+        default:
+        {
+            msgStatusStr = "Unknow Message Status.";
+            break;
+        }
+    }
+
+    return msgStatusStr;
+}
+
+std::string Upt::getMsgDirectionString(uint8_t msgDirection)
+{
+    std::string msgDirectionStr = "";
+
+    switch (static_cast<MSG_DIRECTION>(msgDirection))
+    {
+        case MSG_DIRECTION::MSG_DIRECTION_CONTROLLER_TO_DEVICE:
+        {
+            msgDirectionStr = "MSG_DIRECTION_CONTROLLER_TO_DEVICE";
+            break;
+        }
+        case MSG_DIRECTION::MSG_DIRECTION_DEVICE_TO_CONTROLLER:
+        {
+            msgDirectionStr = "MSG_DIRECTION_DEVICE_TO_CONTROLLER";
+            break;
+        }
+    }
+
+    return msgDirectionStr;
+}
+
+std::string Upt::getMsgClassString(uint16_t msgClass)
+{
+    std::string msgClassStr = "";
+
+    switch (static_cast<MSG_CLASS>(msgClass))
+    {
+        case MSG_CLASS::MSG_CLASS_NONE:
+        {
+            msgClassStr = "MSG_CLASS_NONE";
+            break;
+        }
+        case MSG_CLASS::MSG_CLASS_REQ:
+        {
+            msgClassStr = "MSG_CLASS_REQ";
+            break;
+        }
+        case MSG_CLASS::MSG_CLASS_ACK:
+        {
+            msgClassStr = "MSG_CLASS_ACK";
+            break;
+        }
+        case MSG_CLASS::MSG_CLASS_RSP:
+        {
+            msgClassStr = "MSG_CLASS_RSP";
+            break;
+        }
+    }
+
+    return msgClassStr;
+}
+
+std::string Upt::getMsgTypeString(uint32_t msgType)
+{
+    std::string msgTypeStr = "";
+
+    switch (static_cast<MSG_TYPE>(msgType))
+    {
+        case MSG_TYPE::MSG_TYPE_DEVICE:
+        {
+            msgTypeStr = "MSG_TYPE_DEVICE";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_AUTHENTICATION:
+        {
+            msgTypeStr = "MSG_TYPE_AUTHENTICATION";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_CARD:
+        {
+            msgTypeStr = "MSG_TYPE_CARD";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_PAYTMENT:
+        {
+            msgTypeStr = "MSG_TYPE_PAYTMENT";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_CANCELLATION:
+        {
+            msgTypeStr = "MSG_TYPE_CANCELLATION";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_TOPUP:
+        {
+            msgTypeStr = "MSG_TYPE_TOPUP";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_RECORD:
+        {
+            msgTypeStr = "MSG_TYPE_RECORD";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_PASSTHROUGH:
+        {
+            msgTypeStr = "MSG_TYPE_PASSTHROUGH";
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_OTHER:
+        {
+            msgTypeStr = "MSG_TYPE_OTHER";
+            break;
+        }
+    }
+
+    return msgTypeStr;
+}
+
+std::string Upt::getMsgCodeString(uint32_t msgCode, uint32_t msgType)
+{
+    std::string msgCodeStr = "";
+
+    switch (static_cast<MSG_TYPE>(msgType))
+    {
+        case MSG_TYPE::MSG_TYPE_DEVICE:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_DEVICE_STATUS:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_STATUS";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_RESET:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_RESET";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_RESET_SEQUENCE_NUMBER:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_RESET_SEQUENCE_NUMBER";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_TIME_SYNC:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_TIME_SYNC";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_PROFILE:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_PROFILE";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_SOF_LIST:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_SOF_LIST";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_SOF_SET_PRIORISATION:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_SOF_SET_PRIORISATION";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_LOGON:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_LOGON";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_TMS:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_TMS";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_SETTLEMENT:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_SETTLEMENT";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_SETTLEMENT_PRE:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_SETTLEMENT_PRE";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT:
+                {
+                    msgCodeStr = "MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT";
+                    break;
+                }
+            }
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_AUTHENTICATION:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_AUTH_MUTUAL_STEP_01:
+                {
+                    msgCodeStr = "MSG_CODE_AUTH_MUTUAL_STEP_01";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_AUTH_MUTUAL_STEP_02:
+                {
+                    msgCodeStr = "MSG_CODE_AUTH_MUTUAL_STEP_02";
+                    break;
+                }
+            }
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_CARD:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_CARD_DETECT:
+                {
+                    msgCodeStr = "MSG_CODE_CARD_DETECT";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_CARD_READ_PURSE:
+                {
+                    msgCodeStr = "MSG_CODE_CARD_READ_PURSE";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_CARD_READ_HISTORICAL_LOG:
+                {
+                    msgCodeStr = "MSG_CODE_CARD_READ_HISTORICAL_LOG";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_CARD_READ_RSVP:
+                {
+                    msgCodeStr = "MSG_CODE_CARD_READ_RSVP";
+                    break;
+                }
+            }
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_PAYTMENT:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_PAYMENT_AUTO:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_AUTO";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_EFT:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_EFT";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_NCC:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_NCC";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_NFP:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_NFP";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_RSVP:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_RSVP";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_CRD:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_CRD";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_DEB:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_DEB";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_BCA:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_BCA";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_EZL:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_EZL";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PRE_AUTH:
+                {
+                    msgCodeStr = "MSG_CODE_PRE_AUTH";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PRE_AUTH_COMPLETION:
+                {
+                    msgCodeStr = "MSG_CODE_PRE_AUTH_COMPLETION";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_PAYMENT_HOST:
+                {
+                    msgCodeStr = "MSG_CODE_PAYMENT_HOST";
+                    break;
+                }
+            }
+            break;
+        }
+        case MSG_TYPE::MSG_TYPE_CANCELLATION:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_CANCELLATION_VOID:
+                {
+                    msgCodeStr = "MSG_CODE_CANCELLATION_VOID";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_CANCELLATION_REFUND:
+                {
+                    msgCodeStr = "MSG_CODE_CANCELLATION_REFUND";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_CANCELLATION_CANCEL:
+                {
+                    msgCodeStr = "MSG_CODE_CANCELLATION_CANCEL";
+                    break;
+                }
+            }
+        }
+        case MSG_TYPE::MSG_TYPE_TOPUP:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_TOPUP_NCC:
+                {
+                    msgCodeStr = "MSG_CODE_TOPUP_NCC";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_TOPUP_NFP:
+                {
+                    msgCodeStr = "MSG_CODE_TOPUP_NFP";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_TOPUP_RSVP:
+                {
+                    msgCodeStr = "MSG_CODE_TOPUP_RSVP";
+                    break;
+                }
+            }
+        }
+        case MSG_TYPE::MSG_TYPE_RECORD:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_RECORD_SUMMARY:
+                {
+                    msgCodeStr = "MSG_CODE_RECORD_SUMMARY";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_RECORD_UPLOAD:
+                {
+                    msgCodeStr = "MSG_CODE_RECORD_UPLOAD";
+                    break;
+                }
+                case MSG_CODE::MSG_CODE_RECORD_CLEAR:
+                {
+                    msgCodeStr = "MSG_CODE_RECORD_CLEAR";
+                    break;
+                }
+            }
+        }
+        case MSG_TYPE::MSG_TYPE_PASSTHROUGH:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_PASSTHROUGH_UOB:
+                {
+                    msgCodeStr = "MSG_CODE_PASSTHROUGH_UOB";
+                    break;
+                }
+            }
+        }
+        case MSG_TYPE::MSG_TYPE_OTHER:
+        {
+            switch (static_cast<MSG_CODE>(msgCode))
+            {
+                case MSG_CODE::MSG_CODE_OTHER_CASH_DEPOSIT:
+                {
+                    msgCodeStr = "MSG_CODE_OTHER_CASH_DEPOSIT";
+                    break;
+                }
+            }
+        }
+    }
+
+    return msgCodeStr;
+}
+
+std::string Upt::getEncryptionAlgorithmString(uint8_t encryptionAlgorithm)
+{
+    std::string encryptionAlgorithmStr = "";
+
+    switch (static_cast<ENCRYPTION_ALGORITHM>(encryptionAlgorithm))
+    {
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_NONE:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_NONE";
+            break;
+        }
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_AES128:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_AES128";
+            break;
+        }
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_AES192:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_AES192";
+            break;
+        }
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_AES256:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_AES256";
+            break;
+        }
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_DES1_1KEY:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_DES1_1KEY";
+            break;
+        }
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_DES3_2KEY:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_DES3_2KEY";
+            break;
+        }
+        case ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_DES3_3KEY:
+        {
+            encryptionAlgorithmStr = "ENCRYPTION_ALGORITHM_DES3_3KEY";
+            break;
+        }
+    }
+
+    return encryptionAlgorithmStr;
+}
+
+std::string Upt::getCommandTitleString(uint8_t msgDirection, uint16_t msgClass, uint32_t msgCode, uint32_t msgType)
+{
+    std::string titleStr = "";
+    std::string msgDirectionStr = "";
+    std::string msgClassStr = "";
+    std::string msgCodeStr = "";
+
+    // Msg Direction
+    switch (static_cast<MSG_DIRECTION>(msgDirection))
+    {
+        case MSG_DIRECTION::MSG_DIRECTION_CONTROLLER_TO_DEVICE:
+        {
+            msgDirectionStr = "CONTROLLER";
+            break;
+        }
+        case MSG_DIRECTION::MSG_DIRECTION_DEVICE_TO_CONTROLLER:
+        {
+            msgDirectionStr = "DEVICE";
+            break;
+        }
+    }
+
+    // Msg Class
+    switch (static_cast<MSG_CLASS>(msgClass))
+    {
+        case MSG_CLASS::MSG_CLASS_NONE:
+        {
+            msgClassStr = "NONE";
+            break;
+        }
+        case MSG_CLASS::MSG_CLASS_REQ:
+        {
+            msgClassStr = "REQ";
+            break;
+        }
+        case MSG_CLASS::MSG_CLASS_ACK:
+        {
+            msgClassStr = "ACK";
+            break;
+        }
+        case MSG_CLASS::MSG_CLASS_RSP:
+        {
+            msgClassStr = "RSP";
+            break;
+        }
+    }
+
+    // Msg Code
+    std::string tmpCodeStr = getMsgCodeString(msgCode, msgType);
+
+    if (!tmpCodeStr.empty())
+    {
+        std::size_t pos = tmpCodeStr.find("MSG_CODE_");
+        if (pos != std::string::npos)
+        {
+            msgCodeStr = tmpCodeStr.substr(pos + std::string("MSG_CODE_").length());
+        }
+        else
+        {
+            msgCodeStr = tmpCodeStr;
+        }
+    }
+
+    titleStr += msgDirectionStr + " (" + msgClassStr + ") - " + msgCodeStr;
+    return titleStr;
+}
+
+char Upt::getFieldEncodingChar(uint8_t fieldEncoding)
+{
+    char fieldChar;
+
+    switch (static_cast<FIELD_ENCODING>(fieldEncoding))
+    {
+        case FIELD_ENCODING::FIELD_ENCODING_NONE:
+        {
+            fieldChar = 'N';
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_ARRAY_ASCII:
+        case FIELD_ENCODING::FIELD_ENCODING_ARRAY_ASCII_HEX:
+        case FIELD_ENCODING::FIELD_ENCODING_ARRAY_HEX:
+        {
+            fieldChar = 'A';
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_ASCII:
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_ASCII_HEX:
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_BCD:
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_HEX_BIG:
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_HEX_LITTLE:
+        {
+            fieldChar = 'V';
+            break;
+        }
+    }
+
+    return fieldChar;
+}
+
+std::string Upt::getFieldEncodingTypeString(uint8_t fieldEncoding)
+{
+    std::string fieldStr = "";
+
+    switch (static_cast<FIELD_ENCODING>(fieldEncoding))
+    {
+        case FIELD_ENCODING::FIELD_ENCODING_NONE:
+        {
+            fieldStr = "NONE";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_ARRAY_ASCII:
+        {
+            fieldStr = "ARR_ASC";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_ARRAY_ASCII_HEX:
+        {
+            fieldStr = "ARR_ASC_HEX";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_ARRAY_HEX:
+        {
+            fieldStr = "ARR_HEX";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_ASCII:
+        {
+            fieldStr = "VAL_ASC";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_ASCII_HEX:
+        {
+            fieldStr = "VAL_ASC_HEX";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_BCD:
+        {
+            fieldStr = "VAL_BCD";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_HEX_BIG:
+        {
+            fieldStr = "VAL_HEX_BIG";
+            break;
+        }
+        case FIELD_ENCODING::FIELD_ENCODING_VALUE_HEX_LITTLE:
+        {
+            fieldStr = "VAL_HEX_LIT";
+            break;
+        }
+    }
+
+    return fieldStr;
+}
+
+std::string Upt::getFieldIDString(uint16_t fieldID)
+{
+    std::string fieldIDStr = "";
+
+    switch (static_cast<FIELD_ID>(fieldID))
+    {
+        case FIELD_ID::ID_PADDING:
+        {
+            fieldIDStr = "ID_PADDING";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_DATE:
+        {
+            fieldIDStr = "ID_DEVICE_DATE";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_TIME:
+        {
+            fieldIDStr = "ID_DEVICE_TIME";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_MID:
+        {
+            fieldIDStr = "ID_DEVICE_MID";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_RID:
+        {
+            fieldIDStr = "ID_DEVICE_RID";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_TID:
+        {
+            fieldIDStr = "ID_DEVICE_TID";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_MER_CODE:
+        {
+            fieldIDStr = "ID_DEVICE_MER_CODE";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_MER_NAME:
+        {
+            fieldIDStr = "ID_DEVICE_MER_NAME";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_MER_ADDRESS:
+        {
+            fieldIDStr = "ID_DEVICE_MER_ADDRESS";
+            break;
+        }
+        case FIELD_ID::ID_DEVICE_MER_ADDRESS2:
+        {
+            fieldIDStr = "ID_DEVICE_MER_ADDRESS2";
+            break;
+        }
+        case FIELD_ID::ID_SOF_TYPE:
+        {
+            fieldIDStr = "ID_SOF_TYPE";
+            break;
+        }
+        case FIELD_ID::ID_SOF_DESCRIPTION:
+        {
+            fieldIDStr = "ID_SOF_DESCRIPTION";
+            break;
+        }
+        case FIELD_ID::ID_SOF_PRIORITY:
+        {
+            fieldIDStr = "ID_SOF_PRIORITY";
+            break;
+        }
+        case FIELD_ID::ID_SOF_ACQUIRER:
+        {
+            fieldIDStr = "ID_SOF_ACQUIRER";
+            break;
+        }
+        case FIELD_ID::ID_SOF_NAME:
+        {
+            fieldIDStr = "ID_SOF_NAME";
+            break;
+        }
+        case FIELD_ID::ID_SOF_SALE_COUNT:
+        {
+            fieldIDStr = "ID_SOF_SALE_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_SALE_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_SALE_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_SOF_REFUND_COUNT:
+        {
+            fieldIDStr = "ID_SOF_REFUND_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_REFUND_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_REFUND_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_SOF_VOID_COUNT:
+        {
+            fieldIDStr = "ID_SOF_VOID_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_VOID_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_VOID_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_SOF_PRE_AUTH_COMPLETE_COUNT:
+        {
+            fieldIDStr = "ID_SOF_PRE_AUTH_COMPLETE_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_PRE_AUTH_COMPLETE_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_PRE_AUTH_COMPLETE_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_SOF_PRE_AUTH_COMPLETION_VOID_COUNT:
+        {
+            fieldIDStr = "ID_SOF_PRE_AUTH_COMPLETION_VOID_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_PRE_AUTH_COMPLETION_VOID_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_PRE_AUTH_COMPLETION_VOID_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_SOF_CASHBACK_COUNT:
+        {
+            fieldIDStr = "ID_SOF_CASHBACK_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_CASHBACK_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_CASHBACK_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_SOF_TOPUP_COUNT:
+        {
+            fieldIDStr = "ID_SOF_TOPUP_COUNT";
+            break;
+        }
+        case FIELD_ID::ID_SOF_TOPUP_TOTAL:
+        {
+            fieldIDStr = "ID_SOF_TOPUP_TOTAL";
+            break;
+        }
+        case FIELD_ID::ID_AUTH_DATA_1:
+        {
+            fieldIDStr = "ID_AUTH_DATA_1";
+            break;
+        }
+        case FIELD_ID::ID_AUTH_DATA_2:
+        {
+            fieldIDStr = "ID_AUTH_DATA_2";
+            break;
+        }
+        case FIELD_ID::ID_AUTH_DATA_3:
+        {
+            fieldIDStr = "ID_AUTH_DATA_3";
+            break;
+        }
+        case FIELD_ID::ID_CARD_TYPE:
+        {
+            fieldIDStr = "ID_CARD_TYPE";
+            break;
+        }
+        case FIELD_ID::ID_CARD_CAN:
+        {
+            fieldIDStr = "ID_CARD_CAN";
+            break;
+        }
+        case FIELD_ID::ID_CARD_CSN:
+        {
+            fieldIDStr = "ID_CARD_CSN";
+            break;
+        }
+        case FIELD_ID::ID_CARD_BALANCE:
+        {
+            fieldIDStr = "ID_CARD_BALANCE";
+            break;
+        }
+        case FIELD_ID::ID_CARD_COUNTER:
+        {
+            fieldIDStr = "ID_CARD_COUNTER";
+            break;
+        }
+        case FIELD_ID::ID_CARD_EXPIRY:
+        {
+            fieldIDStr = "ID_CARD_EXPIRY";
+            break;
+        }
+        case FIELD_ID::ID_CARD_CERT:
+        {
+            fieldIDStr = "ID_CARD_CERT";
+            break;
+        }
+        case FIELD_ID::ID_CARD_PREVIOUS_BAL:
+        {
+            fieldIDStr = "ID_CARD_PREVIOUS_BAL";
+            break;
+        }
+        case FIELD_ID::ID_CARD_PURSE_STATUS:
+        {
+            fieldIDStr = "ID_CARD_PURSE_STATUS";
+            break;
+        }
+        case FIELD_ID::ID_CARD_ATU_STATUS:
+        {
+            fieldIDStr = "ID_CARD_ATU_STATUS";
+            break;
+        }
+        case FIELD_ID::ID_CARD_NUM_MASKED:
+        {
+            fieldIDStr = "ID_CARD_NUM_MASKED";
+            break;
+        }
+        case FIELD_ID::ID_CARD_HOLDER_NAME:
+        {
+            fieldIDStr = "ID_CARD_HOLDER_NAME";
+            break;
+        }
+        case FIELD_ID::ID_CARD_SCHEME_NAME:
+        {
+            fieldIDStr = "ID_CARD_SCHEME_NAME";
+            break;
+        }
+        case FIELD_ID::ID_CARD_AID:
+        {
+            fieldIDStr = "ID_CARD_AID";
+            break;
+        }
+        case FIELD_ID::ID_CARD_CEPAS_VER:
+        {
+            fieldIDStr = "ID_CARD_CEPAS_VER";
+            break;
+        }
+        case FIELD_ID::ID_TXN_TYPE:
+        {
+            fieldIDStr = "ID_TXN_TYPE";
+            break;
+        }
+        case FIELD_ID::ID_TXN_AMOUNT:
+        {
+            fieldIDStr = "ID_TXN_AMOUNT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_CASHBACK_AMOUNT:
+        {
+            fieldIDStr = "ID_TXN_CASHBACK_AMOUNT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_DATE:
+        {
+            fieldIDStr = "ID_TXN_DATE";
+            break;
+        }
+        case FIELD_ID::ID_TXN_TIME:
+        {
+            fieldIDStr = "ID_TXN_TIME";
+            break;
+        }
+        case FIELD_ID::ID_TXN_BATCH:
+        {
+            fieldIDStr = "ID_TXN_BATCH";
+            break;
+        }
+        case FIELD_ID::ID_TXN_CERT:
+        {
+            fieldIDStr = "ID_TXN_CERT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_CHECKSUM:
+        {
+            fieldIDStr = "ID_TXN_CHECKSUM";
+            break;
+        }
+        case FIELD_ID::ID_TXN_DATA:
+        {
+            fieldIDStr = "ID_TXN_DATA";
+            break;
+        }
+        case FIELD_ID::ID_TXN_STAN:
+        {
+            fieldIDStr = "ID_TXN_STAN";
+            break;
+        }
+        case FIELD_ID::ID_TXN_MER:
+        {
+            fieldIDStr = "ID_TXN_MER";
+            break;
+        }
+        case FIELD_ID::ID_TXN_MER_REF_NUM:
+        {
+            fieldIDStr = "ID_TXN_MER_REF_NUM";
+            break;
+        }
+        case FIELD_ID::ID_TXN_RESPONSE_TEXT:
+        {
+            fieldIDStr = "ID_TXN_RESPONSE_TEXT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_MER_NAME:
+        {
+            fieldIDStr = "ID_TXN_MER_NAME";
+            break;
+        }
+        case FIELD_ID::ID_TXN_MER_ADDRESS:
+        {
+            fieldIDStr = "ID_TXN_MER_ADDRESS";
+            break;
+        }
+        case FIELD_ID::ID_TXN_TID:
+        {
+            fieldIDStr = "ID_TXN_TID";
+            break;
+        }
+        case FIELD_ID::ID_TXN_MID:
+        {
+            fieldIDStr = "ID_TXN_MID";
+            break;
+        }
+        case FIELD_ID::ID_TXN_APPROV_CODE:
+        {
+            fieldIDStr = "ID_TXN_APPROV_CODE";
+            break;
+        }
+        case FIELD_ID::ID_TXN_RRN:
+        {
+            fieldIDStr = "ID_TXN_RRN";
+            break;
+        }
+        case FIELD_ID::ID_TXN_CARD_NAME:
+        {
+            fieldIDStr = "ID_TXN_CARD_NAME";
+            break;
+        }
+        case FIELD_ID::ID_TXN_SERVICE_FEE:
+        {
+            fieldIDStr = "ID_TXN_SERVICE_FEE";
+            break;
+        }
+        case FIELD_ID::ID_TXN_MARKETING_MSG:
+        {
+            fieldIDStr = "ID_TXN_MARKETING_MSG";
+            break;
+        }
+        case FIELD_ID::ID_TXN_HOST_RESP_MSG_1:
+        {
+            fieldIDStr = "ID_TXN_HOST_RESP_MSG_1";
+            break;
+        }
+        case FIELD_ID::ID_TXN_HOST_RESP_MSG_2:
+        {
+            fieldIDStr = "ID_TXN_HOST_RESP_MSG_2";
+            break;
+        }
+        case FIELD_ID::ID_TXN_HOST_RESP_CODE:
+        {
+            fieldIDStr = "ID_TXN_HOST_RESP_CODE";
+            break;
+        }
+        case FIELD_ID::ID_TXN_CARD_ENTRY_MODE:
+        {
+            fieldIDStr = "ID_TXN_CARD_ENTRY_MODE";
+            break;
+        }
+        case FIELD_ID::ID_TXN_RECEIPT:
+        {
+            fieldIDStr = "ID_TXN_RECEIPT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_AUTOLOAD_AMOUT:
+        {
+            fieldIDStr = "ID_TXN_AUTOLOAD_AMOUT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_INV_NUM:
+        {
+            fieldIDStr = "ID_TXN_INV_NUM";
+            break;
+        }
+        case FIELD_ID::ID_TXN_TC:
+        {
+            fieldIDStr = "ID_TXN_TC";
+            break;
+        }
+        case FIELD_ID::ID_TXN_FOREIGN_AMOUNT:
+        {
+            fieldIDStr = "ID_TXN_FOREIGN_AMOUNT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_FOREIGN_MID:
+        {
+            fieldIDStr = "ID_TXN_FOREIGN_MID";
+            break;
+        }
+        case FIELD_ID::ID_FOREIGN_CUR_NAME:
+        {
+            fieldIDStr = "ID_FOREIGN_CUR_NAME";
+            break;
+        }
+        case FIELD_ID::ID_TXN_POSID:
+        {
+            fieldIDStr = "ID_TXN_POSID";
+            break;
+        }
+        case FIELD_ID::ID_TXN_ACQUIRER:
+        {
+            fieldIDStr = "ID_TXN_ACQUIRER";
+            break;
+        }
+        case FIELD_ID::ID_TXN_HOST:
+        {
+            fieldIDStr = "ID_TXN_HOST";
+            break;
+        }
+        case FIELD_ID::ID_TXN_LAST_HEADER:
+        {
+            fieldIDStr = "ID_TXN_LAST_HEADER";
+            break;
+        }
+        case FIELD_ID::ID_TXN_LAST_PAYLOAD:
+        {
+            fieldIDStr = "ID_TXN_LAST_PAYLOAD";
+            break;
+        }
+        case FIELD_ID::ID_TXN_RECEIPT_REQUIRED:
+        {
+            fieldIDStr = "ID_TXN_RECEIPT_REQUIRED";
+            break;
+        }
+        case FIELD_ID::ID_TXN_FEE_DUE_TO_MERCHANT:
+        {
+            fieldIDStr = "ID_TXN_FEE_DUE_TO_MERCHANT";
+            break;
+        }
+        case FIELD_ID::ID_TXN_FEE_DUE_FROM_MERCHANT:
+        {
+            fieldIDStr = "ID_TXN_FEE_DUE_FROM_MERCHANT";
+            break;
+        }
+        case FIELD_ID::ID_VEHICLE_LICENSE_PLATE:
+        {
+            fieldIDStr = "ID_VEHICLE_LICENSE_PLATE";
+            break;
+        }
+        case FIELD_ID::ID_VEHICLE_DEVICE_TYPE:
+        {
+            fieldIDStr = "ID_VEHICLE_DEVICE_TYPE";
+            break;
+        }
+        case FIELD_ID::ID_VEHICLE_DEVICE_ID:
+        {
+            fieldIDStr = "ID_VEHICLE_DEVICE_ID";
+            break;
+        }
+    }
+
+    return fieldIDStr;
+}
+
 bool Upt::checkCmd(Upt::UPT_CMD cmd)
 {
     bool ret = false;
@@ -649,86 +2127,116 @@ bool Upt::checkCmd(Upt::UPT_CMD cmd)
     return ret;
 }
 
-void Upt::FnUptEnqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
+void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
     std::stringstream ss;
     ss << "Sending Upt Command to queue: " << getCommandString(cmd);
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
 
-    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-    //commandQueue_.emplace(cmd, data);
-    enqueueWrite(prepareCmd(cmd, data));
+    {
+        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+        commandQueue_.emplace_back(cmd, data);
 
+        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
+        {
+            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+        }
+    }
+
+    boost::asio::dispatch(strand_, [this]() {
+        checkCommandQueue();
+    });
+}
+
+void Upt::enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
+{
+    std::stringstream ss;
+    ss << "Sending Upt Command to the front of the queue: " << getCommandString(cmd);
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+
+    {
+        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+        commandQueue_.emplace_front(cmd, data);
+
+        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
+        {
+            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+        }
+    }
+
+    boost::asio::dispatch(strand_, [this]() {
+        checkCommandQueue();
+    });
 }
 
 void Upt::FnUptSendDeviceStatusRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_STATUS_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_STATUS_REQUEST);
 }
 
 void Upt::FnUptSendDeviceResetRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_RESET_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_RESET_REQUEST);
 }
 
 void Upt::FnUptSendDeviceTimeSyncRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_TIME_SYNC_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_TIME_SYNC_REQUEST);
 }
 
 void Upt::FnUptSendDeviceLogonRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_LOGON_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_LOGON_REQUEST);
 }
 
 void Upt::FnUptSendDeviceTMSRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_TMS_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_TMS_REQUEST);
 }
 
 void Upt::FnUptSendDeviceSettlementNETSRequest()
 {
     std::shared_ptr<void> req_data = std::make_shared<CommandSettlementRequestData>(CommandSettlementRequestData{HOST_ID::NETS});
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_SETTLEMENT_REQUEST, req_data);
+    enqueueCommand(UPT_CMD::DEVICE_SETTLEMENT_REQUEST, req_data);
 }
 
 void Upt::FnUptSendDeviceSettlementUPOSRequest()
 {
     std::shared_ptr<void> req_data = std::make_shared<CommandSettlementRequestData>(CommandSettlementRequestData{HOST_ID::UPOS});
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_SETTLEMENT_REQUEST, req_data);
+    enqueueCommand(UPT_CMD::DEVICE_SETTLEMENT_REQUEST, req_data);
 }
 
 void Upt::FnUptSendDeviceResetSequenceNumberRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST);
 }
 
 void Upt::FnUptSendDeviceRetrieveNETSLastTransactionStatusRequest()
 {
-    std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::UPOS});
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
+    std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::NETS});
+    enqueueCommand(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
 }
 
 void Upt::FnUptSendDeviceRetrieveUPOSLastTransactionStatusRequest()
 {
     std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::UPOS});
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
+    enqueueCommand(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
 }
 
 void Upt::FnUptSendDeviceRetrieveLastSettlementRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::DEVICE_RETRIEVE_LAST_SETTLEMENT_REQUEST);
+    enqueueCommand(UPT_CMD::DEVICE_RETRIEVE_LAST_SETTLEMENT_REQUEST);
 }
 
 void Upt::FnUptSendCardDetectRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::CARD_DETECT_REQUEST);
+    enqueueCommand(UPT_CMD::CARD_DETECT_REQUEST);
 }
 
 void Upt::FnUptSendDeviceAutoPaymentRequest(uint32_t amount, const std::string& mer_ref_num)
 {
     std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-    FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_AUTO_REQUEST, req_data);
+    enqueueCommand(UPT_CMD::PAYMENT_MODE_AUTO_REQUEST, req_data);
 }
 
 void Upt::FnUptSendDevicePaymentRequest(uint32_t amount, const std::string& mer_ref_num, Upt::PaymentType type)
@@ -738,43 +2246,43 @@ void Upt::FnUptSendDevicePaymentRequest(uint32_t amount, const std::string& mer_
         case PaymentType::NETS_EFT:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_EFT_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_EFT_REQUEST, req_data);
             break;
         }
         case PaymentType::NETS_NCC:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_NCC_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_NCC_REQUEST, req_data);
             break;
         }
         case PaymentType::NETS_NFP:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_NFP_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_NFP_REQUEST, req_data);
             break;
         }
         case PaymentType::NETS_QR:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_EFT_NETS_QR_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_EFT_NETS_QR_REQUEST, req_data);
             break;
         }
         case PaymentType::EZL:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_EZ_LINK_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_EZ_LINK_REQUEST, req_data);
             break;
         }
         case PaymentType::SCHEME_CREDIT:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_CREDIT_CARD_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_CREDIT_CARD_REQUEST, req_data);
             break;
         }
         default:
         {
             std::shared_ptr<void> req_data = std::make_shared<CommandPaymentRequestData>(CommandPaymentRequestData{amount, mer_ref_num});
-            FnUptEnqueueCommand(UPT_CMD::PAYMENT_MODE_AUTO_REQUEST, req_data);
+            enqueueCommand(UPT_CMD::PAYMENT_MODE_AUTO_REQUEST, req_data);
             break;
         }
     }
@@ -782,22 +2290,388 @@ void Upt::FnUptSendDevicePaymentRequest(uint32_t amount, const std::string& mer_
 
 void Upt::FnUptSendDeviceCancelCommandRequest()
 {
-    FnUptEnqueueCommand(UPT_CMD::CANCEL_COMMAND_REQUEST);
+    enqueueCommand(UPT_CMD::CANCEL_COMMAND_REQUEST);
 }
 
 void Upt::FnUptSendDeviceNCCTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num)
 {
     std::shared_ptr<void> req_data = std::make_shared<CommandTopUpRequestData>(CommandTopUpRequestData{amount, mer_ref_num});
-    FnUptEnqueueCommand(UPT_CMD::TOP_UP_NETS_NCC_BY_NETS_EFT_REQUEST);
+    enqueueCommand(UPT_CMD::TOP_UP_NETS_NCC_BY_NETS_EFT_REQUEST);
 }
 
 void Upt::FnUptSendDeviceNFPTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num)
 {
     std::shared_ptr<void> req_data = std::make_shared<CommandTopUpRequestData>(CommandTopUpRequestData{amount, mer_ref_num});
-    FnUptEnqueueCommand(UPT_CMD::TOP_UP_NETS_NFP_BY_NETS_EFT_REQUEST);
+    enqueueCommand(UPT_CMD::TOP_UP_NETS_NFP_BY_NETS_EFT_REQUEST);
 }
 
-void Upt::startAckTimeout()
+const Upt::StateTransition Upt::stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)] = 
+{
+    {STATE::IDLE,
+    {
+        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleIdleState                         , STATE::SENDING_REQUEST_ASYNC              }
+    }},
+    {STATE::SENDING_REQUEST_ASYNC,
+    {
+        {EVENT::WRITE_COMPLETED                                 , &Upt::handleSendingRequestAsyncState          , STATE::WAITING_FOR_ACK                    },
+        {EVENT::WRITE_FAILED                                    , &Upt::handleSendingRequestAsyncState          , STATE::IDLE                               }
+    }},
+    {STATE::WAITING_FOR_ACK,
+    {
+        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleWaitingForAckState                , STATE::WAITING_FOR_RESPONSE               },
+        {EVENT::ACK_TIMEOUT                                     , &Upt::handleWaitingForAckState                , STATE::IDLE                               }
+    }},
+    {STATE::WAITING_FOR_RESPONSE,
+    {
+        {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleWaitingForResponseState           , STATE::IDLE                               },
+        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleWaitingForResponseState           , STATE::DEVICE_STATUS_REQUEST              }
+    }},
+    {STATE::DEVICE_STATUS_REQUEST,
+    {
+        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
+        {EVENT::WRITE_COMPLETED                                 , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
+        {EVENT::WRITE_FAILED                                    , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
+        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
+        {EVENT::ACK_TIMEOUT                                     , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
+        {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleDeviceStatusRequestState          , STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
+        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
+        {EVENT::START_PENDING_RESPONSE_TIMER                    , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
+        {EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED   , &Upt::handleDeviceStatusRequestState          , STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
+        {EVENT::PENDING_RESPONSE_TIMER_TIMEOUT                  , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               }
+    }},
+    {STATE::RETRIEVE_LAST_TRANSACTION_STATUS,
+    {
+        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
+        {EVENT::WRITE_COMPLETED                                 , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
+        {EVENT::WRITE_FAILED                                    , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
+        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
+        {EVENT::ACK_TIMEOUT                                     , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
+        {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
+        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               }
+    }}
+};
+
+std::string Upt::eventToString(EVENT event)
+{
+    std::string eventStr = "Unknown Event";
+
+    switch (event)
+    {
+        case EVENT::COMMAND_ENQUEUED:
+        {
+            eventStr = "COMMAND_ENQUEUED";
+            break;
+        }
+        case EVENT::WRITE_COMPLETED:
+        {
+            eventStr = "WRITE_COMPLETED";
+            break;
+        }
+        case EVENT::WRITE_FAILED:
+        {
+            eventStr = "WRITE_FAILED";
+            break;
+        }
+        case EVENT::ACK_TIMEOUT:
+        {
+            eventStr = "ACK_TIMEOUT";
+            break;
+        }
+        case EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED:
+        {
+            eventStr = "ACK_TIMER_CANCELLED_ACK_RECEIVED";
+            break;
+        }
+        case EVENT::RESPONSE_TIMEOUT:
+        {
+            eventStr = "RESPONSE_TIMEOUT";
+            break;
+        }
+        case EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED:
+        {
+            eventStr = "RESPONSE_TIMER_CANCELLED_RSP_RECEIVED";
+            break;
+        }
+        case EVENT::START_PENDING_RESPONSE_TIMER:
+        {
+            eventStr = "START_PENDING_RESPONSE_TIMER";
+            break;
+        }
+        case EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED:
+        {
+            eventStr = "PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED";
+            break;
+        }
+        case EVENT::PENDING_RESPONSE_TIMER_TIMEOUT:
+        {
+            eventStr = "PENDING_RESPONSE_TIMER_TIMEOUT";
+            break;
+        }
+    }
+
+    return eventStr;
+}
+
+std::string Upt::stateToString(STATE state)
+{
+    std::string stateStr = "Unknow State";
+
+    switch (state)
+    {
+        case STATE::IDLE:
+        {
+            stateStr = "IDLE";
+            break;
+        }
+        case STATE::SENDING_REQUEST_ASYNC:
+        {
+            stateStr = "SENDING_REQUEST_ASYNC";
+            break;
+        }
+        case STATE::WAITING_FOR_ACK:
+        {
+            stateStr = "WAITING_FOR_ACK";
+            break;
+        }
+        case STATE::WAITING_FOR_RESPONSE:
+        {
+            stateStr = "WAITING_FOR_RESPONSE";
+            break;
+        }
+        case STATE::DEVICE_STATUS_REQUEST:
+        {
+            stateStr = "DEVICE_STATUS_REQUEST";
+            break;
+        }
+        case STATE::RETRIEVE_LAST_TRANSACTION_STATUS:
+        {
+            stateStr = "RETRIEVE_LAST_TRANSACTION_STATUS";
+            break;
+        }
+    }
+
+    return stateStr;
+}
+
+void Upt::processEvent(EVENT event)
+{
+    boost::asio::dispatch(strand_, [this, event]() {
+        int currentStateIndex_ = static_cast<int>(currentState_);
+        const auto& stateTransitions = stateTransitionTable[currentStateIndex_].transitions;
+
+        bool eventHandled = false;
+        for (const auto& transition : stateTransitions)
+        {
+            if (transition.event == event)
+            {
+                eventHandled = true;
+
+                std::ostringstream oss;
+                oss << "Current State : " << stateToString(currentState_);
+                oss << " , Event : " << eventToString(event);
+                oss << " , Event Handler : " << (transition.eventHandler ? "YES" : "NO");
+                oss << " , Next State : " << stateToString(transition.nextState);
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+                if (transition.eventHandler != nullptr)
+                {
+                    (this->*transition.eventHandler)(event);
+                }
+                currentState_ = transition.nextState;
+
+                if (currentState_ == STATE::IDLE)
+                {
+                    boost::asio::dispatch(strand_, [this]() {
+                        checkCommandQueue();
+                    });
+                }
+                return;
+            }
+        }
+
+        if (!eventHandled)
+        {
+            std::ostringstream oss;
+            oss << "Event '" << eventToString(event) << "' not handled in state '" << stateToString(currentState_) << "'";
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+        }
+    });
+}
+
+void Upt::checkCommandQueue()
+{
+    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    if (!commandQueue_.empty())
+    {
+        processEvent(EVENT::COMMAND_ENQUEUED);
+    }
+}
+
+void Upt::popFromCommandQueueAndEnqueueWrite()
+{
+    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    if (!commandQueue_.empty())
+    {
+        ackRecv_.store(false);
+        rspRecv_.store(false);
+        pendingRspRecv_.store(false);
+        CommandWithData cmdData = commandQueue_.front();
+        commandQueue_.pop_front();
+        enqueueWrite(prepareCmd(cmdData.cmd, cmdData.data));
+    }
+}
+
+void Upt::handleIdleState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::COMMAND_ENQUEUED)
+    {
+        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
+        popFromCommandQueueAndEnqueueWrite();
+    }
+}
+
+void Upt::handleSendingRequestAsyncState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::WRITE_COMPLETED)
+    {
+        Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
+        startAckTimer();
+    }
+    else if (event == EVENT::WRITE_FAILED)
+    {
+        Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+    }
+}
+
+void Upt::handleWaitingForAckState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("ACK Received. Start receiving response.", logFileName_, "UPT");
+        startResponseTimer();
+    }
+    else if (event == EVENT::ACK_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
+    }
+}
+
+void Upt::handleWaitingForResponseState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("Response Received.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::RESPONSE_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Response Timer Timeout. Start pending response timer.", logFileName_, "UPT");
+        // Send the device status request command
+        enqueueCommandToFront(UPT_CMD::DEVICE_STATUS_REQUEST);
+    }
+}
+
+void Upt::handleDeviceStatusRequestState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::COMMAND_ENQUEUED)
+    {
+        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
+        popFromCommandQueueAndEnqueueWrite();
+    }
+    else if (event == EVENT::WRITE_COMPLETED)
+    {
+        Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
+        startAckTimer();
+    }
+    else if (event == EVENT::WRITE_FAILED)
+    {
+        Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("ACK Received. Start receiving response.", logFileName_, "UPT");
+        startResponseTimer();
+    }
+    else if (event == EVENT::ACK_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("Response Received.", logFileName_, "UPT");
+        // Send retrieve last transaction status request
+        std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::NETS});
+        enqueueCommandToFront(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
+    }
+    else if (event == EVENT::RESPONSE_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::START_PENDING_RESPONSE_TIMER)
+    {
+        Logger::getInstance()->FnLog("Start pending response timer.", logFileName_, "UPT");
+        startPendingResponseTimer();
+    }
+    else if (event == EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("Pending Response Received.", logFileName_, "UPT");
+        // Send retrieve last transaction status request
+        std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::NETS});
+        enqueueCommandToFront(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
+    }
+    else if (event == EVENT::PENDING_RESPONSE_TIMER_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Pending Response Timer Timeout.", logFileName_, "UPT");
+    }
+}
+
+void Upt::handleRetrieveLastTransactionStatusState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::COMMAND_ENQUEUED)
+    {
+        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
+        popFromCommandQueueAndEnqueueWrite();
+    }
+    else if (event == EVENT::WRITE_COMPLETED)
+    {
+        Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
+        startAckTimer();
+    }
+    else if (event == EVENT::WRITE_FAILED)
+    {
+        Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("ACK Received. Start receiving response.", logFileName_, "UPT");
+        startResponseTimer();
+    }
+    else if (event == EVENT::ACK_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("Response Received.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::RESPONSE_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
+    }
+}
+
+void Upt::startAckTimer()
 {
     ackTimer_.expires_from_now(boost::posix_time::seconds(8));
     ackTimer_.async_wait(boost::asio::bind_executor(strand_,
@@ -806,19 +2680,30 @@ void Upt::startAckTimeout()
 
 void Upt::handleAckTimeout(const boost::system::error_code& error)
 {
-    if (!error)
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (!error || (error == boost::asio::error::operation_aborted))
     {
-        Logger::getInstance()->FnLog("Ack Response Timeout.", logFileName_, "UPT");
+        if (ackRecv_.load())
+        {
+            ackRecv_.store(false);
+            processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
+        }
+        else
+        {
+            processEvent(EVENT::ACK_TIMEOUT);
+        }
     }
     else
     {
-        std::stringstream ss;
-        ss << "Ack Response Timer error: " << error.message();
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+        std::ostringstream oss;
+        oss << "Ack Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+        processEvent(EVENT::ACK_TIMEOUT);
     }
 }
 
-void Upt::startResponseTimeout()
+void Upt::startResponseTimer()
 {
     rspTimer_.expires_from_now(boost::posix_time::seconds(180));
     rspTimer_.async_wait(boost::asio::bind_executor(strand_,
@@ -827,12 +2712,68 @@ void Upt::startResponseTimeout()
 
 void Upt::handleCmdResponseTimeout(const boost::system::error_code& error)
 {
-    if (!error)
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (!error || (error == boost::asio::error::operation_aborted))
     {
-        Logger::getInstance()->FnLog("Command Response Timeout.", logFileName_, "UPT");
+        if (rspRecv_.load())
+        {
+            rspRecv_.store(false);
+            if (pendingRspRecv_.load())
+            {
+                pendingRspRecv_.store(false);
+                processEvent(EVENT::START_PENDING_RESPONSE_TIMER);
+            }
+            else
+            {
+                processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
+            }
+        }
+        else
+        {
+            processEvent(EVENT::RESPONSE_TIMEOUT);
+        }
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Response Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+        processEvent(EVENT::RESPONSE_TIMEOUT);
     }
 }
 
+void Upt::startPendingResponseTimer()
+{
+    rspTimer_.expires_from_now(boost::posix_time::seconds(60));
+    rspTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&Upt::handleCmdPendingResponseTimeout, this, std::placeholders::_1)));
+}
+
+void Upt::handleCmdPendingResponseTimeout(const boost::system::error_code& error)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (!error || (error == boost::asio::error::operation_aborted))
+    {
+        if (rspRecv_.load())
+        {
+            rspRecv_.store(false);
+            processEvent(EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
+        }
+        else
+        {
+            processEvent(EVENT::PENDING_RESPONSE_TIMER_TIMEOUT);
+        }
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Pending Response Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+        processEvent(EVENT::PENDING_RESPONSE_TIMER_TIMEOUT);
+    }
+}
 
 std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> payloadData)
 {
@@ -841,58 +2782,62 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
     Message msg;
 
     // Set the common msg header
-    msg.header.setMsgVersion(0x00);
-    msg.header.setMsgDirection(0x00);
-    //msg.header.setMsgTime(Common::getInstance()->FnGetSecondsSince1January0000());
-    msg.header.setMsgTime(0x0000000ED6646B5E);
-    //msg.header.setMsgSequence(sequenceNo_++);
-    msg.header.setMsgSequence(1);
-    msg.header.setMsgClass(0x0001);
-    msg.header.setMsgCompletion(0x01);
-    msg.header.setMsgNotification(0x00);
-    msg.header.setMsgStatus(static_cast<uint32_t>(MSG_STATUS::SUCCESS));
-    msg.header.setDeviceProvider(0x0457); // [Decimal] : 1111
-    msg.header.setDeviceType(0x0001);
-    msg.header.setDeviceNumber(0x01B207); // [Decimal] : 111111
-    msg.header.setEncryptionAlgorithm(0x00);
-    msg.header.setEncryptionKeyIndex(0x00);
+    msg.setHeaderMsgVersion(0x00);
+    msg.setHeaderMsgDirection(static_cast<uint8_t>(MSG_DIRECTION::MSG_DIRECTION_CONTROLLER_TO_DEVICE));
+    msg.setHeaderMsgTime(htole64(Common::getInstance()->FnGetSecondsSince1January0000()));
+    //msg.setHeaderMsgTime(htole64(0x0000000ED6646B66));
+    if (cmd != UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST)
+    {
+        incrementSequenceNo();
+        msg.setHeaderMsgSequence(htole32(getSequenceNo()));
+    }
+    //msg.setHeaderMsgSequence(htole32(0x00000002));
+    msg.setHeaderMsgClass(htole16(static_cast<uint16_t>(MSG_CLASS::MSG_CLASS_REQ)));
+    msg.setHeaderMsgCompletion(0x01);
+    msg.setHeaderMsgNotification(0x00);
+    msg.setHeaderMsgStatus(htole32(static_cast<uint32_t>(MSG_STATUS::SUCCESS)));
+    msg.setHeaderDeviceProvider(htole16(0x0457)); // [Decimal] : 1111
+    msg.setHeaderDeviceType(htole16(0x0001));
+    msg.setHeaderDeviceNumber(htole32(0x0001B207)); // [Decimal] : 111111
+    msg.setHeaderEncryptionAlgorithm(static_cast<uint8_t>(ENCRYPTION_ALGORITHM::ENCRYPTION_ALGORITHM_NONE));
+    msg.setHeaderEncryptionKeyIndex(0x00);
     std::vector<uint8_t> mac = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-    msg.header.setEncryptionMAC(mac);
+    msg.setHeaderEncryptionMAC(Common::getInstance()->FnConvertToLittleEndian(mac));
 
     switch (cmd)
     {
         // DEVICE API
         case UPT_CMD::DEVICE_STATUS_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_STATUS));
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(64);
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_STATUS)));
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(64));
             break;
         }
         case UPT_CMD::DEVICE_RESET_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RESET));
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(64);
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RESET)));
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(64));
             break;
         }
         case UPT_CMD::DEVICE_TIME_SYNC_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TIME_SYNC));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TIME_SYNC)));
 
             // Payload
-            msg.payloads.push_back(createPayload(0x00000010, static_cast<uint16_t>(FIELD_ID::ID_DEVICE_DATE), 0x31, 0x31, Common::getInstance()->FnGetDateInArrayBytes()));
-            msg.payloads.push_back(createPayload(0x0000000E, static_cast<uint16_t>(FIELD_ID::ID_DEVICE_TIME), 0x31, 0x31, Common::getInstance()->FnGetTimeInArrayBytes()));
+            msg.addPayload(createPayload(0x00000010, static_cast<uint16_t>(FIELD_ID::ID_DEVICE_DATE), 0x31, 0x31, Common::getInstance()->FnGetDateInArrayBytes()));
+            msg.addPayload(createPayload(0x0000000E, static_cast<uint16_t>(FIELD_ID::ID_DEVICE_TIME), 0x31, 0x31, Common::getInstance()->FnGetTimeInArrayBytes()));
             std::vector<uint8_t> paddingBytes(26, 0x00);
-            msg.payloads.push_back(createPayload(0x00000022, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x00000022, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::DEVICE_PROFILE_REQUEST:
@@ -912,40 +2857,40 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         }
         case UPT_CMD::DEVICE_LOGON_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_LOGON));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_LOGON)));
 
             // Payload
             std::vector<uint8_t> data = {0x10, 0x00};   // [NETS = 0x1000]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_ACQUIRER), 0x39, 0x38, data));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_ACQUIRER), 0x39, 0x38, data));
             std::vector<uint8_t> paddingBytes(14, 0x00);
-            msg.payloads.push_back(createPayload(0x00000016, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x00000016, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(96);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(96));
             break;
         }
         case UPT_CMD::DEVICE_TMS_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TMS));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TMS)));
 
             // Payload
             std::vector<uint8_t> data = {0x10, 0x00};   // [NETS = 0x1000]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_ACQUIRER), 0x39, 0x38, data));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_ACQUIRER), 0x39, 0x38, data));
             std::vector<uint8_t> paddingBytes(14, 0x00);
-            msg.payloads.push_back(createPayload(0x00000016, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x00000016, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(96);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(96));
             break;
         }
         case UPT_CMD::DEVICE_SETTLEMENT_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_SETTLEMENT));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_SETTLEMENT)));
 
             // Payload
             auto fieldHostIdData = std::static_pointer_cast<CommandSettlementRequestData>(payloadData);
@@ -958,16 +2903,16 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                     data = {0x55, 0x50, 0x4F, 0x53}; // UPOS in Ascii Hex
                 }
             }
-            msg.payloads.push_back(createPayload(0x0000000c, static_cast<uint16_t>(FIELD_ID::ID_TXN_HOST), 0x00, 0x31, data));
+            msg.addPayload(createPayload(0x0000000c, static_cast<uint16_t>(FIELD_ID::ID_TXN_HOST), 0x00, 0x31, data));
             
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
             std::vector<uint8_t> paddingBytes(3, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000B, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000B, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(96);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(96));
             break;
         }
         case UPT_CMD::DEVICE_PRE_SETTLEMENT_REQUEST:
@@ -977,16 +2922,18 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         }
         case UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RESET_SEQUENCE_NUMBER));
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(64);
+            setSequenceNo(0xFFFFFFFF);
+            msg.setHeaderMsgSequence(htole32(getSequenceNo()));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RESET_SEQUENCE_NUMBER)));
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(64));
             break;
         }
         case UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS)));
 
             // Payload
             auto fieldHostIdData = std::static_pointer_cast<CommandRetrieveLastTransactionStatusRequestData>(payloadData);
@@ -999,21 +2946,21 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                     data = {0x55, 0x50, 0x4F, 0x53}; // UPOS in Ascii Hex
                 }
             }
-            msg.payloads.push_back(createPayload(0x0000000c, static_cast<uint16_t>(FIELD_ID::ID_TXN_HOST), 0x00, 0x31, data));
+            msg.addPayload(createPayload(0x0000000c, static_cast<uint16_t>(FIELD_ID::ID_TXN_HOST), 0x00, 0x31, data));
             std::vector<uint8_t> paddingBytes(12, 0x00);
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x31, 0x33, paddingBytes));
             //End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(96);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(96));
             break;
         }
         case UPT_CMD::DEVICE_RETRIEVE_LAST_SETTLEMENT_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT));
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(64);
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT)));
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(64));
             break;
         }
 
@@ -1032,10 +2979,10 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         // CARD API
         case UPT_CMD::CARD_DETECT_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_CARD));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_CARD_DETECT));
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(64);
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_CARD)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_CARD_DETECT)));
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(64));
             break;
         }
         case UPT_CMD::CARD_DETAIL_REQUEST:
@@ -1052,12 +2999,12 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         // PAYMENT API
         case UPT_CMD::PAYMENT_MODE_AUTO_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_AUTO));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_AUTO)));
 
             // Payload
             std::vector<uint8_t> paymentType(2, 0x00); // Payment [Automatic Detect]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1066,7 +3013,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1074,27 +3021,27 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PAYMENT_MODE_EFT_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_EFT));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_EFT)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x10, 0x00};   // Payment [Payment by NETS EFT]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1103,7 +3050,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1111,27 +3058,27 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PAYMENT_MODE_EFT_NETS_QR_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_EFT));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_EFT)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x14, 0x00};   // Payment [Payment by NETS QR]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1140,7 +3087,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1148,17 +3095,17 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PAYMENT_MODE_BCA_REQUEST:
@@ -1168,12 +3115,12 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         }
         case UPT_CMD::PAYMENT_MODE_CREDIT_CARD_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_CRD));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_CRD)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x20, 0x00};   // Payment [Payment by Scheme Credit]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1182,7 +3129,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1190,27 +3137,27 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PAYMENT_MODE_NCC_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_NCC));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_NCC)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x11, 0x00};   // Payment [Payment by NETS NCC]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1219,7 +3166,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1227,27 +3174,27 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PAYMENT_MODE_NFP_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_NFP));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_NFP)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x12, 0x00};   // Payment [Payment by NETS NFP]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1256,7 +3203,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1264,27 +3211,27 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PAYMENT_MODE_EZ_LINK_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_EZL));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYTMENT)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_EZL)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x17, 0x00};   // Payment [Payment by EzLink]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1293,7 +3240,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1301,17 +3248,17 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::PRE_AUTHORIZATION_REQUEST:
@@ -1343,22 +3290,22 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         }
         case UPT_CMD::CANCEL_COMMAND_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_CANCELLATION));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_CANCELLATION_CANCEL));
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(64);
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_CANCELLATION)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_CANCELLATION_CANCEL)));
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(64);
             break;
         }
 
         // TOP-UP API
         case UPT_CMD::TOP_UP_NETS_NCC_BY_NETS_EFT_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_TOPUP));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_TOPUP_NCC));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_TOPUP)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_TOPUP_NCC)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x80, 0x00};   // Top Up [Top up NETS NCC by NETS EFT]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1367,7 +3314,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1375,27 +3322,27 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::TOP_UP_NETS_NFP_BY_NETS_EFT_REQUEST:
         {
-            msg.header.setMsgType(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_TOPUP));
-            msg.header.setMsgCode(static_cast<uint32_t>(MSG_CODE::MSG_CODE_TOPUP_NFP));
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_TOPUP)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_TOPUP_NFP)));
 
             // Payload
             std::vector<uint8_t> paymentType = {0x81, 0x00};   // Top Up [Top up NETS NFP by NETS EFT]
-            msg.payloads.push_back(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
             auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
 
@@ -1404,7 +3351,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             {
                 amount = Common::getInstance()->FnConvertToLittleEndian(Common::getInstance()->FnConvertUint32ToVector(fieldData->amount));
             }
-            msg.payloads.push_back(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
 
             std::vector<uint8_t> mer_ref_num(12, 0x00);
             if (fieldData)
@@ -1412,17 +3359,17 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
                 mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
             }
 
-            msg.payloads.push_back(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
 
             std::vector<uint8_t> receipt = {0x01};
-            msg.payloads.push_back(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
 
             std::vector<uint8_t> paddingBytes(5, 0x00);
-            msg.payloads.push_back(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
             // End of Payload
 
-            msg.header.setIntegrityCRC32(msg.FnCalculateIntegrityCRC32());
-            msg.header.setLength(128);
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
 
@@ -1440,21 +3387,16 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             break;
         }
     }
-
-    std::string temp = msg.FnSerializeWithDataTransparency();
-    std::string result;
-    for (int i = 0; i < temp.size(); i += 2)
-    {
-        result += temp.substr(i, 2);
-        if (i + 2 < temp.size())
-        {
-            result += " ";
-        }
-    }
-
-    std::cout << "Result : " << result << std::endl;
     
-    data = Common::getInstance()->FnConvertStringToUint8Vector(temp);
+    std::vector<uint8_t> completeMsg;
+    std::vector<uint8_t> msgHeaderVector = msg.getHeaderMsgVector();
+    completeMsg.insert(completeMsg.end(), msgHeaderVector.begin(), msgHeaderVector.end());
+    std::vector<uint8_t> msgPayloadVector = msg.getPayloadMsgVector();
+    completeMsg.insert(completeMsg.end(), msgPayloadVector.begin(), msgPayloadVector.end());
+
+    data = msg.FnAddDataTransparency(completeMsg);
+
+    Logger::getInstance()->FnLog(msg.FnGetMsgOutputLogString(data), logFileName_, "UPT");
 
     return data;
 }
@@ -1463,30 +3405,41 @@ PayloadField Upt::createPayload(uint32_t length, uint16_t payloadFieldId, uint8_
 {
     PayloadField payload;
 
-    payload.setPayloadFieldLength(length);
-    payload.setPayloadFieldId(payloadFieldId);
+    payload.setPayloadFieldLength(htole32(length));
+    payload.setPayloadFieldId(htole16(payloadFieldId));
     payload.setFieldReserve(fieldReserve);
     payload.setFieldEnconding(fieldEncoding);
-    payload.setFieldData(fieldData);
+
+    std::vector<uint8_t> fieldData_ = fieldData;
+    if (fieldEncoding == static_cast<uint8_t>(Upt::FIELD_ENCODING::FIELD_ENCODING_VALUE_HEX_LITTLE))
+    {
+        std::reverse(fieldData_.begin(), fieldData_.end());
+    }
+    payload.setFieldData(fieldData_);
 
     return payload;
 }
 
 void Upt::startRead()
 {
-    pSerialPort_->async_read_some(
-        boost::asio::buffer(readBuffer_, readBuffer_.size()),
-        boost::asio::bind_executor(strand_,
-                                    std::bind(&Upt::readEnd, this,
-                                    std::placeholders::_1,
-                                    std::placeholders::_2)));
+    boost::asio::dispatch(strand_, [this]() {
+        pSerialPort_->async_read_some(
+            boost::asio::buffer(readBuffer_, readBuffer_.size()),
+            boost::asio::bind_executor(strand_,
+                                        std::bind(&Upt::readEnd, this,
+                                        std::placeholders::_1,
+                                        std::placeholders::_2)));
+    });
 }
 
 void Upt::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
+    lastSerialReadTime_ = std::chrono::steady_clock::now();
+
     if (!error)
     {
         std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);
+        std::cout << "Data : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data) << std::endl << std::endl;
         if (isRxResponseComplete(data))
         {
             handleCmdResponse(getRxBuffer());
@@ -1562,14 +3515,57 @@ bool Upt::isRxResponseComplete(const std::vector<uint8_t>& dataBuff)
     return ret;
 }
 
+bool Upt::isMsgStatusValid(uint32_t msgStatus)
+{
+    bool ret = true;
+
+    switch (static_cast<MSG_STATUS>(msgStatus))
+    {
+        case MSG_STATUS::MSG_INTEGRITY_FAILED:
+        case MSG_STATUS::MSG_TYPE_NOT_SUPPORTED:
+        case MSG_STATUS::MSG_CODE_NOT_SUPPORTED:
+        case MSG_STATUS::MSG_AUTHENTICATION_REQUIRED:
+        case MSG_STATUS::MSG_AUTHENTICATION_FAILED:
+        case MSG_STATUS::MSG_MAC_FAILED:
+        case MSG_STATUS::MSG_LENGTH_MISMATCH:
+        case MSG_STATUS::MSG_LENGTH_MINIMUM:
+        case MSG_STATUS::MSG_LENGTH_MAXIMUM:
+        case MSG_STATUS::MSG_VERSION_INVALID:
+        case MSG_STATUS::MSG_CLASS_INVALID:
+        case MSG_STATUS::MSG_STATUS_INVALID:
+        case MSG_STATUS::MSG_ALGORITHM_INVALID:
+        case MSG_STATUS::MSG_ALGORITHM_IS_MANDATORY:
+        case MSG_STATUS::MSG_KEY_INDEX_INVALID:
+        case MSG_STATUS::MSG_NOTIFICATION_INVALID:
+        case MSG_STATUS::MSG_COMPLETION_INVALID:
+        case MSG_STATUS::MSG_DATA_TRANSPARENCY_ERROR:
+        case MSG_STATUS::MSG_INCOMPLETE:
+        case MSG_STATUS::FIELD_MANDATORY_MISSING:
+        case MSG_STATUS::FIELD_LENGTH_MINIMUM:
+        case MSG_STATUS::FIELD_LENGTH_INVALID:
+        case MSG_STATUS::FIELD_TYPE_INVALID:
+        case MSG_STATUS::FIELD_ENCODING_INVALID:
+        case MSG_STATUS::FIELD_DATA_INVALID:
+        case MSG_STATUS::FIELD_PARSING_ERROR:
+        {
+            ret = false;
+            break;
+        }
+    }
+
+    return ret;
+}
+
 void Upt::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    bool write_in_progress_ = !writeQueue_.empty();
-    writeQueue_.push(data);
-    if (!write_in_progress_)
-    {
-        startWrite();
-    }
+    boost::asio::dispatch(strand_, [this, data]() {
+        bool write_in_progress_ = !writeQueue_.empty();
+        writeQueue_.push(data);
+        if (!write_in_progress_)
+        {
+            startWrite();
+        }
+    });
 }
 
 void Upt::startWrite()
@@ -1579,8 +3575,27 @@ void Upt::startWrite()
         return;
     }
 
+    auto now = std::chrono::steady_clock::now();
+    auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
+
+    // Check if less than 1.5 seconds in milliseconds
+    if (timeSinceLastRead < 1500)
+    {
+        auto boostTime = boost::posix_time::milliseconds(1500 - timeSinceLastRead);
+        serialWriteDelayTimer_.expires_from_now(boostTime);
+        serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
+                [this](const boost::system::error_code& /*e*/) {
+                    boost::asio::dispatch(strand_, [this]() { startWrite(); });
+            }));
+        
+        return;
+    }
+
     write_in_progress_ = true;
     const auto& data = writeQueue_.front();
+    std::ostringstream oss;
+    oss << "Data sent : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
     boost::asio::async_write(*pSerialPort_,
                             boost::asio::buffer(data),
                             boost::asio::bind_executor(strand_,
@@ -1594,22 +3609,16 @@ void Upt::writeEnd(const boost::system::error_code& error, std::size_t bytesTran
     if (!error)
     {
         writeQueue_.pop();
-        if (!writeQueue_.empty())
-        {
-            startWrite();
-        }
-        else
-        {
-            write_in_progress_ = false;
-        }
+        processEvent(EVENT::WRITE_COMPLETED);
     }
     else
     {
         std::ostringstream oss;
         oss << "Serial Write error: " << error.message();
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-        write_in_progress_ = false;
+        processEvent(EVENT::WRITE_FAILED);
     }
+    write_in_progress_ = false;
 }
 
 void Upt::handleCmdResponse(const std::vector<uint8_t>& msgDataBuff)
@@ -1618,117 +3627,293 @@ void Upt::handleCmdResponse(const std::vector<uint8_t>& msgDataBuff)
 
     receivedRespStream << "Received MSG data buffer: " << Common::getInstance()->FnGetDisplayVectorCharToHexString(msgDataBuff);
     Logger::getInstance()->FnLog(receivedRespStream.str(), logFileName_, "UPT");
-
-    // Remove the STX & ETX
-    std::vector<uint8_t> dataRemoveSTXandETX(msgDataBuff.begin() + 1, msgDataBuff.end() - 1);
     
-    // Remove the data transparency
+    // Parse the msg data after removing STX and ETX
     Message msg;
-    std::vector<uint8_t> payload = msg.FnRemoveDataTransparency(dataRemoveSTXandETX);
+    uint32_t msgParseStatus = msg.FnParseMsgData(msgDataBuff);
 
-    if (payload.size() >= 64) // if equal or greater than 64 bytes, valid
+    std::ostringstream oss;
+    oss << "Rx message parsing status: " << getMsgStatusString(msgParseStatus);
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+    std::cout << oss.str() << std::endl;
+
+    if (msgParseStatus == static_cast<uint32_t>(MSG_STATUS::SUCCESS))
     {
-        // Check payload length is match with rx payload length
-        uint32_t length = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_LENGTH_OFFSET, MESSAGE_LENGTH_SIZE));
-        if (length == payload.size())
+        // Check Message sequence Number
+        if (msg.getHeaderMsgSequence() == getSequenceNo())
         {
-            uint32_t calculatedCRC32;
-            std::vector<uint8_t> payloadCalculateCRC32(payload.begin() + MESSAGE_VERSION_OFFSET, payload.end());
-            CRC32::getInstance()->Clear();
-            CRC32::getInstance()->Update(payloadCalculateCRC32.data(), payloadCalculateCRC32.size());
-            calculatedCRC32 = CRC32::getInstance()->Value();
-
-            uint32_t payloadIntegrityCRC32 = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_INTEGRITY_CRC32_OFFSET, MESSAGE_INTEGRITY_CRC32_SIZE));
-
-            if (calculatedCRC32 == payloadIntegrityCRC32)
+            if (msg.getHeaderMsgClass() == static_cast<uint16_t>(MSG_CLASS::MSG_CLASS_ACK))
             {
-                // Extract the header
-                msg.header.setLength(length);
-                msg.header.setIntegrityCRC32(payloadIntegrityCRC32);
-                msg.header.setMsgVersion(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_VERSION_OFFSET, MESSAGE_VERSION_SIZE)));
-                msg.header.setMsgDirection(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_DIRECTION_OFFSET, MESSAGE_DIRECTION_SIZE)));
-                msg.header.setMsgTime(Common::getInstance()->FnConvertToUint64(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_TIME_OFFSET, MESSAGE_TIME_SIZE)));
-                msg.header.setMsgSequence(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_SEQUENCE_OFFSET, MESSAGE_SEQUENCE_SIZE)));
-                msg.header.setMsgClass(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_CLASS_OFFSET, MESSAGE_CLASS_SIZE)));
-                msg.header.setMsgType(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_TYPE_OFFSET, MESSAGE_TYPE_SIZE)));
-                msg.header.setMsgCode(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_CODE_OFFSET, MESSAGE_CODE_SIZE)));
-                msg.header.setMsgCompletion(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_COMPLETION_OFFSET, MESSAGE_COMPLETION_SIZE)));
-                msg.header.setMsgNotification(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_NOTIFICATION_OFFSET, MESSAGE_NOTIFICATION_SIZE)));
-                msg.header.setMsgStatus(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, MESSAGE_STATUS_OFFSET, MESSAGE_STATUS_SIZE)));
-                msg.header.setDeviceProvider(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payload, DEVICE_PROVIDER_OFFSET, DEVICE_PROVIDER_SIZE)));
-                msg.header.setDeviceType(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payload, DEVICE_TYPE_OFFSET, DEVICE_TYPE_SIZE)));
-                msg.header.setDeviceNumber(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, DEVICE_NUMBER_OFFSET, DEVICE_NUMBER_SIZE)));
-                msg.header.setEncryptionAlgorithm(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, ENCRYPTION_ALGORITHM_OFFSET, ENCRYPTION_ALGORITHM_SIZE)));
-                msg.header.setEncryptionKeyIndex(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, ENCRYPTION_KEY_INDEX_OFFSET, ENCRYPTION_KEY_INDEX_SIZE)));
-                msg.header.setEncryptionMAC(Common::getInstance()->FnExtractSubVector(payload, ENCRYPTION_MAC_OFFSET, ENCRYPTION_MAC_SIZE));
-
-                // Extract payload field
-                std::size_t payloadStartIndex = PAYLOAD_OFFSET;
-
-                while ((payloadStartIndex + 4) <= length)
+                // Check Message Status
+                if (isMsgStatusValid(msg.getHeaderMsgStatus()))
                 {
-                    // Extract payload field length
-                    uint32_t payloadFieldHeaderLength = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, payloadStartIndex, PAYLOAD_FIELD_LENGTH_SIZE));
-
-                    if ((payloadStartIndex + payloadFieldHeaderLength) <= length)
-                    {
-                        std::vector<uint8_t> payloadFieldData(payload.begin() + payloadStartIndex, payload.begin() + payloadStartIndex + payloadFieldHeaderLength);
-
-                        PayloadField field;
-                        field.setPayloadFieldLength(payloadFieldHeaderLength);
-                        field.setPayloadFieldId(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payloadFieldData, 4, PAYLOAD_FIELD_ID_SIZE)));
-                        field.setFieldReserve(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payloadFieldData, 6, PAYLOAD_FIELD_RESERVE_SIZE)));
-                        field.setFieldEnconding(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payloadFieldData, 7, PAYLOAD_FIELD_ENCODING_SIZE)));
-                        field.setFieldData(Common::getInstance()->FnExtractSubVector(payloadFieldData, 8, (payloadFieldHeaderLength - 8)));
-
-                        msg.payloads.push_back(field);
-
-                        payloadStartIndex += payloadFieldHeaderLength;
-                    }
-                    else
-                    {
-                        std::ostringstream oss;
-                        oss << "Invalid payload field length.";
-                        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-                        break;
-                    }
+                    ackRecv_.store(true);
                 }
+                else
+                {
+                    ackRecv_.store(false);
+                }
+                ackTimer_.cancel();
             }
-            else
+            else if (msg.getHeaderMsgClass() == static_cast<uint16_t>(MSG_CLASS::MSG_CLASS_RSP))
             {
-                std::ostringstream oss;
-                oss << "Invalid CRC.";
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+                if (msg.getHeaderMsgStatus() == static_cast<uint32_t>(MSG_STATUS::PENDING))
+                {
+                    pendingRspRecv_.store(true);
+                }
+                else
+                {
+                    pendingRspRecv_.store(false);
+                }
+
+                rspRecv_.store(true);
+                rspTimer_.cancel();
             }
 
-            
-            // Can print out the msg
+            Logger::getInstance()->FnLog(msg.FnGetMsgOutputLogString(msgDataBuff), logFileName_, "UPT");
+
+            // Check Msg Status to see whether reset sequence number is required or not
+            if (msg.getHeaderMsgStatus() == static_cast<uint32_t>(MSG_STATUS::INVALID_PARAMETER))
+            {
+                FnUptSendDeviceResetSequenceNumberRequest();
+            }
+
+            // Check Msg Status to see whether logon is required or not
+            if (msg.getHeaderMsgStatus() == static_cast<uint32_t>(MSG_STATUS::SOF_LOGON_REQUIRED))
+            {
+                FnUptSendDeviceLogonRequest();
+            }
         }
         else
         {
-            std::ostringstream oss;
-            oss << "Invalid data length, the payload data received and data length mismatched.";
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog("Ack or Rsp message sequence number incorrect.", logFileName_, "UPT");
         }
     }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Invalid data length, the payload data received are lesser than 64 bytes.";
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-    }
+
+    std::cout << "Response" << std::endl;
+    std::cout << msg.FnGetMsgOutputLogString(msgDataBuff) << std::endl; 
 }
 
 
 // UPOS Message Class
 Message::Message()
+    : header()
 {
-
+    payloads.clear();
 }
 
 Message::~Message()
 {
+    clear();
+}
 
+void Message::setHeaderLength(uint32_t length)
+{
+    header.setLength(length);
+}
+
+uint32_t Message::getHeaderLength() const
+{
+    return header.getLength();
+}
+
+void Message::setHeaderIntegrityCRC32(uint32_t integrityCRC32)
+{
+    header.setIntegrityCRC32(integrityCRC32);
+}
+
+uint32_t Message::getHeaderIntegrityCRC32() const
+{
+    return header.getIntegrityCRC32();
+}
+
+void Message::setHeaderMsgVersion(uint8_t msgVersion)
+{
+    header.setMsgVersion(msgVersion);
+}
+
+uint8_t Message::getHeaderMsgVersion() const
+{
+    return header.getMsgVersion();
+}
+
+void Message::setHeaderMsgDirection(uint8_t msgDirection)
+{
+    header.setMsgDirection(msgDirection);
+}
+
+uint8_t Message::getHeaderMsgDirection() const
+{
+    return header.getMsgDirection();
+}
+
+void Message::setHeaderMsgTime(uint64_t msgTime)
+{
+    header.setMsgTime(msgTime);
+}
+
+uint64_t Message::getHeaderMsgTime() const
+{
+    return header.getMsgTime();
+}
+
+void Message::setHeaderMsgSequence(uint32_t msgSequence)
+{
+    header.setMsgSequence(msgSequence);
+}
+
+uint32_t Message::getHeaderMsgSequence() const
+{
+    return header.getMsgSequence();
+}
+
+void Message::setHeaderMsgClass(uint16_t msgClass)
+{
+    header.setMsgClass(msgClass);
+}
+
+uint16_t Message::getHeaderMsgClass() const
+{
+    return header.getMsgClass();
+}
+
+void Message::setHeaderMsgType(uint32_t msgType)
+{
+    header.setMsgType(msgType);
+}
+
+uint32_t Message::getHeaderMsgType() const
+{
+    return header.getMsgType();
+}
+
+void Message::setHeaderMsgCode(uint32_t msgCode)
+{
+    header.setMsgCode(msgCode);
+}
+
+uint32_t Message::getHeaderMsgCode() const
+{
+    return header.getMsgCode();
+}
+
+void Message::setHeaderMsgCompletion(uint8_t msgCompletion)
+{
+    header.setMsgCompletion(msgCompletion);
+}
+
+uint8_t Message::getHeaderMsgCompletion() const
+{
+    return header.getMsgCompletion();
+}
+
+void Message::setHeaderMsgNotification(uint8_t msgNotification)
+{
+    header.setMsgNotification(msgNotification);
+}
+
+uint8_t Message::getHeaderMsgNotification() const
+{
+    return header.getMsgNotification();
+}
+
+void Message::setHeaderMsgStatus(uint32_t msgStatus)
+{
+    header.setMsgStatus(msgStatus);
+}
+
+uint32_t Message::getHeaderMsgStatus() const
+{
+    return header.getMsgStatus();
+}
+
+void Message::setHeaderDeviceProvider(uint16_t deviceProvider)
+{
+    header.setDeviceProvider(deviceProvider);
+}
+
+uint16_t Message::getHeaderDeviceProvider() const
+{
+    return header.getDeviceProvider();
+}
+
+void Message::setHeaderDeviceType(uint16_t deviceType)
+{
+    header.setDeviceType(deviceType);
+}
+
+uint16_t Message::getHeaderDeviceType() const
+{
+    return header.getDeviceType();
+}
+
+void Message::setHeaderDeviceNumber(uint32_t deviceNumber)
+{
+    header.setDeviceNumber(deviceNumber);
+}
+
+uint32_t Message::getHeaderDeviceNumber() const
+{
+    return header.getDeviceNumber();
+}
+
+void Message::setHeaderEncryptionAlgorithm(uint8_t encryptionAlgorithm)
+{
+    header.setEncryptionAlgorithm(encryptionAlgorithm);
+}
+
+uint8_t Message::getHeaderEncryptionAlgorithm() const
+{
+    return header.getEncryptionAlgorithm();
+}
+
+void Message::setHeaderEncryptionKeyIndex(uint8_t encryptionKeyIndex)
+{
+    header.setEncryptionKeyIndex(encryptionKeyIndex);
+}
+
+uint8_t Message::getHeaderEncryptionKeyIndex() const
+{
+    return header.getEncryptionKeyIndex();
+}
+
+void Message::setHeaderEncryptionMAC(const std::vector<uint8_t>& encryptionMAC)
+{
+    header.setEncryptionMAC(encryptionMAC);
+}
+
+std::vector<uint8_t> Message::getHeaderEncryptionMAC() const
+{
+    return header.getEncryptionMAC();
+}
+
+std::vector<uint8_t> Message::getHeaderMsgVector() const
+{
+    return header.toByteArray();
+}
+
+void Message::addPayload(const PayloadField& payload)
+{
+    payloads.push_back(payload);
+}
+
+const std::vector<PayloadField>& Message::getPayloads() const
+{
+    return payloads;
+}
+
+std::vector<uint8_t> Message::getPayloadMsgVector() const
+{
+    std::vector<uint8_t> buffer;
+
+    for (auto& payload : payloads)
+    {
+        std::vector<uint8_t> payloadBuffer = payload.toByteArray();
+        buffer.insert(buffer.end(), payloadBuffer.begin(), payloadBuffer.end());
+    }
+
+    return buffer;
 }
 
 uint32_t Message::FnCalculateIntegrityCRC32()
@@ -1859,116 +4044,54 @@ uint32_t Message::FnCalculateIntegrityCRC32()
         offset += fieldData.size() * sizeof(uint8_t);
     }
 
-    CRC32::getInstance()->Clear();
-    CRC32::getInstance()->Update(dataBuffer.data(), totalLength);
+    CRC32 crc32;
+    crc32.Init();
+    crc32.Update(dataBuffer.data(), totalLength);
+    uint32_t value = crc32.Value();
 
-    return CRC32::getInstance()->Value();
+    return value;
 }
 
-std::string Message::serialize()
+std::vector<uint8_t> Message::FnAddDataTransparency(const std::vector<uint8_t>& input)
 {
-    std::string str;
-    str += Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getLength()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getIntegrityCRC32()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgVersion()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgDirection()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgTime()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgSequence()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgClass()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgType()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgCode()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgCompletion()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgNotification()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getMsgStatus()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getDeviceProvider()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getDeviceType()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getDeviceNumber()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getEncryptionAlgorithm()) +
-        Common::getInstance()->FnToHexLittleEndianStringWithZeros(header.getEncryptionKeyIndex());
+    std::vector<uint8_t> output;
 
-    // Convert encryption MAC vector into little endian
-    std::vector<uint8_t> encryptionMAC = header.getEncryptionMAC();
-    std::reverse(encryptionMAC.begin(), encryptionMAC.end());
-    for (const auto encryptMAC : encryptionMAC)
+    for (std::size_t i = 0; i < input.size(); i++)
     {
-        str += Common::getInstance()->FnToHexLittleEndianStringWithZeros(encryptMAC);
-    }
-
-    for (const auto payload : payloads)
-    {
-        str += Common::getInstance()->FnToHexLittleEndianStringWithZeros(payload.getPayloadFieldLength()) +
-            Common::getInstance()->FnToHexLittleEndianStringWithZeros(payload.getPayloadFieldId()) +
-            Common::getInstance()->FnToHexLittleEndianStringWithZeros(payload.getFieldReserve()) +
-            Common::getInstance()->FnToHexLittleEndianStringWithZeros(payload.getFieldEncoding());
-
-        // Convert payload data vector into little endian
-        std::vector<uint8_t> payloadFieldData = payload.getFieldData();
-        if (static_cast<Upt::FIELD_ENCODING>(payload.getFieldEncoding()) == Upt::FIELD_ENCODING::FIELD_ENCODING_VALUE_HEX_LITTLE)
+        if (input[i] == 0x02)
         {
-            std::reverse(payloadFieldData.begin(), payloadFieldData.end());
-            for (const auto data : payloadFieldData)
-            {
-                str += Common::getInstance()->FnToHexLittleEndianStringWithZeros(data);
-            }
+            output.push_back(0x10);
+            output.push_back(0x00);
+        }
+        else if (input[i] == 0x04)
+        {
+            output.push_back(0x10);
+            output.push_back(0x01);
+        }
+        else if (input[i] == 0x10)
+        {
+            output.push_back(0x10);
+            output.push_back(0x10);
         }
         else
         {
-            for (const auto data : payloadFieldData)
-            {             
-                str += Common::getInstance()->FnConvertuint8ToHexString(data);
-            }
+            output.push_back(input[i]);
         }
     }
 
-    return str;
+    // STX
+    output.insert(output.begin(), 0x02);
+    // ETX
+    output.push_back(0x04);
+
+    return output;
 }
 
-std::string Message::FnSerializeWithDataTransparency()
+uint32_t Message::FnRemoveDataTransparency(const std::vector<uint8_t>& input, std::vector<uint8_t>& output)
 {
-    std::string dataString = serialize();
+    uint32_t retMsgStatus = static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS);
+    output.clear();
 
-    std::string result;
-    int count = 0;
-    for (int i = 0; i < dataString.size(); i += 2)
-    {
-        result += dataString.substr(i, 2);
-        if (i + 2 < dataString.size())
-        {
-            result += " ";
-        }
-        count++;
-    }
-    std::cout << "Serialize size : " << count << std::endl;
-    std::cout << "Serialize Result : " << result << std::endl;
-
-    std::string replacements[] = {"02", "04", "10"};
-    std::string newValues[] = {"1000", "1001", "1010"};
-
-    std::size_t pos = 0;
-    while (pos < dataString.size() - 1)
-    {
-        std::string pair = dataString.substr(pos, 2);
-
-        for (int i = 0; i < 3; i++)
-        {
-            if (pair == replacements[i])
-            {
-                dataString.replace(pos, replacements[i].length(), newValues[i]);
-                pos += 2;
-                break;
-            }
-        }
-        pos += 2;
-    }
-    dataString.insert(0, Common::getInstance()->FnToHexLittleEndianStringWithZeros(static_cast<uint8_t>(Upt::STX)));
-    dataString.insert(dataString.length(), Common::getInstance()->FnToHexLittleEndianStringWithZeros(static_cast<uint8_t>(Upt::ETX)));
-
-    return dataString;
-}
-
-std::vector<uint8_t> Message::FnRemoveDataTransparency(const std::vector<uint8_t>& input)
-{
-    std::vector<uint8_t> output;
     for (std::size_t i = 0; i < input.size(); i++)
     {
         if (input[i] == 0x10 && ((i + 1) < input.size()))
@@ -1995,35 +4118,326 @@ std::vector<uint8_t> Message::FnRemoveDataTransparency(const std::vector<uint8_t
                 }
                 default:
                 {
+                    retMsgStatus = static_cast<uint32_t>(Upt::MSG_STATUS::MSG_DATA_TRANSPARENCY_ERROR);
                     break;
                 }
             }
         }
         else
         {
-            output.push_back(input[i]);
+            // Exclude the STX and ETX
+            if (input[i] != 0x02 && input[i] != 0x04)
+            {
+                output.push_back(input[i]);
+            }
+        }
+
+        if (retMsgStatus == static_cast<uint32_t>(Upt::MSG_STATUS::MSG_DATA_TRANSPARENCY_ERROR))
+        {
+            output.clear();
+            break;
         }
     }
 
-    return output;
+    return retMsgStatus;
 }
 
-
-void Message::FnParseMsgData(const std::vector<uint8_t>& msgData, Message* msg)
+uint32_t Message::FnParseMsgData(const std::vector<uint8_t>& msgData)
 {
-    // Remove STX and ETX
+    uint32_t retMsgStatus = static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS);
+    clear();
 
-    // remove data transparency
+    // Remove the Data Transparency
+    std::vector<uint8_t> payload;
+    uint32_t retRemoveDataTransparency = FnRemoveDataTransparency(msgData, payload);
 
-    // extract the msg length
+    if (retRemoveDataTransparency == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS)) // If data transparency successfully
+    {
+        if (isValidHeaderSize(payload.size()))
+        {
+            // Check payload length is match with rx payload length
+            uint32_t length = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_LENGTH_OFFSET, Upt::MESSAGE_LENGTH_SIZE));
 
-    // Check CRC
+            std::cout << "length : " << length << " ,payload size : " << payload.size() << std::endl;
+            if (isMatchHeaderSize(length, payload.size()))
+            {
+                uint32_t calculatedCRC32;
+                std::vector<uint8_t> payloadCalculateCRC32(payload.begin() + Upt::MESSAGE_VERSION_OFFSET, payload.end());
+                CRC32 crc32;
+                crc32.Init();
+                crc32.Update(payloadCalculateCRC32.data(), payloadCalculateCRC32.size());
+                calculatedCRC32 = crc32.Value();
 
-    // 
+                uint32_t payloadIntegrityCRC32 = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_INTEGRITY_CRC32_OFFSET, Upt::MESSAGE_INTEGRITY_CRC32_SIZE));
+
+                if (isMatchCRC(calculatedCRC32, payloadIntegrityCRC32))
+                {
+                    // Extract the header
+                    header.setLength(length);
+                    header.setIntegrityCRC32(payloadIntegrityCRC32);
+                    header.setMsgVersion(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_VERSION_OFFSET, Upt::MESSAGE_VERSION_SIZE)));
+                    header.setMsgDirection(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_DIRECTION_OFFSET, Upt::MESSAGE_DIRECTION_SIZE)));
+                    header.setMsgTime(Common::getInstance()->FnConvertToUint64(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_TIME_OFFSET, Upt::MESSAGE_TIME_SIZE)));
+                    header.setMsgSequence(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_SEQUENCE_OFFSET, Upt::MESSAGE_SEQUENCE_SIZE)));
+                    header.setMsgClass(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_CLASS_OFFSET, Upt::MESSAGE_CLASS_SIZE)));
+                    header.setMsgType(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_TYPE_OFFSET, Upt::MESSAGE_TYPE_SIZE)));
+                    header.setMsgCode(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_CODE_OFFSET, Upt::MESSAGE_CODE_SIZE)));
+                    header.setMsgCompletion(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_COMPLETION_OFFSET, Upt::MESSAGE_COMPLETION_SIZE)));
+                    header.setMsgNotification(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_NOTIFICATION_OFFSET, Upt::MESSAGE_NOTIFICATION_SIZE)));
+                    header.setMsgStatus(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_STATUS_OFFSET, Upt::MESSAGE_STATUS_SIZE)));
+                    header.setDeviceProvider(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payload, Upt::DEVICE_PROVIDER_OFFSET, Upt::DEVICE_PROVIDER_SIZE)));
+                    header.setDeviceType(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payload, Upt::DEVICE_TYPE_OFFSET, Upt::DEVICE_TYPE_SIZE)));
+                    header.setDeviceNumber(Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::DEVICE_NUMBER_OFFSET, Upt::DEVICE_NUMBER_SIZE)));
+                    header.setEncryptionAlgorithm(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, Upt::ENCRYPTION_ALGORITHM_OFFSET, Upt::ENCRYPTION_ALGORITHM_SIZE)));
+                    header.setEncryptionKeyIndex(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payload, Upt::ENCRYPTION_KEY_INDEX_OFFSET, Upt::ENCRYPTION_KEY_INDEX_SIZE)));
+                    header.setEncryptionMAC(Common::getInstance()->FnExtractSubVector(payload, Upt::ENCRYPTION_MAC_OFFSET, Upt::ENCRYPTION_MAC_SIZE));
+
+                    // Extract payload field
+                    std::size_t payloadStartIndex = Upt::PAYLOAD_OFFSET;
+
+                    while ((payloadStartIndex + 4) <= length)
+                    {
+                        // Extract payload field length
+                        uint32_t payloadFieldHeaderLength = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, payloadStartIndex, Upt::PAYLOAD_FIELD_LENGTH_SIZE));
+
+                        if ((payloadStartIndex + payloadFieldHeaderLength) <= length)
+                        {
+                            std::vector<uint8_t> payloadFieldData(payload.begin() + payloadStartIndex, payload.begin() + payloadStartIndex + payloadFieldHeaderLength);
+
+                            PayloadField field;
+                            field.setPayloadFieldLength(payloadFieldHeaderLength);
+                            field.setPayloadFieldId(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payloadFieldData, 4, Upt::PAYLOAD_FIELD_ID_SIZE)));
+                            field.setFieldReserve(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payloadFieldData, 6, Upt::PAYLOAD_FIELD_RESERVE_SIZE)));
+                            field.setFieldEnconding(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payloadFieldData, 7, Upt::PAYLOAD_FIELD_ENCODING_SIZE)));
+                            field.setFieldData(Common::getInstance()->FnExtractSubVector(payloadFieldData, 8, (payloadFieldHeaderLength - 8)));
+
+                            payloads.push_back(field);
+
+                            payloadStartIndex += payloadFieldHeaderLength;
+                        }
+                        else
+                        {
+                            return static_cast<uint32_t>(Upt::MSG_STATUS::FIELD_LENGTH_INVALID);
+                        }
+                    }
+                }
+                else
+                {
+                    return static_cast<uint32_t>(Upt::MSG_STATUS::MSG_INTEGRITY_FAILED);
+                }
+            }
+            else
+            {
+                return static_cast<uint32_t>(Upt::MSG_STATUS::MSG_LENGTH_MISMATCH);
+            }
+        }
+        else
+        {
+            if (isInvalidHeaderSizeLessThan64(payload.size()))
+            {
+                return static_cast<uint32_t>(Upt::MSG_STATUS::MSG_LENGTH_MINIMUM);
+            }
+            else
+            {
+                return static_cast<uint32_t>(Upt::MSG_STATUS::MSG_LENGTH_MAXIMUM);
+            }
+        }
+    }
+    else
+    {
+        return static_cast<uint32_t>(Upt::MSG_STATUS::MSG_DATA_TRANSPARENCY_ERROR);
+    }
+
+    return retMsgStatus;
 }
 
-void Message::printMessage()
+std::string Message::FnGetMsgOutputLogString(const std::vector<uint8_t>& msgData)
 {
+    std::ostringstream oss;
 
+    Message msg;
+    uint32_t msgParseResult = msg.FnParseMsgData(msgData);
+
+    if (msgParseResult == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+    {
+        std::vector<uint8_t> dataWithTransparency = msgData;
+        std::vector<uint8_t> dataWithoutTransparency;
+        msg.FnRemoveDataTransparency(dataWithTransparency, dataWithoutTransparency);
+
+        oss << Upt::getInstance()->getCommandTitleString(msg.getHeaderMsgDirection(), msg.getHeaderMsgClass(), msg.getHeaderMsgCode(), msg.getHeaderMsgType()) << std::endl;
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "--------------------------------------------------" << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - ECR (WITH TRANSPARENCY)                         [";
+        oss << std::setw(4) << std::setfill('0') << dataWithTransparency.size() << "] [H] ";
+        oss << Common::getInstance()->FnGetDisplayVectorCharToHexString(dataWithTransparency) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - ECR (NO TRANSPARENCY)                           [";
+        oss << std::setw(4) << std::setfill('0') << dataWithoutTransparency.size() << "] [H] ";
+        oss << Common::getInstance()->FnGetDisplayVectorCharToHexString(dataWithoutTransparency) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - LENGTH                                          [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [D] ";
+        oss << msg.getHeaderLength() << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - INTEGRITY (CRC32)                               [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [H] ";
+        oss << std::setw(8) << std::setfill('0') << std::hex << msg.getHeaderIntegrityCRC32() << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - VERSION                                         [";
+        oss << std::setw(4) << std::setfill('0') << 1 << "] [H] ";
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderMsgVersion()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - DIRECTION                                       [";
+        oss << std::setw(4) << std::setfill('0') << 1 << "] [H] ";
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderMsgDirection());
+        oss << std::setw(6) << std::setfill(' ') << "";
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Upt::getInstance()->getMsgDirectionString(msg.getHeaderMsgDirection()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - TIME                                            [";
+        oss << std::setw(4) << std::setfill('0') << 8 << "] [D] ";
+        oss << msg.getHeaderMsgTime();
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Common::getInstance()->FnConvertSecondsSince1January0000ToDateTime(msg.getHeaderMsgTime()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - SEQUENCE                                        [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [D] ";
+        oss << msg.getHeaderMsgSequence() << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - CLASS                                           [";
+        oss << std::setw(4) << std::setfill('0') << 2 << "] [H] ";
+        oss << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderMsgClass());
+        oss << std::setw(4) << std::setfill(' ') << "";
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Upt::getInstance()->getMsgClassString(msg.getHeaderMsgClass()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - TYPE                                            [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [H] ";
+        oss << std::setw(8) << std::setfill('0') << std::hex << msg.getHeaderMsgType();
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Upt::getInstance()->getMsgTypeString(msg.getHeaderMsgType()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - CODE                                            [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [H] ";
+        oss << std::setw(8) << std::setfill('0') << std::hex << msg.getHeaderMsgCode();
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Upt::getInstance()->getMsgCodeString(msg.getHeaderMsgCode(), msg.getHeaderMsgType()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - COMPLETION                                      [";
+        oss << std::setw(4) << std::setfill('0') << 1 << "] [H] ";
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderMsgCompletion()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - NOTIFICATION                                    [";
+        oss << std::setw(4) << std::setfill('0') << 1 << "] [H] ";
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderMsgNotification()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "MSG           - STATUS                                          [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [H] ";
+        oss << std::setw(8) << std::setfill('0') << std::hex << msg.getHeaderMsgStatus();
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Upt::getInstance()->getMsgStatusString(msg.getHeaderMsgStatus()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "DEVICE        - PROVIDER                                        [";
+        oss << std::setw(4) << std::setfill('0') << 2 << "] [D] ";
+        oss << msg.getHeaderDeviceProvider() << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "DEVICE        - TYPE                                            [";
+        oss << std::setw(4) << std::setfill('0') << 2 << "] [D] ";
+        oss << msg.getHeaderDeviceType() << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "DEVICE        - NUMBER                                          [";
+        oss << std::setw(4) << std::setfill('0') << 4 << "] [D] ";
+        oss << msg.getHeaderDeviceNumber() << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "ENCRYPTION    - ALGORITHM                                       [";
+        oss << std::setw(4) << std::setfill('0') << 1 << "] [H] ";
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderEncryptionAlgorithm());
+        oss << std::setw(6) << std::setfill(' ') << "";
+        oss << std::setw(10) << std::setfill(' ') << "";
+        oss << Upt::getInstance()->getEncryptionAlgorithmString(msg.getHeaderEncryptionAlgorithm()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "ENCRYPTION    - KEY INDEX                                       [";
+        oss << std::setw(4) << std::setfill('0') << 1 << "] [H] ";
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(msg.getHeaderEncryptionKeyIndex()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "ENCRYPTION    - MAC                                             [";
+        oss << std::setw(4) << std::setfill('0') << 16 << "] [H] ";
+        oss << Common::getInstance()->FnGetDisplayVectorCharToHexString(msg.getHeaderEncryptionMAC()) << std::endl;
+
+        oss << std::setw(32) << std::setfill(' ') << "";
+        oss << "PAYLOAD       - FIELD TOTAL     [D] " << std::setw(4) << std::setfill('0') << msg.getPayloads().size() << "                        [";
+        oss << std::setw(4) << std::setfill('0') << std::hex << (dataWithoutTransparency.size() - 64) << "] [H] ";
+        std::vector<uint8_t> payloadField(dataWithoutTransparency.begin() + 64, dataWithoutTransparency.end());
+        oss << Common::getInstance()->FnGetDisplayVectorCharToHexString(payloadField) << std::endl << std::endl;
+
+        int i = 0;
+        for (const auto& payload : msg.getPayloads())
+        {
+            i++;
+            oss << std::setw(32) << std::setfill(' ') << "";
+            oss << "FIELD " << std::setw(4) << std::setfill('0') << i << "    - [" << Upt::getInstance()->getFieldEncodingChar(payload.getFieldEncoding()) << "] ";
+            oss << std::setw(11) << std::setfill(' ') << std::left << Upt::getInstance()->getFieldEncodingTypeString(payload.getFieldEncoding()) << std::right;
+            oss << " [H] " << std::setw(4) << std::setfill('0') << std::hex << payload.getPayloadFieldId() << ": ";
+            oss << std::setw(21) << std::setfill(' ') << std::left << Upt::getInstance()->getFieldIDString(payload.getPayloadFieldId()) << std::right;
+            oss << " [" << std::setw(4) << std::setfill('0') << std::hex << payload.getPayloadFieldLength() << "] [H] " << Common::getInstance()->FnGetDisplayVectorCharToHexString(payload.toByteArray()) << std::endl;
+            oss << std::setw(32) << std::setfill(' ') << "";
+            oss << std::setw(64) << std::setfill(' ') << "";
+            oss << "[" << std::setw(4) << std::setfill('0') << payload.getFieldData().size() << "] [H] " << Common::getInstance()->FnGetDisplayVectorCharToHexString(payload.getFieldData()) << std::endl << std::endl;
+        }
+
+    }
+    else
+    {
+        oss << "Message parse failed. Unable to print out the message.";
+    }
+
+    return oss.str();
 }
 
+bool Message::isValidHeaderSize(uint32_t size)
+{
+    const uint32_t MAX_SIZE = 4294967295;   // Maximum value for 4 bytes;
+    return (size >= 64 && size <= MAX_SIZE);
+}
+
+bool Message::isInvalidHeaderSizeLessThan64(uint32_t size)
+{
+    return (size < 64);
+}
+
+bool Message::isMatchHeaderSize(uint32_t size1, uint32_t size2)
+{
+    return (size1 == size2);
+}
+
+bool Message::isMatchCRC(uint32_t crc1, uint32_t crc2)
+{
+    return (crc1 == crc2);
+}
+
+void Message::clear()
+{
+    header.clear();
+    payloads.clear();
+}

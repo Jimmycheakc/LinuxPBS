@@ -31,6 +31,7 @@ public:
     int FnGetCurrentHour();
     int FnGetCurrentDay();
     uint64_t FnGetSecondsSince1January0000();
+    std::string FnConvertSecondsSince1January0000ToDateTime(uint64_t seconds_since_0000);
     std::string FnGetFileName(const std::string& str);
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
@@ -54,7 +55,7 @@ public:
     std::vector<uint8_t> FnGetTimeInArrayBytes();
     std::vector<uint8_t> FnConvertUint32ToVector(uint32_t value);
     std::vector<uint8_t> FnConvertToLittleEndian(std::vector<uint8_t> bigEndianVec);
-    std::vector<uint8_t> FnConvertStringToUint8Vector(const std::string& str);
+    std::vector<uint8_t> FnConvertHexStringToUint8Vector(const std::string& str);
     std::vector<uint8_t> FnExtractSubVector(const std::vector<uint8_t>& source, std::size_t offset, std::size_t length);
     uint8_t FnConvertToUint8(const std::vector<uint8_t>& vec, std::size_t offset = 0);
     uint16_t FnConvertToUint16(const std::vector<uint8_t>& vec, std::size_t offset = 0);

@@ -16,25 +16,34 @@ std::mutex EventHandler::mutex_;
 
 std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap = 
 {
-    {   "Evt_AntennaFail"                       ,std::bind(&EventHandler::handleAntennaFail,                eventHandler_, std::placeholders::_1) },
-    {   "Evt_AntennaPower"                      ,std::bind(&EventHandler::handleAntennaPower,               eventHandler_, std::placeholders::_1) },
-    {   "Evt_AntennaIUCome"                     ,std::bind(&EventHandler::handleAntennaIUCome,              eventHandler_, std::placeholders::_1) },
-    {   "Evt_LcscReaderStatus"                  ,std::bind(&EventHandler::handleLcscReaderStatus,           eventHandler_, std::placeholders::_1) },
-    {   "Evt_LcscReaderLogin"                   ,std::bind(&EventHandler::handleLcscReaderLogin,            eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderLogout"            ,std::bind(&EventHandler::handleLcscReaderLogout,           eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardID"         ,std::bind(&EventHandler::handleLcscReaderGetCardID,        eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardBalance"    ,std::bind(&EventHandler::handleLcscReaderGetCardBalance,   eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetTime"           ,std::bind(&EventHandler::handleLcscReaderGetTime,          eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderSetTime"           ,std::bind(&EventHandler::handleLcscReaderSetTime,          eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile,    eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadCILFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCILFile,    eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile,     eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent,                   eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardIn"             ,std::bind(&EventHandler::handleKSMReaderCardIn,            eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardOut"            ,std::bind(&EventHandler::handleKSMReaderCardOut,           eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardTakeAway"       ,std::bind(&EventHandler::handleKSMReaderCardTakeAway,      eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo,          eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLPRReceive"                  ,std::bind(&EventHandler::handleLPRReceive,                 eventHandler_, std::placeholders::_1) }
+    // Antenna Event
+    {   "Evt_AntennaFail"                       ,std::bind(&EventHandler::handleAntennaFail                ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaPower"                      ,std::bind(&EventHandler::handleAntennaPower               ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaIUCome"                     ,std::bind(&EventHandler::handleAntennaIUCome              ,eventHandler_, std::placeholders::_1) },
+
+    // LCSC Event
+    {   "Evt_LcscReaderStatus"                  ,std::bind(&EventHandler::handleLcscReaderStatus           ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_LcscReaderLogin"                   ,std::bind(&EventHandler::handleLcscReaderLogin            ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderLogout"            ,std::bind(&EventHandler::handleLcscReaderLogout           ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardID"         ,std::bind(&EventHandler::handleLcscReaderGetCardID        ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardBalance"    ,std::bind(&EventHandler::handleLcscReaderGetCardBalance   ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetTime"           ,std::bind(&EventHandler::handleLcscReaderGetTime          ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderSetTime"           ,std::bind(&EventHandler::handleLcscReaderSetTime          ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile    ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderUploadCILFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCILFile    ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile     ,eventHandler_, std::placeholders::_1) },
+
+    // DIO Event
+    {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent                   ,eventHandler_, std::placeholders::_1) },
+
+    // KSM Reader Event
+    {   "Evt_handleKSMReaderCardIn"             ,std::bind(&EventHandler::handleKSMReaderCardIn            ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardOut"            ,std::bind(&EventHandler::handleKSMReaderCardOut           ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardTakeAway"       ,std::bind(&EventHandler::handleKSMReaderCardTakeAway      ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo          ,eventHandler_, std::placeholders::_1) },
+
+    // LPR Event
+    {   "Evt_handleLPRReceive"                  ,std::bind(&EventHandler::handleLPRReceive                 ,eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()

@@ -1,8 +1,5 @@
 #include "crc.h"
 
-CRC32* CRC32::crc32_;
-std::mutex CRC32::mutex_;
-
 const uint32_t CRC32::mTable[] =
 {
 	0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
@@ -41,17 +38,17 @@ const uint32_t CRC32::mTable[] =
 
 CRC32::CRC32()
 {
-    mValue = 0xFFFFFFFF;
+    Init();
 }
 
-CRC32* CRC32::getInstance()
+CRC32::~CRC32()
 {
-	std::lock_guard<std::mutex> lock(mutex_);
-    if (crc32_ == nullptr)
-    {
-        crc32_ = new CRC32();
-    }
-    return crc32_;
+
+}
+
+void CRC32::Init()
+{
+	mValue = 0xFFFFFFFF;
 }
 
 uint32_t CRC32::Value()
@@ -67,9 +64,4 @@ void CRC32::Update(uint8_t* Data, uint32_t Length)
     {
         mValue = (mTable[((uint16_t)mValue ^ *(Data + count)) & 0xFF] ^ ((mValue >> 8) & 0x00FFFFFF));
     }
-}
-
-void CRC32::Clear()
-{
-	mValue = 0xFFFFFFFF;
 }

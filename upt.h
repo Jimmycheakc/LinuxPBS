@@ -55,6 +55,10 @@ public:
     void setEncryptionMAC(const std::vector<uint8_t>& encryptionMAC);
     std::vector<uint8_t> getEncryptionMAC() const;
 
+    void clear();
+
+    std::vector<uint8_t> toByteArray() const;
+
 private:
     // UPOS Message Header Fields
     uint32_t length_;
@@ -75,6 +79,9 @@ private:
     uint8_t encryptionAlgorithm_;
     uint8_t encryptionKeyIndex_;
     std::vector<uint8_t> encryptionMAC_;
+
+    template<typename T>
+    void appendToBuffer(std::vector<uint8_t>& buffer, T value) const;
 };
 
 // UPOS Message Payload Fields
@@ -94,6 +101,10 @@ public:
     void setFieldData(const std::vector<uint8_t>& fieldData);
     std::vector<uint8_t> getFieldData() const;
 
+    void clear();
+
+    std::vector<uint8_t> toByteArray() const;
+
 private:
     // Payload fields
     uint32_t payloadFieldLength_;
@@ -101,6 +112,9 @@ private:
     uint8_t fieldReserve_;
     uint8_t fieldEncoding_;
     std::vector<uint8_t> fieldData_;
+
+    template<typename T>
+    void appendToBuffer(std::vector<uint8_t>& buffer, T value) const;
 };
 
 
@@ -210,6 +224,22 @@ public:
 
         // PASSTHROUGH
         UOB_REQUEST
+    };
+
+    // Define enum class for message direction
+    enum class MSG_DIRECTION : uint8_t
+    {
+        MSG_DIRECTION_CONTROLLER_TO_DEVICE  = 0x00,
+        MSG_DIRECTION_DEVICE_TO_CONTROLLER  = 0x01
+    };
+
+    // Define enum class for message class
+    enum class MSG_CLASS : uint16_t
+    {
+        MSG_CLASS_NONE              = 0x0000,
+        MSG_CLASS_REQ               = 0x0001,
+        MSG_CLASS_ACK               = 0x0002,
+        MSG_CLASS_RSP               = 0x0003
     };
 
     // Define enum class for message type
@@ -359,6 +389,18 @@ public:
         SOF_CANCEL                  = 0x40000006u,
         SOF_HOST_RESPONSE_DECLINE   = 0x40000007u,
         SOF_LOGON_REQUIRED          = 0x40000008u
+    };
+
+    // Define enum class for Encryption Algorithm
+    enum class ENCRYPTION_ALGORITHM : uint8_t
+    {
+        ENCRYPTION_ALGORITHM_NONE       = 0x00,
+        ENCRYPTION_ALGORITHM_AES128     = 0x10,
+        ENCRYPTION_ALGORITHM_AES192     = 0x11,
+        ENCRYPTION_ALGORITHM_AES256     = 0x12,
+        ENCRYPTION_ALGORITHM_DES1_1KEY  = 0x20,
+        ENCRYPTION_ALGORITHM_DES3_2KEY  = 0x21,
+        ENCRYPTION_ALGORITHM_DES3_3KEY  = 0x22
     };
 
     // Define enum class for field ID
@@ -523,9 +565,47 @@ public:
         RX_RECEIVING
     };
 
+    enum class STATE
+    {
+        IDLE,
+        SENDING_REQUEST_ASYNC,
+        WAITING_FOR_ACK,
+        WAITING_FOR_RESPONSE,
+        DEVICE_STATUS_REQUEST,
+        RETRIEVE_LAST_TRANSACTION_STATUS,
+        STATE_COUNT
+    };
+
+    enum class EVENT
+    {
+        COMMAND_ENQUEUED,
+        WRITE_COMPLETED,
+        WRITE_FAILED,
+        ACK_TIMEOUT,
+        ACK_TIMER_CANCELLED_ACK_RECEIVED,
+        RESPONSE_TIMEOUT,
+        RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
+        START_PENDING_RESPONSE_TIMER,
+        PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
+        PENDING_RESPONSE_TIMER_TIMEOUT,
+        EVENT_COUNT
+    };
+
+    struct EventTransition
+    {
+        EVENT event;
+        void (Upt::*eventHandler)(EVENT);
+        STATE nextState;
+    };
+
+    struct StateTransition
+    {
+        STATE stateName;
+        std::vector<EventTransition> transitions;
+    };
+
     static Upt* getInstance();
     void FnUptInit(unsigned int baudRate, const std::string& comPortName);
-    void FnUptEnqueueCommand(UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
     void FnUptSendDeviceStatusRequest();
     void FnUptSendDeviceResetRequest();
     void FnUptSendDeviceTimeSyncRequest();
@@ -544,6 +624,19 @@ public:
     void FnUptSendDeviceNCCTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num);
     void FnUptSendDeviceNFPTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num);
     void FnUptClose();
+
+
+    std::string getCommandString(UPT_CMD cmd);
+    std::string getMsgStatusString(uint32_t msgStatus);
+    std::string getMsgDirectionString(uint8_t msgDirection);
+    std::string getMsgClassString(uint16_t msgClass);
+    std::string getMsgTypeString(uint32_t msgType);
+    std::string getMsgCodeString(uint32_t msgCode, uint32_t msgType);
+    std::string getEncryptionAlgorithmString(uint8_t encryptionAlgorithm);
+    std::string getCommandTitleString(uint8_t msgDirection, uint16_t msgClass, uint32_t msgCode, uint32_t msgType);
+    char getFieldEncodingChar(uint8_t fieldEncoding);
+    std::string getFieldEncodingTypeString(uint8_t fieldEncoding);
+    std::string getFieldIDString(uint16_t fieldID);
 
     /**
      * Singleton Upt should not be cloneable.
@@ -564,29 +657,56 @@ private:
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     boost::asio::deadline_timer ackTimer_;
     boost::asio::deadline_timer rspTimer_;
+    boost::asio::deadline_timer pendingRspTimer_;
+    boost::asio::deadline_timer serialWriteDelayTimer_;
+    std::atomic<bool> ackRecv_;
+    std::atomic<bool> rspRecv_;
+    std::atomic<bool> pendingRspRecv_;
     std::string logFileName_;
     std::thread ioContextThread_;
     std::mutex cmdQueueMutex_;
-    std::queue<CommandWithData> commandQueue_;
+    std::deque<CommandWithData> commandQueue_;
     static uint32_t sequenceNo_;
+    static std::mutex sequenceNoMutex_;
     std::array<uint8_t, 1024> readBuffer_;
     std::queue<std::vector<uint8_t>> writeQueue_;
     bool write_in_progress_;
-    std::array<uint8_t, 1024> rxBuffer_;
+    std::array<uint8_t, 2048> rxBuffer_;
     int rxNum_;
     RX_STATE rxState_;
+    static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
+    STATE currentState_;
+    std::chrono::steady_clock::time_point lastSerialReadTime_;
     Upt();
     void startIoContextThread();
-    void startAckTimeout();
-    void startResponseTimeout();
-    std::string getCommandString(UPT_CMD cmd);
+    void incrementSequenceNo();
+    void setSequenceNo(uint32_t sequenceNo);
+    uint32_t getSequenceNo();
+    void enqueueCommand(UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void popFromCommandQueueAndEnqueueWrite();
+    std::string eventToString(EVENT event);
+    std::string stateToString(STATE state);
+    void processEvent(EVENT event);
+    void checkCommandQueue();
+    void handleIdleState(EVENT event);
+    void handleSendingRequestAsyncState(EVENT event);
+    void handleWaitingForAckState(EVENT event);
+    void handleWaitingForResponseState(EVENT event);
+    void handleDeviceStatusRequestState(EVENT event);
+    void handleRetrieveLastTransactionStatusState(EVENT event);
+    void startAckTimer();
+    void startResponseTimer();
+    void startPendingResponseTimer();
     bool checkCmd(UPT_CMD cmd);
     std::vector<uint8_t> prepareCmd(UPT_CMD cmd, std::shared_ptr<void> payloadData);
     PayloadField createPayload(uint32_t length, uint16_t payloadFieldId, uint8_t fieldReserve, uint8_t fieldEncoding, const std::vector<uint8_t>& fieldData);
     void handleAckTimeout(const boost::system::error_code& error);
     void handleCmdResponseTimeout(const boost::system::error_code& error);
+    void handleCmdPendingResponseTimeout(const boost::system::error_code& error);
     void handleCmdResponse(const std::vector<uint8_t>& dataBuff);
     bool isRxResponseComplete(const std::vector<uint8_t>& dataBuff);
+    bool isMsgStatusValid(uint32_t msgStatus);
 
     // Serial read and write
     void resetRxBuffer();
@@ -605,14 +725,60 @@ class Message
 public:
     Message();
     ~Message();
-    MessageHeader header;
-    std::vector<PayloadField> payloads;
+    void setHeaderLength(uint32_t length);
+    uint32_t getHeaderLength() const;
+    void setHeaderIntegrityCRC32(uint32_t integrityCRC32);
+    uint32_t getHeaderIntegrityCRC32() const;
+    void setHeaderMsgVersion(uint8_t msgVersion);
+    uint8_t getHeaderMsgVersion() const;
+    void setHeaderMsgDirection(uint8_t msgDirection);
+    uint8_t getHeaderMsgDirection() const;
+    void setHeaderMsgTime(uint64_t msgTime);
+    uint64_t getHeaderMsgTime() const;
+    void setHeaderMsgSequence(uint32_t msgSequence);
+    uint32_t getHeaderMsgSequence() const;
+    void setHeaderMsgClass(uint16_t msgClass);
+    uint16_t getHeaderMsgClass() const;
+    void setHeaderMsgType(uint32_t msgType);
+    uint32_t getHeaderMsgType() const;
+    void setHeaderMsgCode(uint32_t msgCode);
+    uint32_t getHeaderMsgCode() const;
+    void setHeaderMsgCompletion(uint8_t msgCompletion);
+    uint8_t getHeaderMsgCompletion() const;
+    void setHeaderMsgNotification(uint8_t msgNotification);
+    uint8_t getHeaderMsgNotification() const;
+    void setHeaderMsgStatus(uint32_t msgStatus);
+    uint32_t getHeaderMsgStatus() const;
+    void setHeaderDeviceProvider(uint16_t deviceProvider);
+    uint16_t getHeaderDeviceProvider() const;
+    void setHeaderDeviceType(uint16_t deviceType);
+    uint16_t getHeaderDeviceType() const;
+    void setHeaderDeviceNumber(uint32_t deviceNumber);
+    uint32_t getHeaderDeviceNumber() const;
+    void setHeaderEncryptionAlgorithm(uint8_t encryptionAlgorithm);
+    uint8_t getHeaderEncryptionAlgorithm() const;
+    void setHeaderEncryptionKeyIndex(uint8_t encryptionKeyIndex);
+    uint8_t getHeaderEncryptionKeyIndex() const;
+    void setHeaderEncryptionMAC(const std::vector<uint8_t>& encryptionMAC);
+    std::vector<uint8_t> getHeaderEncryptionMAC() const;
+    std::vector<uint8_t> getHeaderMsgVector() const;
+    void addPayload(const PayloadField& payload);
+    const std::vector<PayloadField>& getPayloads() const;
+    std::vector<uint8_t> getPayloadMsgVector() const;
+
     uint32_t FnCalculateIntegrityCRC32();
-    std::string FnSerializeWithDataTransparency();
-    std::vector<uint8_t> FnRemoveDataTransparency(const std::vector<uint8_t>& input);
-    void FnParseMsgData(const std::vector<uint8_t>& msgData, Message* msg);
-    void printMessage();
+    std::vector<uint8_t> FnAddDataTransparency(const std::vector<uint8_t>& input);
+    uint32_t FnRemoveDataTransparency(const std::vector<uint8_t>& input, std::vector<uint8_t>& output);
+    uint32_t FnParseMsgData(const std::vector<uint8_t>& msgData);
+    std::string FnGetMsgOutputLogString(const std::vector<uint8_t>& msgData);
+
+    void clear();
 
 private:
-    std::string serialize();
+    MessageHeader header;
+    std::vector<PayloadField> payloads;
+    bool isValidHeaderSize(uint32_t size);
+    bool isInvalidHeaderSizeLessThan64(uint32_t size);
+    bool isMatchHeaderSize(uint32_t size1, uint32_t size2);
+    bool isMatchCRC(uint32_t crc1, uint32_t crc2);
 };

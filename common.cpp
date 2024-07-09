@@ -210,6 +210,27 @@ uint64_t Common::FnGetSecondsSince1January0000()
     return seconds_since_0000;
 }
 
+std::string Common::FnConvertSecondsSince1January0000ToDateTime(uint64_t seconds_since_0000)
+{
+    // Define the epoch (January 1, 0000)
+    const uint64_t days_between_0000_and_1970 = 719527;
+    const uint64_t seconds_between_0000_and_1970 = days_between_0000_and_1970 * 24 * 3600;
+
+    // Adjust seconds_since_0000 to seconds since epoch (1970)
+    uint64_t seconds_since_epoch = seconds_since_0000 - seconds_between_0000_and_1970;
+    std::chrono::system_clock::time_point date_time = std::chrono::system_clock::time_point(std::chrono::seconds(seconds_since_epoch));
+
+    // Convert to time_t for easier extraction of date and time components
+    std::time_t tt = std::chrono::system_clock::to_time_t(date_time);
+    std::tm* gmt = std::gmtime(&tt);
+
+    // Format the date-time string
+    char buf[80];
+    strftime(buf, sizeof(buf), "%d %b %Y   %H:%M:%S", gmt);
+
+    return std::string(buf);
+}
+
 std::string Common::FnGetFileName(const std::string& str)
 {
     size_t found = str.find_last_of("/");
@@ -412,10 +433,26 @@ std::vector<uint8_t> Common::FnConvertToLittleEndian(std::vector<uint8_t> bigEnd
     return bigEndianVec;
 }
 
-std::vector<uint8_t> Common::FnConvertStringToUint8Vector(const std::string& str)
+std::vector<uint8_t> Common::FnConvertHexStringToUint8Vector(const std::string& hexStr)
 {
-    std::vector<uint8_t> uint8Vec(str.begin(), str.end());
-    return uint8Vec;
+    std::vector<uint8_t> result;
+
+    if (hexStr.length() % 2 != 0)
+    {
+        throw std::invalid_argument("Hex string must have an even length");
+    }
+
+    for (std::size_t i = 0; i < hexStr.length(); i+=2)
+    {
+        // Extract a substring of 2 characters
+        std::string byteString = hexStr.substr(i, 2);
+        // Convert the 2-character string to a uint8_t
+        uint8_t byte = static_cast<uint8_t>(std::stoi(byteString, nullptr, 16));
+        // Add the byte to the result vector
+        result.push_back(byte);
+    }
+
+    return result;
 }
 
 std::vector<uint8_t> Common::FnExtractSubVector(const std::vector<uint8_t>& source, std::size_t offset, std::size_t length)
@@ -449,7 +486,7 @@ uint16_t Common::FnConvertToUint16(const std::vector<uint8_t>& vec, std::size_t 
     }
     uint16_t value;
     std::memcpy(&value, vec.data() + offset, sizeof(uint16_t));
-    return boost::endian::endian_reverse(value);
+    return value;
 }
 
 uint32_t Common::FnConvertToUint32(const std::vector<uint8_t>& vec, std::size_t offset)
@@ -461,7 +498,7 @@ uint32_t Common::FnConvertToUint32(const std::vector<uint8_t>& vec, std::size_t 
 
     uint32_t value;
     std::memcpy(&value, vec.data() + offset, sizeof(uint32_t));
-    return boost::endian::endian_reverse(value);
+    return value;
 }
 
 uint64_t Common::FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t offset)
@@ -473,5 +510,5 @@ uint64_t Common::FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t 
 
     uint64_t value;
     std::memcpy(&value, vec.data() + offset, sizeof(uint64_t));
-    return boost::endian::endian_reverse(value);
+    return value;
 }
