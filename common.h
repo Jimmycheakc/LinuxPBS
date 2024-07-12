@@ -22,6 +22,7 @@ public:
     std::string FnGetDateTimeFormat_yyyymmddhhmmss();
     std::string FnGetDateTimeFormat_yyyymmdd_hhmmss();
     std::string FnGetDateTimeFormat_yyyymmddhhmm();
+    std::string FnGetDateTimeFormat_yymmddhhmmss();
     std::string FeGetDateTimeFormat_VehicleTrans();
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::time_t FnGetEpochSeconds();
@@ -48,8 +49,9 @@ public:
     template <typename T>
     T FnLittleEndianStringToUnsignedInteger(const std::string& littleEndianStr);
     std::vector<uint8_t> FnLittleEndianHexStringToVector(const std::string& hexStr);
-    std::string FnConvertLittleEndianVectorToHexString(const std::vector<uint8_t>& data, std::size_t start, std::size_t end);
     std::string FnConvertuint8ToHexString(uint8_t value);
+    std::string FnConvertVectorUint8ToHexString(const std::vector<uint8_t>& data, bool little_endian = false);
+    std::string FnConvertVectorUint8ToBcdString(const std::vector<uint8_t>& data);
     std::vector<uint8_t> FnConvertAsciiToUint8Vector(const std::string& asciiStr);
     std::vector<uint8_t> FnGetDateInArrayBytes();
     std::vector<uint8_t> FnGetTimeInArrayBytes();
@@ -61,6 +63,8 @@ public:
     uint16_t FnConvertToUint16(const std::vector<uint8_t>& vec, std::size_t offset = 0);
     uint32_t FnConvertToUint32(const std::vector<uint8_t>& vec, std::size_t offset = 0);
     uint64_t FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t offset = 0);
+    std::string FnReverseByPair(std::string hexStr);
+    std::string FnUint32ToString(uint32_t value);
 
     /**
      * Singleton Common should not be cloneable.

@@ -108,6 +108,18 @@ std::string Common::FnGetDateTimeFormat_yyyymmddhhmm()
     return oss.str();
 }
 
+std::string Common::FnGetDateTimeFormat_yymmddhhmmss()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%y%m%d%H%M%S");
+    return oss.str();
+}
+
 std::string Common::FnConvertDateTime(uint32_t seconds)
 {
     time_t epochSeconds = seconds;
@@ -374,27 +386,45 @@ std::vector<uint8_t> Common::FnLittleEndianHexStringToVector(const std::string& 
     return result;
 }
 
-std::string Common::FnConvertLittleEndianVectorToHexString(const std::vector<uint8_t>& data, std::size_t start, std::size_t end)
+std::string Common::FnConvertuint8ToHexString(uint8_t value)
 {
     std::ostringstream oss;
+    oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(value);
+    return oss.str();
+}
 
-    if (start >= data.size() || end > data.size() || start > end)
+std::string Common::FnConvertVectorUint8ToHexString(const std::vector<uint8_t>& data, bool little_endian)
+{
+    std::vector<uint8_t> tmpData = data;
+
+    if (little_endian)
     {
-        throw std::out_of_range("Invalid range specified.");
+        std::reverse(tmpData.begin(), tmpData.end());
     }
 
-    for (auto it = data.rbegin() + (data.size() - end); it != data.rend() + (data.size() - start); ++it)
+    std::ostringstream oss;
+
+    for (const auto& value : tmpData)
     {
-        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(*it);
+        oss << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(value);
     }
 
     return oss.str();
 }
 
-std::string Common::FnConvertuint8ToHexString(uint8_t value)
+std::string Common::FnConvertVectorUint8ToBcdString(const std::vector<uint8_t>& data)
 {
     std::ostringstream oss;
-    oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(value);
+
+    for (std::size_t i = 0; i < data.size(); i++)
+    {
+        uint8_t byte = data[i];
+        uint8_t upperDigit = (byte >> 4) & 0x0F;
+        uint8_t lowerDigit = byte & 0x0F;
+
+        oss << static_cast<int>(upperDigit) << static_cast<int>(lowerDigit);
+    }
+
     return oss.str();
 }
 
@@ -512,3 +542,32 @@ uint64_t Common::FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t 
     std::memcpy(&value, vec.data() + offset, sizeof(uint64_t));
     return value;
 }
+
+std::string Common::FnReverseByPair(std::string hexStr)
+{
+    if (hexStr.length() % 2 != 0)
+    {
+        throw std::invalid_argument("Hex string must be even.");
+    }
+
+    std::string reverseHexStr;
+    reverseHexStr.reserve(hexStr.length());
+
+    for (auto it = hexStr.rbegin(); it != hexStr.rend(); it += 2)
+    {
+        reverseHexStr.push_back(*(it + 1));
+        reverseHexStr.push_back(*it);
+    }
+
+    return reverseHexStr;
+}
+
+std::string Common::FnUint32ToString(uint32_t value)
+{
+    std::ostringstream oss;
+
+    oss << std::setw(8) << std::setfill('0') << value;
+
+    return oss.str();
+}
+

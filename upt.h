@@ -118,6 +118,71 @@ private:
 };
 
 
+// UPOS Message Class
+class Message
+{
+public:
+    Message();
+    ~Message();
+    void setHeaderLength(uint32_t length);
+    uint32_t getHeaderLength() const;
+    void setHeaderIntegrityCRC32(uint32_t integrityCRC32);
+    uint32_t getHeaderIntegrityCRC32() const;
+    void setHeaderMsgVersion(uint8_t msgVersion);
+    uint8_t getHeaderMsgVersion() const;
+    void setHeaderMsgDirection(uint8_t msgDirection);
+    uint8_t getHeaderMsgDirection() const;
+    void setHeaderMsgTime(uint64_t msgTime);
+    uint64_t getHeaderMsgTime() const;
+    void setHeaderMsgSequence(uint32_t msgSequence);
+    uint32_t getHeaderMsgSequence() const;
+    void setHeaderMsgClass(uint16_t msgClass);
+    uint16_t getHeaderMsgClass() const;
+    void setHeaderMsgType(uint32_t msgType);
+    uint32_t getHeaderMsgType() const;
+    void setHeaderMsgCode(uint32_t msgCode);
+    uint32_t getHeaderMsgCode() const;
+    void setHeaderMsgCompletion(uint8_t msgCompletion);
+    uint8_t getHeaderMsgCompletion() const;
+    void setHeaderMsgNotification(uint8_t msgNotification);
+    uint8_t getHeaderMsgNotification() const;
+    void setHeaderMsgStatus(uint32_t msgStatus);
+    uint32_t getHeaderMsgStatus() const;
+    void setHeaderDeviceProvider(uint16_t deviceProvider);
+    uint16_t getHeaderDeviceProvider() const;
+    void setHeaderDeviceType(uint16_t deviceType);
+    uint16_t getHeaderDeviceType() const;
+    void setHeaderDeviceNumber(uint32_t deviceNumber);
+    uint32_t getHeaderDeviceNumber() const;
+    void setHeaderEncryptionAlgorithm(uint8_t encryptionAlgorithm);
+    uint8_t getHeaderEncryptionAlgorithm() const;
+    void setHeaderEncryptionKeyIndex(uint8_t encryptionKeyIndex);
+    uint8_t getHeaderEncryptionKeyIndex() const;
+    void setHeaderEncryptionMAC(const std::vector<uint8_t>& encryptionMAC);
+    std::vector<uint8_t> getHeaderEncryptionMAC() const;
+    std::vector<uint8_t> getHeaderMsgVector() const;
+    void addPayload(const PayloadField& payload);
+    const std::vector<PayloadField>& getPayloads() const;
+    std::vector<uint8_t> getPayloadMsgVector() const;
+
+    uint32_t FnCalculateIntegrityCRC32();
+    std::vector<uint8_t> FnAddDataTransparency(const std::vector<uint8_t>& input);
+    uint32_t FnRemoveDataTransparency(const std::vector<uint8_t>& input, std::vector<uint8_t>& output);
+    uint32_t FnParseMsgData(const std::vector<uint8_t>& msgData);
+    std::string FnGetMsgOutputLogString(const std::vector<uint8_t>& msgData);
+
+    void clear();
+
+private:
+    MessageHeader header;
+    std::vector<PayloadField> payloads;
+    bool isValidHeaderSize(uint32_t size);
+    bool isInvalidHeaderSizeLessThan64(uint32_t size);
+    bool isMatchHeaderSize(uint32_t size1, uint32_t size2);
+    bool isMatchCRC(uint32_t crc1, uint32_t crc2);
+};
+
+
 // Upos Terminal Class
 class Upt
 {
@@ -248,7 +313,7 @@ public:
         MSG_TYPE_DEVICE             = 0x10000000u,
         MSG_TYPE_AUTHENTICATION     = 0x20000000u,
         MSG_TYPE_CARD               = 0x30000000u,
-        MSG_TYPE_PAYTMENT           = 0x40000000u,
+        MSG_TYPE_PAYMENT            = 0x40000000u,
         MSG_TYPE_CANCELLATION       = 0x50000000u,
         MSG_TYPE_TOPUP              = 0x60000000u,
         MSG_TYPE_RECORD             = 0x70000000u,
@@ -588,6 +653,7 @@ public:
         START_PENDING_RESPONSE_TIMER,
         PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
         PENDING_RESPONSE_TIMER_TIMEOUT,
+        CANCEL_COMMAND,
         EVENT_COUNT
     };
 
@@ -604,25 +670,31 @@ public:
         std::vector<EventTransition> transitions;
     };
 
+    struct SettlementPayloadRow
+    {
+        std::string acquirer;
+        std::string name;
+        std::string preAuthCompleteCount;
+        std::string preAuthCompleteTotal;
+        std::string saleCount;
+        std::string saleTotal;
+    };
+
     static Upt* getInstance();
     void FnUptInit(unsigned int baudRate, const std::string& comPortName);
-    void FnUptSendDeviceStatusRequest();
-    void FnUptSendDeviceResetRequest();
-    void FnUptSendDeviceTimeSyncRequest();
-    void FnUptSendDeviceLogonRequest();
-    void FnUptSendDeviceTMSRequest();
-    void FnUptSendDeviceSettlementNETSRequest();
-    void FnUptSendDeviceSettlementUPOSRequest();
     void FnUptSendDeviceResetSequenceNumberRequest();
-    void FnUptSendDeviceRetrieveNETSLastTransactionStatusRequest();
-    void FnUptSendDeviceRetrieveUPOSLastTransactionStatusRequest();
-    void FnUptSendDeviceRetrieveLastSettlementRequest();
     void FnUptSendCardDetectRequest();
     void FnUptSendDeviceAutoPaymentRequest(uint32_t amount, const std::string& mer_ref_num);
-    void FnUptSendDevicePaymentRequest(uint32_t amount, const std::string& mer_ref_num, PaymentType type);
+    void FnUptSendDeviceTimeSyncRequest();
+    void FnUptSendDeviceLogonRequest();
+    void FnUptSendDeviceStatusRequest();
+    void FnUptSendDeviceSettlementNETSRequest();
+    void FnUptSendDeviceRetrieveLastSettlementRequest();
+    void FnUptSendDeviceTMSRequest();
+    void FnUptSendDeviceResetRequest();
     void FnUptSendDeviceCancelCommandRequest();
-    void FnUptSendDeviceNCCTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num);
-    void FnUptSendDeviceNFPTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num);
+    void FnUptSendDeviceRetrieveNETSLastTransactionStatusRequest();
+
     void FnUptClose();
 
 
@@ -671,7 +743,7 @@ private:
     std::array<uint8_t, 1024> readBuffer_;
     std::queue<std::vector<uint8_t>> writeQueue_;
     bool write_in_progress_;
-    std::array<uint8_t, 2048> rxBuffer_;
+    std::array<uint8_t, 65535> rxBuffer_;
     int rxNum_;
     RX_STATE rxState_;
     static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
@@ -704,7 +776,10 @@ private:
     void handleAckTimeout(const boost::system::error_code& error);
     void handleCmdResponseTimeout(const boost::system::error_code& error);
     void handleCmdPendingResponseTimeout(const boost::system::error_code& error);
-    void handleCmdResponse(const std::vector<uint8_t>& dataBuff);
+    void handleReceivedCmd(const std::vector<uint8_t>& dataBuff);
+    void handleCmdResponse(const Message& msg);
+    std::vector<SettlementPayloadRow> findReceivedSettlementPayloadData(const std::vector<PayloadField>& payloads);
+    std::string findReceivedPayloadData(const std::vector<PayloadField>& payloads, uint16_t payloadFieldId);
     bool isRxResponseComplete(const std::vector<uint8_t>& dataBuff);
     bool isMsgStatusValid(uint32_t msgStatus);
 
@@ -716,69 +791,4 @@ private:
     void enqueueWrite(const std::vector<uint8_t>& data);
     void startWrite();
     void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
-};
-
-
-// UPOS Message Class
-class Message
-{
-public:
-    Message();
-    ~Message();
-    void setHeaderLength(uint32_t length);
-    uint32_t getHeaderLength() const;
-    void setHeaderIntegrityCRC32(uint32_t integrityCRC32);
-    uint32_t getHeaderIntegrityCRC32() const;
-    void setHeaderMsgVersion(uint8_t msgVersion);
-    uint8_t getHeaderMsgVersion() const;
-    void setHeaderMsgDirection(uint8_t msgDirection);
-    uint8_t getHeaderMsgDirection() const;
-    void setHeaderMsgTime(uint64_t msgTime);
-    uint64_t getHeaderMsgTime() const;
-    void setHeaderMsgSequence(uint32_t msgSequence);
-    uint32_t getHeaderMsgSequence() const;
-    void setHeaderMsgClass(uint16_t msgClass);
-    uint16_t getHeaderMsgClass() const;
-    void setHeaderMsgType(uint32_t msgType);
-    uint32_t getHeaderMsgType() const;
-    void setHeaderMsgCode(uint32_t msgCode);
-    uint32_t getHeaderMsgCode() const;
-    void setHeaderMsgCompletion(uint8_t msgCompletion);
-    uint8_t getHeaderMsgCompletion() const;
-    void setHeaderMsgNotification(uint8_t msgNotification);
-    uint8_t getHeaderMsgNotification() const;
-    void setHeaderMsgStatus(uint32_t msgStatus);
-    uint32_t getHeaderMsgStatus() const;
-    void setHeaderDeviceProvider(uint16_t deviceProvider);
-    uint16_t getHeaderDeviceProvider() const;
-    void setHeaderDeviceType(uint16_t deviceType);
-    uint16_t getHeaderDeviceType() const;
-    void setHeaderDeviceNumber(uint32_t deviceNumber);
-    uint32_t getHeaderDeviceNumber() const;
-    void setHeaderEncryptionAlgorithm(uint8_t encryptionAlgorithm);
-    uint8_t getHeaderEncryptionAlgorithm() const;
-    void setHeaderEncryptionKeyIndex(uint8_t encryptionKeyIndex);
-    uint8_t getHeaderEncryptionKeyIndex() const;
-    void setHeaderEncryptionMAC(const std::vector<uint8_t>& encryptionMAC);
-    std::vector<uint8_t> getHeaderEncryptionMAC() const;
-    std::vector<uint8_t> getHeaderMsgVector() const;
-    void addPayload(const PayloadField& payload);
-    const std::vector<PayloadField>& getPayloads() const;
-    std::vector<uint8_t> getPayloadMsgVector() const;
-
-    uint32_t FnCalculateIntegrityCRC32();
-    std::vector<uint8_t> FnAddDataTransparency(const std::vector<uint8_t>& input);
-    uint32_t FnRemoveDataTransparency(const std::vector<uint8_t>& input, std::vector<uint8_t>& output);
-    uint32_t FnParseMsgData(const std::vector<uint8_t>& msgData);
-    std::string FnGetMsgOutputLogString(const std::vector<uint8_t>& msgData);
-
-    void clear();
-
-private:
-    MessageHeader header;
-    std::vector<PayloadField> payloads;
-    bool isValidHeaderSize(uint32_t size);
-    bool isInvalidHeaderSizeLessThan64(uint32_t size);
-    bool isMatchHeaderSize(uint32_t size1, uint32_t size2);
-    bool isMatchCRC(uint32_t crc1, uint32_t crc2);
 };
