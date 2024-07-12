@@ -2895,7 +2895,7 @@ void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
         }
     }
 
-    boost::asio::dispatch(strand_, [this]() {
+    boost::asio::post(strand_, [this]() {
         checkCommandQueue();
     });
 }
@@ -2916,7 +2916,7 @@ void Upt::enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
         }
     }
 
-    boost::asio::dispatch(strand_, [this]() {
+    boost::asio::post(strand_, [this]() {
         checkCommandQueue();
     });
 }
@@ -2981,29 +2981,33 @@ void Upt::FnUptSendDeviceAutoPaymentRequest(uint32_t amount, const std::string& 
 
 void Upt::FnUptSendDeviceCancelCommandRequest()
 {
-    enqueueCommand(UPT_CMD::CANCEL_COMMAND_REQUEST);
+    processEvent(EVENT::CANCEL_COMMAND);
 }
 
 const Upt::StateTransition Upt::stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)] = 
 {
     {STATE::IDLE,
     {
-        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleIdleState                         , STATE::SENDING_REQUEST_ASYNC              }
+        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleIdleState                         , STATE::SENDING_REQUEST_ASYNC              },
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleIdleState                         , STATE::IDLE                               }
     }},
     {STATE::SENDING_REQUEST_ASYNC,
     {
         {EVENT::WRITE_COMPLETED                                 , &Upt::handleSendingRequestAsyncState          , STATE::WAITING_FOR_ACK                    },
-        {EVENT::WRITE_FAILED                                    , &Upt::handleSendingRequestAsyncState          , STATE::IDLE                               }
+        {EVENT::WRITE_FAILED                                    , &Upt::handleSendingRequestAsyncState          , STATE::IDLE                               },
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleSendingRequestAsyncState          , STATE::CANCEL_COMMAND_REQUEST             }
     }},
     {STATE::WAITING_FOR_ACK,
     {
         {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleWaitingForAckState                , STATE::WAITING_FOR_RESPONSE               },
-        {EVENT::ACK_TIMEOUT                                     , &Upt::handleWaitingForAckState                , STATE::IDLE                               }
+        {EVENT::ACK_TIMEOUT                                     , &Upt::handleWaitingForAckState                , STATE::IDLE                               },
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleWaitingForAckState                , STATE::CANCEL_COMMAND_REQUEST             }
     }},
     {STATE::WAITING_FOR_RESPONSE,
     {
         {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleWaitingForResponseState           , STATE::IDLE                               },
-        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleWaitingForResponseState           , STATE::DEVICE_STATUS_REQUEST              }
+        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleWaitingForResponseState           , STATE::DEVICE_STATUS_REQUEST              },
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleWaitingForResponseState           , STATE::CANCEL_COMMAND_REQUEST             }
     }},
     {STATE::DEVICE_STATUS_REQUEST,
     {
@@ -3016,7 +3020,8 @@ const Upt::StateTransition Upt::stateTransitionTable[static_cast<int>(STATE::STA
         {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
         {EVENT::START_PENDING_RESPONSE_TIMER                    , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
         {EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED   , &Upt::handleDeviceStatusRequestState          , STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
-        {EVENT::PENDING_RESPONSE_TIMER_TIMEOUT                  , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               }
+        {EVENT::PENDING_RESPONSE_TIMER_TIMEOUT                  , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleDeviceStatusRequestState          , STATE::CANCEL_COMMAND_REQUEST             }
     }},
     {STATE::RETRIEVE_LAST_TRANSACTION_STATUS,
     {
@@ -3026,7 +3031,12 @@ const Upt::StateTransition Upt::stateTransitionTable[static_cast<int>(STATE::STA
         {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
         {EVENT::ACK_TIMEOUT                                     , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
         {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
-        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               }
+        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleRetrieveLastTransactionStatusState, STATE::CANCEL_COMMAND_REQUEST             }
+    }},
+    {STATE::CANCEL_COMMAND_REQUEST,
+    {
+        {EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE             , &Upt::handleCancelCommandRequestState         , STATE::IDLE                               }
     }}
 };
 
@@ -3091,6 +3101,11 @@ std::string Upt::eventToString(EVENT event)
             eventStr = "CANCEL_COMMAND";
             break;
         }
+        case EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE:
+        {
+            eventStr = "CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE";
+            break;
+        }
     }
 
     return eventStr;
@@ -3132,6 +3147,11 @@ std::string Upt::stateToString(STATE state)
             stateStr = "RETRIEVE_LAST_TRANSACTION_STATUS";
             break;
         }
+        case STATE::CANCEL_COMMAND_REQUEST:
+        {
+            stateStr = "CANCEL_COMMAND_REQUEST";
+            break;
+        }
     }
 
     return stateStr;
@@ -3139,7 +3159,7 @@ std::string Upt::stateToString(STATE state)
 
 void Upt::processEvent(EVENT event)
 {
-    boost::asio::dispatch(strand_, [this, event]() {
+    boost::asio::post(strand_, [this, event]() {
         int currentStateIndex_ = static_cast<int>(currentState_);
         const auto& stateTransitions = stateTransitionTable[currentStateIndex_].transitions;
 
@@ -3165,7 +3185,7 @@ void Upt::processEvent(EVENT event)
 
                 if (currentState_ == STATE::IDLE)
                 {
-                    boost::asio::dispatch(strand_, [this]() {
+                    boost::asio::post(strand_, [this]() {
                         checkCommandQueue();
                     });
                 }
@@ -3223,6 +3243,11 @@ void Upt::handleIdleState(EVENT event)
         Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
         popFromCommandQueueAndEnqueueWrite();
     }
+    else if (event == EVENT::CANCEL_COMMAND)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event and enqueue cancel command.", logFileName_, "UPT");
+        enqueueCommandToFront(UPT_CMD::CANCEL_COMMAND_REQUEST);
+    }
 }
 
 void Upt::handleSendingRequestAsyncState(EVENT event)
@@ -3237,6 +3262,11 @@ void Upt::handleSendingRequestAsyncState(EVENT event)
     else if (event == EVENT::WRITE_FAILED)
     {
         Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::CANCEL_COMMAND)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event", logFileName_, "UPT");
+        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
 
@@ -3253,6 +3283,11 @@ void Upt::handleWaitingForAckState(EVENT event)
     {
         Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
     }
+    else if (event == EVENT::CANCEL_COMMAND)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
+    }
 }
 
 void Upt::handleWaitingForResponseState(EVENT event)
@@ -3268,6 +3303,11 @@ void Upt::handleWaitingForResponseState(EVENT event)
         Logger::getInstance()->FnLog("Response Timer Timeout. Start pending response timer.", logFileName_, "UPT");
         // Send the device status request command
         enqueueCommandToFront(UPT_CMD::DEVICE_STATUS_REQUEST);
+    }
+    else if (event == EVENT::CANCEL_COMMAND)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
 
@@ -3325,6 +3365,11 @@ void Upt::handleDeviceStatusRequestState(EVENT event)
     {
         Logger::getInstance()->FnLog("Pending Response Timer Timeout.", logFileName_, "UPT");
     }
+    else if (event == EVENT::CANCEL_COMMAND)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
+    }
 }
 
 void Upt::handleRetrieveLastTransactionStatusState(EVENT event)
@@ -3361,6 +3406,25 @@ void Upt::handleRetrieveLastTransactionStatusState(EVENT event)
     else if (event == EVENT::RESPONSE_TIMEOUT)
     {
         Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
+    }
+    else if (event == EVENT::CANCEL_COMMAND)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
+    }
+}
+
+void Upt::handleCancelCommandRequestState(EVENT event)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (event == EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE)
+    {
+        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        ackTimer_.cancel();
+        rspTimer_.cancel();
+        pendingRspTimer_.cancel();
+        processEvent(EVENT::CANCEL_COMMAND);
     }
 }
 
@@ -3859,7 +3923,7 @@ PayloadField Upt::createPayload(uint32_t length, uint16_t payloadFieldId, uint8_
 
 void Upt::startRead()
 {
-    boost::asio::dispatch(strand_, [this]() {
+    boost::asio::post(strand_, [this]() {
         pSerialPort_->async_read_some(
             boost::asio::buffer(readBuffer_, readBuffer_.size()),
             boost::asio::bind_executor(strand_,
@@ -3995,7 +4059,7 @@ bool Upt::isMsgStatusValid(uint32_t msgStatus)
 
 void Upt::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    boost::asio::dispatch(strand_, [this, data]() {
+    boost::asio::post(strand_, [this, data]() {
         bool write_in_progress_ = !writeQueue_.empty();
         writeQueue_.push(data);
         if (!write_in_progress_)
@@ -4022,7 +4086,7 @@ void Upt::startWrite()
         serialWriteDelayTimer_.expires_from_now(boostTime);
         serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
                 [this](const boost::system::error_code& /*e*/) {
-                    boost::asio::dispatch(strand_, [this]() { startWrite(); });
+                    boost::asio::post(strand_, [this]() { startWrite(); });
             }));
         
         return;

@@ -638,6 +638,7 @@ public:
         WAITING_FOR_RESPONSE,
         DEVICE_STATUS_REQUEST,
         RETRIEVE_LAST_TRANSACTION_STATUS,
+        CANCEL_COMMAND_REQUEST,
         STATE_COUNT
     };
 
@@ -654,6 +655,7 @@ public:
         PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
         PENDING_RESPONSE_TIMER_TIMEOUT,
         CANCEL_COMMAND,
+        CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE,
         EVENT_COUNT
     };
 
@@ -767,6 +769,7 @@ private:
     void handleWaitingForResponseState(EVENT event);
     void handleDeviceStatusRequestState(EVENT event);
     void handleRetrieveLastTransactionStatusState(EVENT event);
+    void handleCancelCommandRequestState(EVENT event);
     void startAckTimer();
     void startResponseTimer();
     void startPendingResponseTimer();
