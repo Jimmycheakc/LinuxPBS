@@ -3,6 +3,7 @@
 #include <string>
 #include <sstream>
 #include "antenna.h"
+#include "common.h"
 #include "dio.h"
 #include "event_handler.h"
 #include "lcsc.h"
@@ -43,7 +44,19 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo          ,eventHandler_, std::placeholders::_1) },
 
     // LPR Event
-    {   "Evt_handleLPRReceive"                  ,std::bind(&EventHandler::handleLPRReceive                 ,eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleLPRReceive"                  ,std::bind(&EventHandler::handleLPRReceive                 ,eventHandler_, std::placeholders::_1) },
+
+    // Upos Terminal Event
+    {   "Evt_handleUPTCardDetect"               ,std::bind(&EventHandler::handleUPTCardDetect              ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTPaymentAuto"              ,std::bind(&EventHandler::handleUPTPaymentAuto             ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTDeviceSettlement"         ,std::bind(&EventHandler::handleUPTDeviceSettlement        ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTRetrieveLastSettlement"   ,std::bind(&EventHandler::handleUPTRetrieveLastSettlement  ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTDeviceLogon"              ,std::bind(&EventHandler::handleUPTDeviceLogon             ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTDeviceStatus"             ,std::bind(&EventHandler::handleUPTDeviceStatus            ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTDeviceTimeSync"           ,std::bind(&EventHandler::handleUPTDeviceTimeSync          ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTDeviceTMS"                ,std::bind(&EventHandler::handleUPTDeviceTMS               ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTDeviceReset"              ,std::bind(&EventHandler::handleUPTDeviceReset             ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTCommandCancel"            ,std::bind(&EventHandler::handleUPTCommandCancel           ,eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -787,5 +800,635 @@ bool EventHandler::handleLPRReceive(const BaseEvent* event)
         ret = false;
     }
     
+    return ret;
+}
+
+bool EventHandler::handleUPTCardDetect(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+        std::string card_type = "";
+        std::string card_can = "";
+        uint64_t card_balance = 0;
+
+        // Deserialize the card detect data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+                else if (param == "cardType")
+                {
+                    card_type = value;
+                }
+                else if (param == "cardCan")
+                {
+                    card_can = value;
+                }
+                else if (param == "cardBalance")
+                {
+                    card_balance = std::stoull(value);
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the card detect data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status << ", card type : " << card_type << ", card can : " << card_can << ", card balance : " << card_balance;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTPaymentAuto(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+        std::string card_can = "";
+        uint64_t card_fee = 0;
+        uint64_t card_balance = 0;
+        std::string card_reference_no = "";
+        std::string card_batch_no = "";
+
+        // Deserialize the payment auto data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+                else if (param == "cardCan")
+                {
+                    card_can = value;
+                }
+                else if (param == "cardFee")
+                {
+                    card_fee = std::stoull(value);
+                }
+                else if (param == "cardBalance")
+                {
+                    card_balance = std::stoull(value);
+                }
+                else if (param == "cardReferenceNo")
+                {
+                    card_reference_no = value;
+                }
+                else if (param == "cardBatchNo")
+                {
+                    card_batch_no = value;
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the payment auto data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status << ", card can : " << card_can << ", card fee : " << card_fee << ", card balance : " << card_balance << ", card reference no : " << card_reference_no << ", card batch no : " << card_batch_no;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTDeviceSettlement(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+        uint64_t total_amount = 0;
+        uint64_t total_trans_count = 0;
+        std::string TID = "";
+        std::string MID = "";
+
+        // Deserialize the device settlement data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+                else if (param == "totalAmount")
+                {
+                    total_amount = std::stoull(value);
+                }
+                else if (param == "totalTransCount")
+                {
+                    total_trans_count = std::stoull(value);
+                }
+                else if (param == "TID")
+                {
+                    TID = value;
+                }
+                else if (param == "MID")
+                {
+                    MID = value;
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the device settlement data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status << ", total amount : " << total_amount << ", total trans count : " << total_trans_count << ", TID : " << TID << ", MID : " << MID;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTRetrieveLastSettlement(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+        uint64_t total_amount = 0;
+        uint64_t total_trans_count = 0;
+
+        // Deserialize the retrieve last settlement data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+                else if (param == "totalAmount")
+                {
+                    total_amount = std::stoull(value);
+                }
+                else if (param == "totalTransCount")
+                {
+                    total_trans_count = std::stoull(value);
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the retrieve last settlement data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status << ", total amount : " << total_amount << ", total trans count : " << total_trans_count;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTDeviceLogon(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+
+        // Deserialize the device logon data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the device logon data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTDeviceStatus(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+
+        // Deserialize the device status data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the device status data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTDeviceTimeSync(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+
+        // Deserialize the device time sync data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the device time sync data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTDeviceTMS(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+
+        // Deserialize the device TMS data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the device TMS data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTDeviceReset(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+
+        // Deserialize the device reset data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the device reset data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleUPTCommandCancel(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        std::string strData = strEvent->data;
+
+        uint32_t msg_status = 0;
+
+        // Deserialize the command cancel data string
+        try
+        {
+            std::vector<std::string> subVector = Common::getInstance()->FnParseString(strData, ',');
+            for (unsigned int i = 0; i < subVector.size(); i++)
+            {
+                std::string pair = subVector[i];
+                std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                std::string value = pair;
+
+                if (param == "msgStatus")
+                {
+                    msg_status = static_cast<uint32_t>(std::stoul(value));
+                }
+            }
+        }
+        catch (const std::exception& ex)
+        {
+            std::ostringstream oss;
+            oss << "Exception : " << ex.what();
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+
+        // Handle the command cancel data
+        std::ostringstream oss;
+        oss << "msg status : " << msg_status;
+        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
     return ret;
 }

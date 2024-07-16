@@ -6,6 +6,7 @@
 #include <vector>
 #include "common.h"
 #include "crc.h"
+#include "event_manager.h"
 #include "log.h"
 #include "upt.h"
 
@@ -841,7 +842,6 @@ uint32_t Message::FnParseMsgData(const std::vector<uint8_t>& msgData)
             // Check payload length is match with rx payload length
             uint32_t length = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, Upt::MESSAGE_LENGTH_OFFSET, Upt::MESSAGE_LENGTH_SIZE));
 
-            std::cout << "length : " << length << " ,payload size : " << payload.size() << std::endl;
             if (isMatchHeaderSize(length, payload.size()))
             {
                 uint32_t calculatedCRC32;
@@ -1140,6 +1140,7 @@ Upt::Upt()
     rspTimer_(ioContext_),
     pendingRspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
+    UptInitialized_(false),
     ackRecv_(false),
     rspRecv_(false),
     pendingRspRecv_(false),
@@ -1179,9 +1180,12 @@ void Upt::FnUptInit(unsigned int baudRate, const std::string& comPortName)
         std::stringstream ss;
         if (pSerialPort_->is_open())
         {
+            UptInitialized_ = true;
             ss << "UPOS Terminal initialization completed.";
             startIoContextThread();
             startRead();
+            FnUptSendDeviceResetSequenceNumberRequest();
+            FnUptSendDeviceLogonRequest();
         }
         else
         {
@@ -2881,44 +2885,50 @@ bool Upt::checkCmd(Upt::UPT_CMD cmd)
 
 void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    std::stringstream ss;
-    ss << "Sending Upt Command to queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
-
+    if (UptInitialized_)
     {
-        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-        commandQueue_.emplace_back(cmd, data);
+        std::stringstream ss;
+        ss << "Sending Upt Command to queue: " << getCommandString(cmd);
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
 
-        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
         {
-            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
-        }
-    }
+            std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+            commandQueue_.emplace_back(cmd, data);
 
-    boost::asio::post(strand_, [this]() {
-        checkCommandQueue();
-    });
+            if ((getSequenceNo() + 1) == 0xFFFFFFFF)
+            {
+                commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+            }
+        }
+
+        boost::asio::post(strand_, [this]() {
+            checkCommandQueue();
+        });
+    }
 }
 
 void Upt::enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    std::stringstream ss;
-    ss << "Sending Upt Command to the front of the queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
-
+    if (UptInitialized_)
     {
-        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-        commandQueue_.emplace_front(cmd, data);
+        std::stringstream ss;
+        ss << "Sending Upt Command to the front of the queue: " << getCommandString(cmd);
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
 
-        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
         {
-            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
-        }
-    }
+            std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+            commandQueue_.emplace_front(cmd, data);
 
-    boost::asio::post(strand_, [this]() {
-        checkCommandQueue();
-    });
+            if ((getSequenceNo() + 1) == 0xFFFFFFFF)
+            {
+                commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+            }
+        }
+
+        boost::asio::post(strand_, [this]() {
+            checkCommandQueue();
+        });
+    }
 }
 
 void Upt::FnUptSendDeviceStatusRequest()
@@ -3940,7 +3950,6 @@ void Upt::readEnd(const boost::system::error_code& error, std::size_t bytesTrans
     if (!error)
     {
         std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);
-        std::cout << "Data : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data) << std::endl << std::endl;
         if (isRxResponseComplete(data))
         {
             handleReceivedCmd(getRxBuffer());
@@ -4290,11 +4299,13 @@ void Upt::handleCmdResponse(const Message& msg)
             }
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
-            oss << ", card type : " << cardTypeStr;
-            oss << " , card can : " << cardCanStr;
-            oss << " , card balance : " << cardBalanceStr;
+            oss << "msgStatus=" << msgRetCode;
+            oss << ",cardType=" << cardTypeStr;
+            oss << ",cardCan=" << cardCanStr;
+            oss << ",cardBalance=" << cardBalanceStr;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCardDetect", oss.str());
         }
     }
     else if (msg.getHeaderMsgType() == static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_PAYMENT))
@@ -4331,13 +4342,15 @@ void Upt::handleCmdResponse(const Message& msg)
             }
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
-            oss << ", card can : " << cardCanStr;
-            oss << " , card fee : " << cardDeductFeeStr;
-            oss << " , card balance : " << cardBalanceStr;
-            oss << " , card reference no : " << cardReferenceNumberStr;
-            oss << " , card batch no : " << batchNoStr;
+            oss << "msgStatus=" << msgRetCode;
+            oss << ",cardCan=" << cardCanStr;
+            oss << ",cardFee=" << cardDeductFeeStr;
+            oss << ",cardBalance=" << cardBalanceStr;
+            oss << ",cardReferenceNo=" << cardReferenceNumberStr;
+            oss << ",cardBatchNo=" << batchNoStr;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTPaymentAuto", oss.str());
         }
     }
     else if (msg.getHeaderMsgType() == static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_DEVICE))
@@ -4366,18 +4379,18 @@ void Upt::handleCmdResponse(const Message& msg)
                 {
                     if (data.name == "NETS")
                     {
-                        netsAmount = std::stoi(data.saleTotal, nullptr, 16);
-                        netsCount = std::stoi(data.saleCount, nullptr, 16);
+                        netsAmount = std::stoull(data.saleTotal, nullptr, 16);
+                        netsCount = std::stoull(data.saleCount, nullptr, 16);
                     }
                     else if (data.name == "NFP")
                     {
-                        nfpAmount = std::stoi(data.saleTotal, nullptr, 16);
-                        nfpCount = std::stoi(data.saleCount, nullptr, 16);
+                        nfpAmount = std::stoull(data.saleTotal, nullptr, 16);
+                        nfpCount = std::stoull(data.saleCount, nullptr, 16);
                     }
                     else if (data.name == "NCC")
                     {
-                        nccAmount = std::stoi(data.saleTotal, nullptr, 16);
-                        nccCount = std::stoi(data.saleCount, nullptr, 16);
+                        nccAmount = std::stoull(data.saleTotal, nullptr, 16);
+                        nccCount = std::stoull(data.saleCount, nullptr, 16);
                     }
                 }
                 catch (const std::exception& ex)
@@ -4404,6 +4417,16 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << " , TID : " << TID;
             oss << " , MID : " << MID;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            std::ostringstream oss2;
+            oss2 << "msgStatus=" << msgRetCode;
+            oss2 << ",totalAmount=" << totalAmount;
+            oss2 << ",totalTransCount=" << totalTransCount;
+            oss2 << ",TID=" << TID;
+            oss2 << ",MID=" << MID;
+            Logger::getInstance()->FnLog(oss2.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceSettlement", oss2.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT))
         {
@@ -4460,6 +4483,14 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << " , NETS(ATM, NFP, NCC) amount : " << netsAmount << ", " << nfpAmount << " , " << nccAmount;
             oss << " , NETS(ATM, NFP, NCC) count : " << netsCount << " , " << nfpCount << " , " << nccCount;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            std::ostringstream oss2;
+            oss2 << "msgStatus=" << msgRetCode;
+            oss2 << ",totalAmount=" << totalAmount;
+            oss2 << ",totalTransCount=" << totalTransCount;
+            Logger::getInstance()->FnLog(oss2.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTRetrieveLastSettlement", oss2.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_LOGON))
         {
@@ -4469,8 +4500,10 @@ void Upt::handleCmdResponse(const Message& msg)
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
+            oss << "msgStatus=" << msgRetCode;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceLogon", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_STATUS))
         {
@@ -4480,8 +4513,10 @@ void Upt::handleCmdResponse(const Message& msg)
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
+            oss << "msgStatus=" << msgRetCode;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceStatus", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TIME_SYNC))
         {
@@ -4491,8 +4526,10 @@ void Upt::handleCmdResponse(const Message& msg)
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
+            oss << "msgStatus=" << msgRetCode;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTimeSync", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TMS))
         {
@@ -4502,8 +4539,10 @@ void Upt::handleCmdResponse(const Message& msg)
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
+            oss << "msgStatus=" << msgRetCode;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTMS", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RESET))
         {
@@ -4513,8 +4552,10 @@ void Upt::handleCmdResponse(const Message& msg)
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
+            oss << "msgStatus=" << msgRetCode;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceReset", oss.str());
         }
     }
     else if (msg.getHeaderMsgType() == static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_CANCELLATION))
@@ -4527,8 +4568,10 @@ void Upt::handleCmdResponse(const Message& msg)
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
-            oss << "msg status : " << msgRetCode;
+            oss << "msgStatus=" << msgRetCode;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCommandCancel", oss.str());
         }
     }
 }
@@ -4547,8 +4590,6 @@ void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
     std::ostringstream oss;
     oss << "Rx message parsing status: " << getMsgStatusString(msgParseStatus);
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
-    std::cout << oss.str() << std::endl;
 
     if (msgParseStatus == static_cast<uint32_t>(MSG_STATUS::SUCCESS))
     {
@@ -4608,7 +4649,4 @@ void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
             Logger::getInstance()->FnLog("Ack or Rsp message sequence number incorrect.", logFileName_, "UPT");
         }
     }
-
-    std::cout << "Response" << std::endl;
-    std::cout << msg.FnGetMsgOutputLogString(msgDataBuff) << std::endl; 
 }

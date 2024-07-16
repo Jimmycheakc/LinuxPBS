@@ -571,3 +571,34 @@ std::string Common::FnUint32ToString(uint32_t value)
     return oss.str();
 }
 
+std::string Common::FnBiteString(std::string& str, char c)
+{
+    std::size_t pos = str.find(c);
+
+    std::string return_str;
+
+    if (pos == std::string::npos)
+    {
+        return_str = str;
+        str = "";
+    }
+    else
+    {
+        return_str = str.substr(0, pos);
+        str = str.substr(pos + 1);
+    }
+
+    return return_str;
+}
+
+std::vector<std::string> Common::FnParseString(std::string str, char c)
+{
+    std::vector<std::string> return_vector;
+
+    while (str != "")
+    {
+        return_vector.push_back(FnBiteString(str, c));
+    }
+
+    return return_vector;
+}

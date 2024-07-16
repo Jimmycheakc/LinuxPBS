@@ -65,6 +65,8 @@ public:
     uint64_t FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t offset = 0);
     std::string FnReverseByPair(std::string hexStr);
     std::string FnUint32ToString(uint32_t value);
+    std::string FnBiteString(std::string& str, char c);
+    std::vector<std::string> FnParseString(std::string str, char c);
 
     /**
      * Singleton Common should not be cloneable.

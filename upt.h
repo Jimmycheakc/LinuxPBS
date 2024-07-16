@@ -733,6 +733,7 @@ private:
     boost::asio::deadline_timer rspTimer_;
     boost::asio::deadline_timer pendingRspTimer_;
     boost::asio::deadline_timer serialWriteDelayTimer_;
+    bool UptInitialized_;
     std::atomic<bool> ackRecv_;
     std::atomic<bool> rspRecv_;
     std::atomic<bool> pendingRspRecv_;
