@@ -1776,6 +1776,11 @@ DBError db::loadParam()
 				    operation::getInstance()->tParas.giCommPortKDEReader = std::stoi(readerItem.GetDataItem(1));
 				}
 
+				if (readerItem.GetDataItem(0) == "CommPortCPT")
+				{
+				    operation::getInstance()->tParas.giCommPortUPOS = std::stoi(readerItem.GetDataItem(1));
+				}
+
                 if (readerItem.GetDataItem(0) == "IsHDBSite")
 				{
 				    operation::getInstance()->tParas.giIsHDBSite = std::stoi(readerItem.GetDataItem(1));

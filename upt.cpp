@@ -3255,7 +3255,7 @@ void Upt::handleIdleState(EVENT event)
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event and enqueue cancel command.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("Received cancel command event in Idle State.", logFileName_, "UPT");
         enqueueCommandToFront(UPT_CMD::CANCEL_COMMAND_REQUEST);
     }
 }
@@ -3275,7 +3275,7 @@ void Upt::handleSendingRequestAsyncState(EVENT event)
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("Received cancel command event in Sending Request Async State", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
@@ -3295,7 +3295,7 @@ void Upt::handleWaitingForAckState(EVENT event)
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("Received cancel command event in Waiting For Ack State.", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
@@ -3316,7 +3316,7 @@ void Upt::handleWaitingForResponseState(EVENT event)
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("Received cancel command event in Waiting For Response State.", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
@@ -3377,7 +3377,7 @@ void Upt::handleDeviceStatusRequestState(EVENT event)
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("Received cancel command event in Device Status Request State.", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
@@ -3419,7 +3419,7 @@ void Upt::handleRetrieveLastTransactionStatusState(EVENT event)
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("Received cancel command event in Retrieve Last Transaction Status State.", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }

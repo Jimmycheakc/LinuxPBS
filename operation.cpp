@@ -24,6 +24,7 @@
 #include "dio.h"
 #include "ksm_reader.h"
 #include "lpr.h"
+#include "upt.h"
 
 operation* operation::operation_ = nullptr;
 std::mutex operation::mutex_;
@@ -432,6 +433,11 @@ void operation::Initdevice(io_context& ioContext)
         }
         //  -4 KDE comm port error
         if (iRet == -4) { tPBSError[iReader].ErrNo = -4;}
+    }
+
+    if (tParas.giCommPortUPOS > 0)
+    {
+        Upt::getInstance()->FnUptInit(115200, getSerialPort(std::to_string(tParas.giCommPortUPOS)));
     }
 
     if (LCD::getInstance()->FnLCDInit())
