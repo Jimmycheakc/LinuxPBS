@@ -1140,7 +1140,6 @@ Upt::Upt()
     rspTimer_(ioContext_),
     pendingRspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
-    UptInitialized_(false),
     ackRecv_(false),
     rspRecv_(false),
     pendingRspRecv_(false),
@@ -1180,7 +1179,6 @@ void Upt::FnUptInit(unsigned int baudRate, const std::string& comPortName)
         std::stringstream ss;
         if (pSerialPort_->is_open())
         {
-            UptInitialized_ = true;
             ss << "UPOS Terminal initialization completed.";
             startIoContextThread();
             startRead();
@@ -2885,50 +2883,56 @@ bool Upt::checkCmd(Upt::UPT_CMD cmd)
 
 void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    if (UptInitialized_)
+    if (!pSerialPort_ && !(pSerialPort_->is_open()))
     {
-        std::stringstream ss;
-        ss << "Sending Upt Command to queue: " << getCommandString(cmd);
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
-
-        {
-            std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-            commandQueue_.emplace_back(cmd, data);
-
-            if ((getSequenceNo() + 1) == 0xFFFFFFFF)
-            {
-                commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
-            }
-        }
-
-        boost::asio::post(strand_, [this]() {
-            checkCommandQueue();
-        });
+        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "UPT");
+        return;
     }
+
+    std::stringstream ss;
+    ss << "Sending Upt Command to queue: " << getCommandString(cmd);
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+
+    {
+        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+        commandQueue_.emplace_back(cmd, data);
+
+        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
+        {
+            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+        }
+    }
+
+    boost::asio::post(strand_, [this]() {
+        checkCommandQueue();
+    });
 }
 
 void Upt::enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    if (UptInitialized_)
+    if (!pSerialPort_ && !(pSerialPort_->is_open()))
     {
-        std::stringstream ss;
-        ss << "Sending Upt Command to the front of the queue: " << getCommandString(cmd);
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
-
-        {
-            std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-            commandQueue_.emplace_front(cmd, data);
-
-            if ((getSequenceNo() + 1) == 0xFFFFFFFF)
-            {
-                commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
-            }
-        }
-
-        boost::asio::post(strand_, [this]() {
-            checkCommandQueue();
-        });
+        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "UPT");
+        return;
     }
+
+    std::stringstream ss;
+    ss << "Sending Upt Command to the front of the queue: " << getCommandString(cmd);
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+
+    {
+        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+        commandQueue_.emplace_front(cmd, data);
+
+        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
+        {
+            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+        }
+    }
+
+    boost::asio::post(strand_, [this]() {
+        checkCommandQueue();
+    });
 }
 
 void Upt::FnUptSendDeviceStatusRequest()
