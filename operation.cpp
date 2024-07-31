@@ -397,7 +397,7 @@ void operation::Initdevice(io_context& ioContext)
 
     if (tParas.giCommPortLCSC > 0)
     {
-        int iRet = LCSCReader::getInstance()->FnLCSCReaderInit(ioContext, 115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
+        int iRet = LCSCReader::getInstance()->FnLCSCReaderInit(115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
         if (iRet == -35) { 
             tPBSError[iLCSC].ErrNo = -4;
             HandlePBSError(LCSCError);
@@ -614,7 +614,6 @@ void operation:: Setdefaultparameter()
     tProcess.gbInitParamFail = 0;
     tProcess.giCardIsIn = 0;
     //-------
-    tProcess.WaitForLCSCReturn.store(false);
     tProcess.giLastHousekeepingDate = 0;
     tProcess.setLastIUNo("");
     tProcess.setLastIUEntryTime(std::chrono::steady_clock::now());
@@ -1661,19 +1660,14 @@ void operation:: CheckReader()
             writelog ("KDE Reader Error","OPR");
         }
     }
-    if (tParas.giCommPortLCSC > 0 && tPBSError[iLCSC].ErrNo != -4) {
+    if (tParas.giCommPortLCSC > 0 && tPBSError[iLCSC].ErrNo != -4)
+    {
         writelog("Check LCSC Status...", "OPR");
         LCSCReader::getInstance()->FnSendGetStatusCmd();
-        if (LCSCReader::getInstance()->FnGetReaderMode() != 1) {
-           int iRet = LCSCReader::getInstance()->FnSendGetLoginCmd();
-            LCSCReader::getInstance()->FnSendGetStatusCmd();
-            if (LCSCReader::getInstance()->FnGetReaderMode() != 1 && iRet != 1) {
-                writelog ("LCSC Reader Error","OPR");
-                HandlePBSError(LCSCError);
-                return;
-                } 
+        if (tPBSError[iLCSC].ErrNo == -1)
+        {
+            tPBSError[iLCSC].ErrNo = 0;
         }
-        if (tPBSError[10].ErrNo == -1) tPBSError[10].ErrNo = 0;
         LCSCReader::getInstance()->FnSendSetTime();
     }
 }
@@ -1681,28 +1675,20 @@ void operation:: CheckReader()
 void operation:: EnableLCSC(bool bEnable)
 {
     int iRet;
-    if (tPBSError[10].ErrNo != 0) return;
-    //-------
-    if (tProcess.WaitForLCSCReturn.load()) return;
-    if (bEnable && (LCSCReader::getInstance()->FnGetIsCmdExecuting())) return;
-    
-    if (!bEnable && !LCSCReader::getInstance()->FnGetIsCmdExecuting()) {
-        writelog("Stop LCSC to Read...", "OPR");
+    if (tPBSError[iLCSC].ErrNo != 0)
+    {
         return;
     }
 
     if (bEnable) 
     {
-        if (!LCSCReader::getInstance()->FnGetIsCmdExecuting()) {
-            LCSCReader::getInstance()->FnSendGetCardIDCmd();
-            writelog("Start LCSC to read...", "OPR");
-        }
-    } else 
+        LCSCReader::getInstance()->FnSendGetCardIDCmd();
+        writelog("Start LCSC to read...", "OPR");
+    }
+    else 
     {
-        if (LCSCReader::getInstance()->FnGetIsCmdExecuting() ) {
-            LCSCReader::getInstance()->FnLCSCReaderStopRead();
-        }
-            writelog("Stop LCSC to Read...", "OPR");
+        LCSCReader::getInstance()->FnLCSCReaderStopRead();
+        writelog("Stop LCSC to Read...", "OPR");
     }
 }
 
@@ -1744,42 +1730,113 @@ void operation::EnableUPOS(bool bEnable)
 
 }
 
-void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent) 
+void operation::ProcessLCSC(const std::string& eventData)
 {
-    float sBal;
-    int iRet;
-    std::string sCardNo;
-    float sPaymentAmt; 
-    float sRedeemAmt;
-    int iRedeemTime; 
+    int msg_status = static_cast<int>(LCSCReader::mCSCEvents::sWrongCmd);
 
-     switch (iEvent) {
-        case LCSCReader::mCSCEvents::sFWUploadSuccess:
-        case LCSCReader::mCSCEvents::sBLUploadSuccess:
-        case LCSCReader::mCSCEvents::sCFGUploadSuccess:
-        case LCSCReader::mCSCEvents::sCILUploadSuccess:
-        case LCSCReader::mCSCEvents::sBLUploadCorrupt:
-        case LCSCReader::mCSCEvents::sCFGUploadCorrupt:
-        case LCSCReader::mCSCEvents::sCILUploadCorrupt:
-            tProcess.WaitForLCSCReturn.store(false);
-            writelog("received ACK from LCSC", "OPR");
+    try
+    {
+        std::vector<std::string> subVector = Common::getInstance()->FnParseString(eventData, ',');
+        for (unsigned int i = 0; i < subVector.size(); i++)
+        {
+            std::string pair = subVector[i];
+            std::string param = Common::getInstance()->FnBiteString(pair, '=');
+            std::string value = pair;
+
+            if (param == "msgStatus")
+            {
+                msg_status = std::stoi(value);
+            }
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        std::ostringstream oss;
+        oss << "Exception : " << ex.what();
+        writelog(oss.str(), "OPR");
+    }
+
+    switch (static_cast<LCSCReader::mCSCEvents>(msg_status))
+    {
+        case LCSCReader::mCSCEvents::sGetStatusOK:
+        {
+            int reader_mode = 0;
+            try
+            {
+                std::vector<std::string> subVector = Common::getInstance()->FnParseString(eventData, ',');
+                for (unsigned int i = 0; i < subVector.size(); i++)
+                {
+                    std::string pair = subVector[i];
+                    std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                    std::string value = pair;
+
+                    if (param == "readerMode")
+                    {
+                        reader_mode = std::stoi(value);
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                std::ostringstream oss;
+                oss << "Exception : " << ex.what();
+                writelog(oss.str(), "OPR");
+            }
+
+            if (reader_mode != 1)
+            {
+                LCSCReader::getInstance()->FnSendGetLoginCmd();
+                writelog ("LCSC Reader Error","OPR");
+                HandlePBSError(LCSCError);
+            }
+
             break;
+        }
+        case LCSCReader::mCSCEvents::sLoginSuccess:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sLogoutSuccess:
+        {
+            break;
+        }
         case LCSCReader::mCSCEvents::sGetIDSuccess:
-        case LCSCReader::mCSCEvents::sGetBlcSuccess:
-            writelog ("event LCSC got ID and balance","OPR");
+        {
+            writelog ("event LCSC got card ID.","OPR");
             HandlePBSError (LCSCNoError);
-            
-            sCardNo = LCSCReader::getInstance()->FnGetCardApplicationNumber();
-            sBal = LCSCReader::getInstance()->FnGetCardBalance();
 
-            writelog ("LCSC card: " + sCardNo + ", Bal=$" + std::to_string(sBal), "OPR");
+            std::string sCardNo = "";
             
-            if(sCardNo.length()!=16){
+            try
+            {
+                std::vector<std::string> subVector = Common::getInstance()->FnParseString(eventData, ',');
+                for (unsigned int i = 0; i < subVector.size(); i++)
+                {
+                    std::string pair = subVector[i];
+                    std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                    std::string value = pair;
+
+                    if (param == "CAN")
+                    {
+                        sCardNo = value;
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                std::ostringstream oss;
+                oss << "Exception : " << ex.what();
+                writelog(oss.str(), "OPR");
+            }
+
+            writelog ("LCSC card: " + sCardNo, "OPR");
+
+            if (sCardNo.length() != 16)
+            {
                 writelog ("Wrong Card No: "+sCardNo, "OPR");
                 ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
                 SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
                 EnableLCSC(true);
-                return;
             }
             else
             {
@@ -1789,24 +1846,85 @@ void operation::ProcessLCSC (LCSCReader::mCSCEvents iEvent)
                     VehicleCome(sCardNo);
                 }
             }
+
             break;
-         case LCSCReader::mCSCEvents::iFailWriteSettle:
-            writelog ("Write LCSC settle file failed","OPR");
+        }
+        case LCSCReader::mCSCEvents::sGetBlcSuccess:
+        {
             break;
-         case LCSCReader::mCSCEvents::sNoCard:
-            if (tEntry.gbEntryOK == false) writelog ("Received No card Event", "OPR");
+        }
+        case LCSCReader::mCSCEvents::sGetTimeSuccess:
+        {
             break;
-         default:
-            writelog ("Received Error Event" + std::to_string(static_cast<int>(iEvent)), "OPR");
-            if (tProcess.gbLoopApresent.load() == true && tEntry.gbEntryOK == false) {
+        }
+        case LCSCReader::mCSCEvents::sGetDeductSuccess:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sGetCardRecord:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sCardFlushed:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sSetTimeSuccess:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sLogin1Success:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sRSAUploadSuccess:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sFWUploadSuccess:
+        {
+            break;
+        }
+        case LCSCReader::mCSCEvents::sBLUploadSuccess:
+        case LCSCReader::mCSCEvents::sCILUploadSuccess:
+        case LCSCReader::mCSCEvents::sCFGUploadSuccess:
+        case LCSCReader::mCSCEvents::sBLUploadCorrupt:
+        case LCSCReader::mCSCEvents::sCILUploadCorrupt:
+        case LCSCReader::mCSCEvents::sCFGUploadCorrupt:
+        {
+            writelog("Received ACK from LCSC.", "OPR");
+            break;
+        }
+        case LCSCReader::mCSCEvents::iFailWriteSettle:
+        {
+            writelog("Write LCSC settle file failed.","OPR");
+            break;
+        }
+        case LCSCReader::mCSCEvents::sNoCard:
+        {
+            if (tEntry.gbEntryOK == false)
+            {
+                writelog("Received No card Event", "OPR");
+            }
+            break;
+        }
+        default:
+        {
+            std::string sCardNo = "";
+            writelog ("Received Error Event" + std::to_string(static_cast<int>(msg_status)), "OPR");
+            if (tProcess.gbLoopApresent.load() == true && tEntry.gbEntryOK == false)
+            {
                 ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
                 SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
                 EnableLCSC(true);
-            }else EnableCashcard(false);
+            }
+            else
+            {
+                EnableCashcard(false);
+            }
             break;
-    
-     }
-   
+        }
+    }
 }
 
 void operation:: KSM_CardIn()

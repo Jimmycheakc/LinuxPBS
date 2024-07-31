@@ -595,7 +595,6 @@ void print(const boost::system::error_code& /*e*/)
 {
     Logger::getInstance()->FnLog("Hello World");
     Antenna::getInstance()->FnAntennaStopRead();
-    //LCSCReader::getInstance()->FnLCSCReaderStopRead();
 }
 
 void Test::antenna_test()
@@ -637,73 +636,6 @@ void Test::event_queue_test()
 
 void Test::lcsc_reader_test()
 {
-    boost::asio::io_context io_context;
-
-    IniParser::getInstance()->FnReadIniFile();
-    EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
-    EventManager::getInstance()->FnStartEventThread();
-    LCSCReader::getInstance()->FnLCSCReaderInit(io_context, 115200, "/dev/ttyCH9344USB4");
-    /*
-    LCSCReader::getInstance()->FnSendGetStatusCmd();
-    std::cout << "Serial number : " << LCSCReader::getInstance()->FnGetSerialNumber() << std::endl;
-    std::cout << "Reader mode : " << LCSCReader::getInstance()->FnGetReaderMode() << std::endl;
-    std::cout << "BL1 version : " << LCSCReader::getInstance()->FnGetBL1Version() << std::endl;
-    std::cout << "BL2 version : " << LCSCReader::getInstance()->FnGetBL2Version() << std::endl;
-    std::cout << "BL3 version : " << LCSCReader::getInstance()->FnGetBL3Version() << std::endl;
-    std::cout << "BL4 version : " << LCSCReader::getInstance()->FnGetBL4Version() << std::endl;
-    std::cout << "CIL1 version : " << LCSCReader::getInstance()->FnGetCIL1Version() << std::endl;
-    std::cout << "CIL2 version : " << LCSCReader::getInstance()->FnGetCIL2Version() << std::endl;
-    std::cout << "CIL3 version : " << LCSCReader::getInstance()->FnGetCIL3Version() << std::endl;
-    std::cout << "CIL4 version : " << LCSCReader::getInstance()->FnGetCIL4Version() << std::endl;
-    std::cout << "CFG version : " << LCSCReader::getInstance()->FnGetCFGVersion() << std::endl;
-    std::cout << "Firmware version : " << LCSCReader::getInstance()->FnGetFirmwareVersion() << std::endl;
-    LCSCReader::getInstance()->FnSendGetLoginCmd();
-
-    auto start_time = std::chrono::high_resolution_clock::now();
-    LCSCReader::getInstance()->FnSendUploadCFGFile("../cd/Device_V00B.zip");
-    LCSCReader::getInstance()->FnSendUploadCILFile("../cd/ezlkiss2.sys");
-    LCSCReader::getInstance()->FnSendUploadCILFile("../cd/fut3iss2.sys");
-    LCSCReader::getInstance()->FnSendUploadCILFile("../cd/netsiss2.sys");
-    LCSCReader::getInstance()->FnSendUploadBLFile("../cd/ezlkcsc2.blk");
-    LCSCReader::getInstance()->FnSendUploadBLFile("../cd/fut3csc2.blk");
-    LCSCReader::getInstance()->FnSendUploadBLFile("../cd/netscsc2.blk");
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration_seconds = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
-    auto duration_miliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    std::cout << "Execution time : " << duration_seconds.count() << " seconds, " << duration_miliseconds.count() << " milliseconds" << std::endl;
-    LCSCReader::getInstance()->FnSendGetCardIDCmd();
-    std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
-    std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
-    LCSCReader::getInstance()->FnSendGetLogoutCmd();
-    LCSCReader::getInstance()->FnSendGetCardBalance();
-    std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
-    std::cout << "Card Balance : " << LCSCReader::getInstance()->FnGetCardBalance() << std::endl;
-    */
-    /*
-    LCSCReader::getInstance()->FnSendSetTime();
-    LCSCReader::getInstance()->FnSendGetTime();
-    std::cout << "Reader time : " << LCSCReader::getInstance()->FnGetReaderTime() << std::endl;
-    */
-
-    std::cout << "start asynchronous operation." << std::endl;
-
-    boost::asio::deadline_timer t(io_context, boost::posix_time::seconds(10));
-    t.async_wait(print);
-
-    // Create a thread to run io_context
-    //std::thread ioThread([&io_context]() {
-    //    io_context.run();
-    //});
-
-    LCSCReader::getInstance()->FnSendGetCardIDCmd();
-    LCSCReader::getInstance()->FnSendGetCardBalance();
-    //std::cout << "Card Serial Number : " << LCSCReader::getInstance()->FnGetCardSerialNumber() << std::endl;
-    //std::cout << "Card Application Number : " << LCSCReader::getInstance()->FnGetCardApplicationNumber() << std::endl;
-
-    io_context.run();
-    //ioThread.join();
-    EventManager::getInstance()->FnStopEventThread();
 }
 
 void Test::dio_test()

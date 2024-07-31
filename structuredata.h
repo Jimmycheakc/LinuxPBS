@@ -309,7 +309,6 @@ struct  tProcess_Struct
 	bool gbloadedLEDMsg;
 	bool gbloadedStnSetup;
 	int gbInitParamFail;
-	atomic<bool> WaitForLCSCReturn;
 	int giCardIsIn;
 	int giLastHousekeepingDate;
 //	bool gbwaitLoopA;

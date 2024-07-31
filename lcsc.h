@@ -6,9 +6,45 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <queue>
+#include <thread>
 #include <vector>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
+
+class CscPacket
+{
+
+public:
+    CscPacket();
+    ~CscPacket();
+    void setAttentionCode(uint8_t attn);
+    uint8_t getAttentionCode() const;
+    void setCode(uint8_t code);
+    uint8_t getCode() const;
+    void setType(uint8_t type);
+    uint8_t getType() const;
+    void setLength(uint16_t len);
+    uint16_t getLength() const;
+    void setPayload(const std::vector<uint8_t>& payload);
+    std::vector<uint8_t> getPayload() const;
+    void setCrc(uint16_t crc);
+    uint16_t getCrc();
+    std::vector<uint8_t> serializeWithoutCRC() const;
+    std::vector<uint8_t> serialize() const;
+    void deserialize(const std::vector<uint8_t>& data);
+    std::string getMsgCscPacketOutput() const;
+
+    void clear();
+
+private:
+    uint8_t attn;
+    bool code;
+    uint8_t type;
+    uint16_t len;
+    std::vector<uint8_t> payload;
+    uint16_t crc;
+};
 
 class LCSCReader
 {
@@ -16,29 +52,7 @@ class LCSCReader
 public:
     const std::string LOCAL_LCSC_FOLDER_PATH = "/home/root/carpark/LTA";
 
-    struct CscPacket
-    {
-        uint8_t attn;
-        bool code;
-        uint8_t type;
-        uint16_t len;
-        std::vector<uint8_t> payload;
-        uint16_t crc;
-    };
-
-    struct ReadResult
-    {
-        std::vector<char> data;
-        bool success;
-    };
-
-    enum class RX_STATE
-    {
-        RX_START,
-        RX_RECEIVING
-    };
-
-    enum class mCSCEvents
+    enum class mCSCEvents : int
     {
         sGetStatusOK        = 0,
         sLoginSuccess       = 1,
@@ -102,7 +116,7 @@ public:
         rNotRespCmd         = -105
     };
 
-    enum class LcscCmd
+    enum class LCSC_CMD
     {
         GET_STATUS_CMD,
         LOGIN_1,
@@ -120,46 +134,158 @@ public:
         UPLOAD_BL_FILE
     };
 
-    static const int TX_BUF_SIZE = 1024;
-    static const int RX_BUF_SIZE = 1024;
+    enum class LCSC_CMD_CODE
+    {
+        COMMAND     = 0x00,
+        RESPONSE    = 0x01
+    };
+
+    enum class LCSC_CMD_TYPE
+    {
+        // Authentication
+        AUTH_LOGIN1     = 0x10,
+        AUTH_LOGIN2     = 0x11,
+        AUTH_LOGOUT     = 0x12,
+
+        // Card Operations
+        CARD_ID         = 0x20,
+        CARD_BALANCE    = 0x21,
+        CARD_DEDUCT     = 0x22,
+        CARD_RECORD     = 0x23,
+        CARD_FLUSH      = 0x24,
+
+        // CD Upload
+        BL_UPLOAD       = 0x30,
+        CIL_UPLOAD      = 0x31,
+        CFG_UPLOAD      = 0x32,
+        RSA_UPLOAD      = 0x33,
+
+        // Settings
+        CLK_SET         = 0x41,
+        CLK_GET         = 0x42,
+
+        // Log Retrieval
+        LOG_READ        = 0x50,
+
+        // Firmware Update
+        FW_UPDATE       = 0x60,
+
+        // Status
+        GET_STATUS      = 0x00
+    };
+
+    enum class RX_STATE
+    {
+        RX_START,
+        RX_RECEIVING
+    };
+
+    enum class STATE
+    {
+        IDLE,
+        SENDING_REQUEST_ASYNC,
+        WAITING_FOR_RESPONSE,
+        SENDING_CHUNK_COMMAND_REQUEST_ASYNC,
+        WAITING_FOR_CHUNK_COMMAND_RESPONSE,
+        STATE_COUNT
+    };
+
+    enum class EVENT
+    {
+        COMMAND_ENQUEUED,
+        CHUNK_COMMAND_ENQUEUED,
+        WRITE_COMPLETED,
+        WRITE_FAILED,
+        RESPONSE_TIMEOUT,
+        RESPONSE_RECEIVED,
+        SEND_NEXT_CHUNK_COMMAND,
+        ALL_CHUNK_COMMAND_COMPLETED,
+        CHUNK_COMMAND_ERROR,
+        EVENT_COUNT
+    };
+
+    enum class UPLOAD_LCSC_FILES_STATE
+    {
+        IDLE,
+        DOWNLOAD_CDFILES,
+        UPLOAD_CDFILES,
+        GENERATE_CDACKFILES,
+        MOVE_CDACKFILES,
+        STATE_COUNT
+    };
+
+    enum class UPLOAD_LCSC_FILES_EVENT
+    {
+        CHECK_CONDITION,
+        ALLOW_DOWNLOAD,
+        CONTINUE_UPLOAD,
+        CDFILES_DOWNLOADED,
+        NO_CDFILES_DOWNLOADED,
+        CDFILES_UPLOADING,
+        GET_LCSC_DEVICE_STATUS,
+        CDFILE_UPLOADED,
+        CDFILE_UPLOAD_FAILED,
+        GET_LCSC_DEVICE_STATUS_OK,
+        GET_LCSC_DEVICE_STATUS_FAILED,
+        EVENT_COUNT
+    };
+
+    struct CommandWithData
+    {
+        LCSC_CMD cmd;
+        std::shared_ptr<void> data;
+
+        CommandWithData(LCSC_CMD c, std::shared_ptr<void> d = nullptr) : cmd(c), data(d) {}
+    };
+
+    struct EventTransition
+    {
+        EVENT event;
+        void (LCSCReader::*eventHandler)(EVENT);
+        STATE nextState;
+    };
+
+    struct StateTransition
+    {
+        STATE stateName;
+        std::vector<EventTransition> transitions;
+    };
+
+    struct UploadLcscEventTransition
+    {
+        UPLOAD_LCSC_FILES_EVENT event;
+        void (LCSCReader::*lcscEventHandler)(UPLOAD_LCSC_FILES_EVENT, const std::string&);
+        UPLOAD_LCSC_FILES_STATE nextState;
+    };
+
+    struct UploadLcscStateTransition
+    {
+        UPLOAD_LCSC_FILES_STATE stateName;
+        std::vector<UploadLcscEventTransition> transitions;
+    };
 
     static LCSCReader* getInstance();
-    int FnLCSCReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
+    int FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName);
+    void FnLCSCReaderClose();
+
     void FnLCSCReaderStopRead();
     void FnSendGetStatusCmd();
     int FnSendGetLoginCmd();
     void FnSendGetLogoutCmd();
     void FnSendGetCardIDCmd();
     void FnSendGetCardBalance();
+    void FnSendCardDeduct(uint32_t amount);
+    void FnSendCardFlush(uint32_t seed);
     void FnSendGetTime();
     void FnSendSetTime();
     int FnSendUploadCFGFile(const std::string& path);
     int FnSendUploadCILFile(const std::string& path);
     int FnSendUploadBLFile(const std::string& path);
-    bool FnGetIsCmdExecuting() const;
 
-    std::string FnGetSerialNumber();
-    int FnGetReaderMode();
-    std::string FnGetBL1Version();
-    std::string FnGetBL2Version();
-    std::string FnGetBL3Version();
-    std::string FnGetBL4Version();
-    std::string FnGetCIL1Version();
-    std::string FnGetCIL2Version();
-    std::string FnGetCIL3Version();
-    std::string FnGetCIL4Version();
-    std::string FnGetCFGVersion();
-    std::string FnGetFirmwareVersion();
-    std::string FnGetCardSerialNumber();
-    std::string FnGetCardApplicationNumber();
-    double FnGetCardBalance();
-    std::string FnGetReaderTime();
-
-    bool FnMoveCDAckFile();
-    bool FnGenerateCDAckFile();
-    bool FnDownloadCDFiles();
     void FnUploadLCSCCDFiles();
-    bool FnUploadCDFile2(std::string path);
+
+    std::string getCommandString(LCSC_CMD cmd);
+    std::string getCommandTypeString(uint8_t type);
 
     /**
      * Singleton LCSCReader should not be cloneable.
@@ -167,85 +293,102 @@ public:
     LCSCReader(LCSCReader& lcscReader) = delete;
 
     /**
-     * Singleton LCSCReader should not be assignable. 
+     * Singleton LCSCReader should not be assignable.
      */
     void operator=(const LCSCReader&) = delete;
 
 private:
     static LCSCReader* lcscReader_;
     static std::mutex mutex_;
-    boost::asio::io_context* pMainIOContext_;
-    std::unique_ptr<boost::asio::deadline_timer> uploadCDFilesTimer_;
-    boost::asio::io_context io_serial_context;
-    std::unique_ptr<boost::asio::io_context::strand> pStrand_;
+    boost::asio::io_context ioContext_;
+    boost::asio::io_context::work work_;
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
-    std::atomic<bool> continueReadFlag_;
-    std::atomic<bool> isCmdExecuting_;
+    boost::asio::deadline_timer rspTimer_;
+    boost::asio::deadline_timer serialWriteDelayTimer_;
     std::string logFileName_;
-    int lcscCmdTimeoutInMillisec_;
-    int lcscCmdMaxRetry_;
-    int TxNum_;
-    int RxNum_;
+    std::thread ioContextThread_;
+    std::mutex commandQueueMutex_;
+    std::deque<CommandWithData> commandQueue_;
+    std::mutex chunkCommandQueueMutex_;
+    std::deque<CommandWithData> chunkCommandQueue_;
+    static std::mutex currentCmdMutex_;
+    LCSC_CMD currentCmd;
+    static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
+    STATE currentState_;
+    std::chrono::steady_clock::time_point lastSerialReadTime_;
+    std::array<uint8_t, 1024> readBuffer_;
+    std::queue<std::vector<uint8_t>> writeQueue_;
+    bool write_in_progress_;
+    std::array<uint8_t, 1024> rxBuffer_;
+    int rxNum_;
     RX_STATE rxState_;
-    unsigned char txBuff[TX_BUF_SIZE];
-    unsigned char rxBuff[RX_BUF_SIZE];
-    std::string serial_num_;
-    int reader_mode_;
-    std::string bl1_version_;
-    std::string bl2_version_;
-    std::string bl3_version_;
-    std::string bl4_version_;
-    std::string cil1_version_;
-    std::string cil2_version_;
-    std::string cil3_version_;
-    std::string cil4_version_;
-    std::string cfg_version_;
-    std::string firmware_version_;
-    std::vector<uint8_t> reader_challenge_;
     std::vector<uint8_t> aes_key;
-    std::string card_serial_num_;
-    std::string card_application_num_;
-    double card_balance_;
-    std::string reader_time_;
+    std::atomic<bool> continueReadFlag_;
+    static const UploadLcscStateTransition UploadLcscStateTransitionTable[static_cast<int>(UPLOAD_LCSC_FILES_STATE::STATE_COUNT)];
+    UPLOAD_LCSC_FILES_STATE currentUploadLcscFilesState_;
     bool HasCDFileToUpload_;
     int LastCDUploadDate_;
     int LastCDUploadTime_;
-    int CDUploadTimeOut_;
-    std::string CDFPath_;
+    std::string uploadLcscFileName_;
     LCSCReader();
-    std::string lcscCmdToString(LcscCmd cmd);
-    int lcscCmd(LcscCmd cmd);
-    bool lcscCmdSend(const std::vector<unsigned char>& dataBuff);
-    bool parseCscPacketData(LCSCReader::CscPacket& packet, const std::vector<char>& data);
-    std::vector<unsigned char> loadGetStatus();
-    std::vector<unsigned char> loadLogin1();
-    std::vector<unsigned char> loadLogin2();
-    std::vector<unsigned char> loadLogout();
-    std::vector<unsigned char> loadGetCardID();
-    void handleGetCardIDTimerExpiration();
-    std::vector<unsigned char> loadGetCardBalance();
-    void handleGetCardBalanceTimerExpiration();
-    std::vector<unsigned char> loadGetTime();
-    std::vector<unsigned char> loadSetTime();
-    int uploadCFGSub(const std::vector<unsigned char>& data);
-    std::vector<unsigned char> readFile(const std::filesystem::path& filePath);
-    std::vector<std::vector<unsigned char>> chunkData(const std::vector<unsigned char>& data, std::size_t chunkSize);
-    int uploadCFGComplete();
-    int uploadCILSub(const std::vector<unsigned char>& data, bool isSubSequence);
-    int uploadCILComplete();
-    int uploadBLSub(const std::vector<unsigned char>& data, bool isSubSequence);
-    int uploadBLComplete();
-    ReadResult lcscReadWithTimeout(int milliseconds);
-    void resetRxBuffer();
-    bool responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred);
-    mCSCEvents lcscHandleCmdResponse(LcscCmd cmd, const std::vector<char>& dataBuff);
-    uint16_t CRC16_CCITT(const unsigned char* inStr, size_t length);
-    unsigned char* getTxBuf();
-    unsigned char* getRxBuf();
-    int getTxNum();
-    int getRxNum();
+    void startIoContextThread();
+    void enqueueCommand(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void enqueueCommandToFront(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void enqueueChunkCommand(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void checkCommandQueue();
+    std::string eventToString(EVENT event);
+    std::string stateToString(STATE state);
+    std::string getEventStringFromResponseCmdType(uint8_t respType);
+    void processEvent(EVENT event);
+    void handleIdleState(EVENT event);
+    void handleSendingRequestAsyncState(EVENT event);
+    void handleWaitingForResponseState(EVENT event);
+    void handleSendingChunkCommandRequestAsyncState(EVENT event);
+    void handleWaitingForChunkCommandResponseState(EVENT event);
+    void startResponseTimer();
+    void handleCmdResponseTimeout(const boost::system::error_code& error);
+    bool isRxResponseComplete(const std::vector<uint8_t>& dataBuff);
+    void handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff);
+    void popFromCommandQueueAndEnqueueWrite();
+    void popFromChunkCommandQueueAndEnqueueWrite();
+    bool isChunkedCommand(LCSC_CMD cmd);
+    bool isChunkedCommandType(LCSC_CMD_TYPE cmd);
+    void sendNextChunkCommandData();
+    std::vector<uint8_t> prepareCmd(LCSC_CMD cmd, std::shared_ptr<void> payloadData);
+    uint16_t CRC16_CCITT(const uint8_t* inStr, size_t length);
+    std::string handleCmdResponse(const CscPacket& msg);
     void encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge);
+    std::vector<uint8_t> readFile(const std::filesystem::path& filePath);
+    std::vector<std::vector<uint8_t>> chunkData(const std::vector<uint8_t>& data, std::size_t chunkSize);
+
+    void handleUploadLcscIdleState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
+    void handleDownloadCDFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
+    void handleUploadCDFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
+    void handleGenerateCDAckFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
+    std::string uploadLcscFilesEventToString(UPLOAD_LCSC_FILES_EVENT event);
+    std::string uploadLcscFilesStateToString(UPLOAD_LCSC_FILES_STATE state);
+    void processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
     std::string calculateSHA256(const std::string& data);
-    void startGetCardIDTimer(int milliseconds);
-    void startGetCardBalanceTimer(int milliseconds);
+    bool FnGenerateCDAckFile(const std::string& serialNum, const std::string& fwVer, const std::string& bl1Ver,
+                            const std::string& bl2Ver, const std::string& bl3Ver, const std::string& cil1Ver,
+                            const std::string& cil2Ver, const std::string& cil3Ver, const std::string& cfgVer);
+    bool FnMoveCDAckFile();
+    bool FnDownloadCDFiles();
+    void FnUploadCDFile2(std::string path);
+    void handleUploadLcscFilesCmdResponse(const CscPacket& msg, const std::string& msgRsp);
+    void handleUploadLcscGetStatusCmdResponse(const CscPacket& msg, const std::string& msgRsp);
+
+    void handleCmdErrorOrTimeout(LCSC_CMD cmd, mCSCEvents eventStatus);
+    void setCurrentCmd(LCSC_CMD cmd);
+    LCSC_CMD getCurrentCmd();
+
+    // Serial read and write
+    void resetRxBuffer();
+    std::vector<uint8_t> getRxBuffer() const;
+    void startRead();
+    void readEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
+    void enqueueWrite(const std::vector<uint8_t>& data);
+    void startWrite();
+    void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
 };

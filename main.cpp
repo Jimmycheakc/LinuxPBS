@@ -289,6 +289,8 @@ int main (int agrc, char* argv[])
 #endif
 
     EventManager::getInstance()->FnStopEventThread();
+    Upt::getInstance()->FnUptClose();
+    LCSCReader::getInstance()->FnLCSCReaderClose();
 
     return 0;
 }

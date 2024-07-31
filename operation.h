@@ -74,7 +74,7 @@ public:
     void EnableLCSC(bool bEnable);
     void EnableKDE(bool bEnable);
     void EnableUPOS(bool bEnable);
-    void ProcessLCSC(LCSCReader::mCSCEvents iEvent);
+    void ProcessLCSC(const std::string& eventData);
     void KSM_CardIn();
     void KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired);
     void KSM_CardTakeAway();

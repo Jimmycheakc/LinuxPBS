@@ -11,6 +11,7 @@
 #include "operation.h"
 #include "ksm_reader.h"
 #include "lpr.h"
+#include "upt.h"
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
 std::mutex EventHandler::mutex_;
@@ -218,14 +219,14 @@ bool EventHandler::handleLcscReaderStatus(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
@@ -244,14 +245,14 @@ bool EventHandler::handleLcscReaderLogin(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
@@ -270,14 +271,14 @@ bool EventHandler::handleLcscReaderLogout(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
@@ -296,14 +297,14 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->ProcessLCSC(value);
@@ -324,14 +325,14 @@ bool EventHandler::handleLcscReaderGetCardBalance(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
@@ -350,14 +351,14 @@ bool EventHandler::handleLcscReaderGetTime(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
@@ -376,14 +377,14 @@ bool EventHandler::handleLcscReaderSetTime(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
@@ -402,20 +403,15 @@ bool EventHandler::handleLcscReaderUploadCFGFile(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
-
-        if (value == LCSCReader::mCSCEvents::sCFGUploadSuccess)
-        {
-            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
-        }
     }
     else
     {
@@ -433,20 +429,15 @@ bool EventHandler::handleLcscReaderUploadCILFile(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
-
-        if (value == LCSCReader::mCSCEvents::sCILUploadSuccess)
-        {
-            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
-        }
     }
     else
     {
@@ -464,20 +455,15 @@ bool EventHandler::handleLcscReaderUploadBLFile(const BaseEvent* event)
 {
     bool ret = true;
 
-    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
 
-    if (intEvent != nullptr)
+    if (strEvent != nullptr)
     {
-        LCSCReader::mCSCEvents value = static_cast<LCSCReader::mCSCEvents>(intEvent->data);
+        std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(value);
+        ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
-
-        if (value == LCSCReader::mCSCEvents::sBLUploadSuccess)
-        {
-            operation::getInstance()->tProcess.WaitForLCSCReturn.store(false);
-        }
     }
     else
     {
@@ -858,9 +844,16 @@ bool EventHandler::handleUPTCardDetect(const BaseEvent* event)
         }
 
         // Handle the card detect data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status << ", card type : " << card_type << ", card can : " << card_can << ", card balance : " << card_balance;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status << ", card type : " << card_type << ", card can : " << card_can << ", card balance : " << card_balance;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -939,9 +932,16 @@ bool EventHandler::handleUPTPaymentAuto(const BaseEvent* event)
         }
 
         // Handle the payment auto data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status << ", card can : " << card_can << ", card fee : " << card_fee << ", card balance : " << card_balance << ", card reference no : " << card_reference_no << ", card batch no : " << card_batch_no;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status << ", card can : " << card_can << ", card fee : " << card_fee << ", card balance : " << card_balance << ", card reference no : " << card_reference_no << ", card batch no : " << card_batch_no;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1015,9 +1015,16 @@ bool EventHandler::handleUPTDeviceSettlement(const BaseEvent* event)
         }
 
         // Handle the device settlement data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status << ", total amount : " << total_amount << ", total trans count : " << total_trans_count << ", TID : " << TID << ", MID : " << MID;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status << ", total amount : " << total_amount << ", total trans count : " << total_trans_count << ", TID : " << TID << ", MID : " << MID;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1081,9 +1088,16 @@ bool EventHandler::handleUPTRetrieveLastSettlement(const BaseEvent* event)
         }
 
         // Handle the retrieve last settlement data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status << ", total amount : " << total_amount << ", total trans count : " << total_trans_count;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status << ", total amount : " << total_amount << ", total trans count : " << total_trans_count;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1137,9 +1151,16 @@ bool EventHandler::handleUPTDeviceLogon(const BaseEvent* event)
         }
 
         // Handle the device logon data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1193,9 +1214,16 @@ bool EventHandler::handleUPTDeviceStatus(const BaseEvent* event)
         }
 
         // Handle the device status data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1249,9 +1277,16 @@ bool EventHandler::handleUPTDeviceTimeSync(const BaseEvent* event)
         }
 
         // Handle the device time sync data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1305,9 +1340,16 @@ bool EventHandler::handleUPTDeviceTMS(const BaseEvent* event)
         }
 
         // Handle the device TMS data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1361,9 +1403,16 @@ bool EventHandler::handleUPTDeviceReset(const BaseEvent* event)
         }
 
         // Handle the device reset data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
@@ -1417,9 +1466,16 @@ bool EventHandler::handleUPTCommandCancel(const BaseEvent* event)
         }
 
         // Handle the command cancel data
-        std::ostringstream oss;
-        oss << "msg status : " << msg_status;
-        Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SUCCESS))
+        {
+            std::ostringstream oss;
+            oss << "msg status : " << msg_status;
+            Logger::getInstance()->FnLog(oss.str(), eventLogFileName, "EVT");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("msg status : " + std::to_string(msg_status), eventLogFileName, "EVT");
+        }
     }
     else
     {
