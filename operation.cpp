@@ -1893,7 +1893,11 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
 
     if (tEntry.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
     {
-       if (gtStation.iType == tientry)  tEntry.sLPN[i]=LPN;
+        if (gtStation.iType == tientry)
+        {
+            tEntry.sLPN[i]=LPN;
+            SendMsg2Server("90", "," + tEntry.sIUTKNo + "," + tEntry.sCardNo + "," + LPN, "," + "PMS_DVR");
+        }
     }
     else
     {
