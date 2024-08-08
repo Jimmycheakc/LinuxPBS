@@ -11,6 +11,7 @@
 #include "udp.h"
 #include "lpr.h"
 #include "timer.h"
+#include "upt.h"
 
 class operation
 {
@@ -81,6 +82,7 @@ public:
     bool AntennaOK();
     void CheckReader();
     void ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation);
+    void processUPT(Upt::UPT_CMD cmd, const std::string& eventData);
 
     void Openbarrier();
 

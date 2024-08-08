@@ -395,6 +395,12 @@ public:
         INVALID_PARAMETER           = 0x00000003u,
         INCORRECT_FLOW              = 0x00000004u,
 
+        // Self define MSG_STATUS
+        SEND_FAILED                 = 0x00000005u,
+        ACK_TIMEOUT                 = 0x00000006u,
+        RSP_TIMEOUT                 = 0x00000007u,
+        PARSE_FAILED                = 0x00000008u,
+
         // Msg Status
         MSG_INTEGRITY_FAILED        = 0x10000000u,
         MSG_TYPE_NOT_SUPPORTED      = 0x10000001u,
@@ -636,8 +642,6 @@ public:
         SENDING_REQUEST_ASYNC,
         WAITING_FOR_ACK,
         WAITING_FOR_RESPONSE,
-        DEVICE_STATUS_REQUEST,
-        RETRIEVE_LAST_TRANSACTION_STATUS,
         CANCEL_COMMAND_REQUEST,
         STATE_COUNT
     };
@@ -697,6 +701,9 @@ public:
     void FnUptSendDeviceCancelCommandRequest();
     void FnUptSendDeviceRetrieveNETSLastTransactionStatusRequest();
 
+    void FnUptSendDeviceNCCTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num);
+    void FnUptSendDeviceNFPTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num);
+
     void FnUptClose();
 
 
@@ -731,7 +738,6 @@ private:
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     boost::asio::deadline_timer ackTimer_;
     boost::asio::deadline_timer rspTimer_;
-    boost::asio::deadline_timer pendingRspTimer_;
     boost::asio::deadline_timer serialWriteDelayTimer_;
     std::atomic<bool> ackRecv_;
     std::atomic<bool> rspRecv_;
@@ -740,8 +746,10 @@ private:
     std::thread ioContextThread_;
     std::mutex cmdQueueMutex_;
     std::deque<CommandWithData> commandQueue_;
+    UPT_CMD currentCmd;
     static uint32_t sequenceNo_;
     static std::mutex sequenceNoMutex_;
+    static std::mutex currentCmdMutex_;
     std::array<uint8_t, 1024> readBuffer_;
     std::queue<std::vector<uint8_t>> writeQueue_;
     bool write_in_progress_;
@@ -756,6 +764,8 @@ private:
     void incrementSequenceNo();
     void setSequenceNo(uint32_t sequenceNo);
     uint32_t getSequenceNo();
+    void setCurrentCmd(UPT_CMD cmd);
+    UPT_CMD getCurrentCmd();
     void enqueueCommand(UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
     void enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
     void popFromCommandQueueAndEnqueueWrite();
@@ -767,24 +777,21 @@ private:
     void handleSendingRequestAsyncState(EVENT event);
     void handleWaitingForAckState(EVENT event);
     void handleWaitingForResponseState(EVENT event);
-    void handleDeviceStatusRequestState(EVENT event);
-    void handleRetrieveLastTransactionStatusState(EVENT event);
     void handleCancelCommandRequestState(EVENT event);
     void startAckTimer();
     void startResponseTimer();
-    void startPendingResponseTimer();
     bool checkCmd(UPT_CMD cmd);
     std::vector<uint8_t> prepareCmd(UPT_CMD cmd, std::shared_ptr<void> payloadData);
     PayloadField createPayload(uint32_t length, uint16_t payloadFieldId, uint8_t fieldReserve, uint8_t fieldEncoding, const std::vector<uint8_t>& fieldData);
     void handleAckTimeout(const boost::system::error_code& error);
     void handleCmdResponseTimeout(const boost::system::error_code& error);
-    void handleCmdPendingResponseTimeout(const boost::system::error_code& error);
     void handleReceivedCmd(const std::vector<uint8_t>& dataBuff);
     void handleCmdResponse(const Message& msg);
     std::vector<SettlementPayloadRow> findReceivedSettlementPayloadData(const std::vector<PayloadField>& payloads);
     std::string findReceivedPayloadData(const std::vector<PayloadField>& payloads, uint16_t payloadFieldId);
     bool isRxResponseComplete(const std::vector<uint8_t>& dataBuff);
     bool isMsgStatusValid(uint32_t msgStatus);
+    void handleCmdErrorOrTimeout(UPT_CMD cmd, MSG_STATUS msgStatus);
 
     // Serial read and write
     void resetRxBuffer();

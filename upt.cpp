@@ -1131,6 +1131,7 @@ Upt* Upt::upt_;
 std::mutex Upt::mutex_;
 uint32_t Upt::sequenceNo_ = 0;
 std::mutex Upt::sequenceNoMutex_;
+std::mutex Upt::currentCmdMutex_;
 
 Upt::Upt()
     : ioContext_(),
@@ -1138,11 +1139,11 @@ Upt::Upt()
     work_(ioContext_),
     ackTimer_(ioContext_),
     rspTimer_(ioContext_),
-    pendingRspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
     ackRecv_(false),
     rspRecv_(false),
     pendingRspRecv_(false),
+    currentCmd(Upt::UPT_CMD::DEVICE_STATUS_REQUEST),
     write_in_progress_(false),
     rxState_(Upt::RX_STATE::RX_START),
     currentState_(Upt::STATE::IDLE),
@@ -1189,6 +1190,13 @@ void Upt::FnUptInit(unsigned int baudRate, const std::string& comPortName)
         {
             ss << "UPOS Terminal initialization failed.";
         }
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+    }
+    catch (const boost::system::system_error& e)
+    {
+        std::stringstream ss;
+        ss << "Exception during UPOS Terminal initialization: " << e.what();
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
     }
@@ -1248,6 +1256,20 @@ uint32_t Upt::getSequenceNo()
     std::unique_lock<std::mutex> lock(sequenceNoMutex_);
 
     return sequenceNo_;
+}
+
+void Upt::setCurrentCmd(Upt::UPT_CMD cmd)
+{
+    std::unique_lock<std::mutex> lock(currentCmdMutex_);
+
+    currentCmd = cmd;
+}
+
+Upt::UPT_CMD Upt::getCurrentCmd()
+{
+    std::unique_lock<std::mutex> lock(currentCmdMutex_);
+
+    return currentCmd;
 }
 
 std::string Upt::getCommandString(Upt::UPT_CMD cmd)
@@ -2993,6 +3015,18 @@ void Upt::FnUptSendDeviceAutoPaymentRequest(uint32_t amount, const std::string& 
     enqueueCommand(UPT_CMD::PAYMENT_MODE_AUTO_REQUEST, req_data);
 }
 
+void Upt::FnUptSendDeviceNCCTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num)
+{
+    std::shared_ptr<void> req_data = std::make_shared<CommandTopUpRequestData>(CommandTopUpRequestData{amount, mer_ref_num});
+    enqueueCommand(UPT_CMD::TOP_UP_NETS_NCC_BY_NETS_EFT_REQUEST, req_data);
+}
+
+void Upt::FnUptSendDeviceNFPTopUpCommandRequest(uint32_t amount, const std::string& mer_ref_num)
+{
+    std::shared_ptr<void> req_data = std::make_shared<CommandTopUpRequestData>(CommandTopUpRequestData{amount, mer_ref_num});
+    enqueueCommand(UPT_CMD::TOP_UP_NETS_NFP_BY_NETS_EFT_REQUEST, req_data);
+}
+
 void Upt::FnUptSendDeviceCancelCommandRequest()
 {
     processEvent(EVENT::CANCEL_COMMAND);
@@ -3020,33 +3054,8 @@ const Upt::StateTransition Upt::stateTransitionTable[static_cast<int>(STATE::STA
     {STATE::WAITING_FOR_RESPONSE,
     {
         {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleWaitingForResponseState           , STATE::IDLE                               },
-        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleWaitingForResponseState           , STATE::DEVICE_STATUS_REQUEST              },
+        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleWaitingForResponseState           , STATE::IDLE                               },
         {EVENT::CANCEL_COMMAND                                  , &Upt::handleWaitingForResponseState           , STATE::CANCEL_COMMAND_REQUEST             }
-    }},
-    {STATE::DEVICE_STATUS_REQUEST,
-    {
-        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
-        {EVENT::WRITE_COMPLETED                                 , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
-        {EVENT::WRITE_FAILED                                    , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
-        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
-        {EVENT::ACK_TIMEOUT                                     , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
-        {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleDeviceStatusRequestState          , STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
-        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
-        {EVENT::START_PENDING_RESPONSE_TIMER                    , &Upt::handleDeviceStatusRequestState          , STATE::DEVICE_STATUS_REQUEST              },
-        {EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED   , &Upt::handleDeviceStatusRequestState          , STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
-        {EVENT::PENDING_RESPONSE_TIMER_TIMEOUT                  , &Upt::handleDeviceStatusRequestState          , STATE::IDLE                               },
-        {EVENT::CANCEL_COMMAND                                  , &Upt::handleDeviceStatusRequestState          , STATE::CANCEL_COMMAND_REQUEST             }
-    }},
-    {STATE::RETRIEVE_LAST_TRANSACTION_STATUS,
-    {
-        {EVENT::COMMAND_ENQUEUED                                , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
-        {EVENT::WRITE_COMPLETED                                 , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
-        {EVENT::WRITE_FAILED                                    , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
-        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &Upt::handleRetrieveLastTransactionStatusState, STATE::RETRIEVE_LAST_TRANSACTION_STATUS   },
-        {EVENT::ACK_TIMEOUT                                     , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
-        {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
-        {EVENT::RESPONSE_TIMEOUT                                , &Upt::handleRetrieveLastTransactionStatusState, STATE::IDLE                               },
-        {EVENT::CANCEL_COMMAND                                  , &Upt::handleRetrieveLastTransactionStatusState, STATE::CANCEL_COMMAND_REQUEST             }
     }},
     {STATE::CANCEL_COMMAND_REQUEST,
     {
@@ -3151,16 +3160,6 @@ std::string Upt::stateToString(STATE state)
             stateStr = "WAITING_FOR_RESPONSE";
             break;
         }
-        case STATE::DEVICE_STATUS_REQUEST:
-        {
-            stateStr = "DEVICE_STATUS_REQUEST";
-            break;
-        }
-        case STATE::RETRIEVE_LAST_TRANSACTION_STATUS:
-        {
-            stateStr = "RETRIEVE_LAST_TRANSACTION_STATUS";
-            break;
-        }
         case STATE::CANCEL_COMMAND_REQUEST:
         {
             stateStr = "CANCEL_COMMAND_REQUEST";
@@ -3244,6 +3243,7 @@ void Upt::popFromCommandQueueAndEnqueueWrite()
         pendingRspRecv_.store(false);
         CommandWithData cmdData = commandQueue_.front();
         commandQueue_.pop_front();
+        setCurrentCmd(cmdData.cmd);
         enqueueWrite(prepareCmd(cmdData.cmd, cmdData.data));
     }
 }
@@ -3276,6 +3276,7 @@ void Upt::handleSendingRequestAsyncState(EVENT event)
     else if (event == EVENT::WRITE_FAILED)
     {
         Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+        handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::SEND_FAILED);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
@@ -3296,6 +3297,7 @@ void Upt::handleWaitingForAckState(EVENT event)
     else if (event == EVENT::ACK_TIMEOUT)
     {
         Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
+        handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::ACK_TIMEOUT);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
@@ -3314,116 +3316,12 @@ void Upt::handleWaitingForResponseState(EVENT event)
     }
     else if (event == EVENT::RESPONSE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Response Timer Timeout. Start pending response timer.", logFileName_, "UPT");
-        // Send the device status request command
-        enqueueCommandToFront(UPT_CMD::DEVICE_STATUS_REQUEST);
+        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
+        handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::RSP_TIMEOUT);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
         Logger::getInstance()->FnLog("Received cancel command event in Waiting For Response State.", logFileName_, "UPT");
-        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
-    }
-}
-
-void Upt::handleDeviceStatusRequestState(EVENT event)
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    if (event == EVENT::COMMAND_ENQUEUED)
-    {
-        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
-        popFromCommandQueueAndEnqueueWrite();
-    }
-    else if (event == EVENT::WRITE_COMPLETED)
-    {
-        Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
-        startAckTimer();
-    }
-    else if (event == EVENT::WRITE_FAILED)
-    {
-        Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
-    {
-        Logger::getInstance()->FnLog("ACK Received. Start receiving response.", logFileName_, "UPT");
-        startResponseTimer();
-    }
-    else if (event == EVENT::ACK_TIMEOUT)
-    {
-        Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
-    {
-        Logger::getInstance()->FnLog("Response Received.", logFileName_, "UPT");
-        // Send retrieve last transaction status request
-        std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::NETS});
-        enqueueCommandToFront(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
-    }
-    else if (event == EVENT::RESPONSE_TIMEOUT)
-    {
-        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::START_PENDING_RESPONSE_TIMER)
-    {
-        Logger::getInstance()->FnLog("Start pending response timer.", logFileName_, "UPT");
-        startPendingResponseTimer();
-    }
-    else if (event == EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
-    {
-        Logger::getInstance()->FnLog("Pending Response Received.", logFileName_, "UPT");
-        // Send retrieve last transaction status request
-        std::shared_ptr<void> req_data = std::make_shared<CommandRetrieveLastTransactionStatusRequestData>(CommandRetrieveLastTransactionStatusRequestData{HOST_ID::NETS});
-        enqueueCommandToFront(UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST, req_data);
-    }
-    else if (event == EVENT::PENDING_RESPONSE_TIMER_TIMEOUT)
-    {
-        Logger::getInstance()->FnLog("Pending Response Timer Timeout.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::CANCEL_COMMAND)
-    {
-        Logger::getInstance()->FnLog("Received cancel command event in Device Status Request State.", logFileName_, "UPT");
-        processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
-    }
-}
-
-void Upt::handleRetrieveLastTransactionStatusState(EVENT event)
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    if (event == EVENT::COMMAND_ENQUEUED)
-    {
-        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
-        popFromCommandQueueAndEnqueueWrite();
-    }
-    else if (event == EVENT::WRITE_COMPLETED)
-    {
-        Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
-        startAckTimer();
-    }
-    else if (event == EVENT::WRITE_FAILED)
-    {
-        Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
-    {
-        Logger::getInstance()->FnLog("ACK Received. Start receiving response.", logFileName_, "UPT");
-        startResponseTimer();
-    }
-    else if (event == EVENT::ACK_TIMEOUT)
-    {
-        Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
-    {
-        Logger::getInstance()->FnLog("Response Received.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::RESPONSE_TIMEOUT)
-    {
-        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
-    }
-    else if (event == EVENT::CANCEL_COMMAND)
-    {
-        Logger::getInstance()->FnLog("Received cancel command event in Retrieve Last Transaction Status State.", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
@@ -3437,7 +3335,6 @@ void Upt::handleCancelCommandRequestState(EVENT event)
         Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
         ackTimer_.cancel();
         rspTimer_.cancel();
-        pendingRspTimer_.cancel();
         processEvent(EVENT::CANCEL_COMMAND);
     }
 }
@@ -3490,15 +3387,7 @@ void Upt::handleCmdResponseTimeout(const boost::system::error_code& error)
         if (rspRecv_.load())
         {
             rspRecv_.store(false);
-            if (pendingRspRecv_.load())
-            {
-                pendingRspRecv_.store(false);
-                processEvent(EVENT::START_PENDING_RESPONSE_TIMER);
-            }
-            else
-            {
-                processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
-            }
+            processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
         }
         else
         {
@@ -3511,38 +3400,6 @@ void Upt::handleCmdResponseTimeout(const boost::system::error_code& error)
         oss << "Response Timer error: " << error.message();
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
         processEvent(EVENT::RESPONSE_TIMEOUT);
-    }
-}
-
-void Upt::startPendingResponseTimer()
-{
-    rspTimer_.expires_from_now(boost::posix_time::seconds(60));
-    rspTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&Upt::handleCmdPendingResponseTimeout, this, std::placeholders::_1)));
-}
-
-void Upt::handleCmdPendingResponseTimeout(const boost::system::error_code& error)
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    if (!error || (error == boost::asio::error::operation_aborted))
-    {
-        if (rspRecv_.load())
-        {
-            rspRecv_.store(false);
-            processEvent(EVENT::PENDING_RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
-        }
-        else
-        {
-            processEvent(EVENT::PENDING_RESPONSE_TIMER_TIMEOUT);
-        }
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Pending Response Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-        processEvent(EVENT::PENDING_RESPONSE_TIMER_TIMEOUT);
     }
 }
 
@@ -3879,12 +3736,76 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
         // TOP-UP API
         case UPT_CMD::TOP_UP_NETS_NCC_BY_NETS_EFT_REQUEST:
         {
-            // To be Implement
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_TOPUP)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_TOPUP_NCC)));
+
+            // Payload
+            std::vector<uint8_t> paymentType = {0x80, 0x00};   // Top Up [Top up NETS NCC by NETS EFT]
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+
+            auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
+
+            std::vector<uint8_t> amount(4, 0x00);
+            if (fieldData)
+            {
+                amount = Common::getInstance()->FnConvertUint32ToVector(fieldData->amount);
+            }
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+
+            std::vector<uint8_t> mer_ref_num(12, 0x00);
+            if (fieldData)
+            {
+                mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
+            }
+
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+
+            std::vector<uint8_t> receipt = {0x01};
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+
+            std::vector<uint8_t> paddingBytes(5, 0x00);
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            // End of Payload
+
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
         case UPT_CMD::TOP_UP_NETS_NFP_BY_NETS_EFT_REQUEST:
         {
-            // To be Implement
+            msg.setHeaderMsgType(htole32(static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_TOPUP)));
+            msg.setHeaderMsgCode(htole32(static_cast<uint32_t>(MSG_CODE::MSG_CODE_TOPUP_NFP)));
+
+            // Payload
+            std::vector<uint8_t> paymentType = {0x81, 0x00};   // Top Up [Top up NETS NFP by NETS EFT]
+            msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
+
+            auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
+
+            std::vector<uint8_t> amount(4, 0x00);
+            if (fieldData)
+            {
+                amount = Common::getInstance()->FnConvertUint32ToVector(fieldData->amount);
+            }
+            msg.addPayload(createPayload(0x0000000C, static_cast<uint16_t>(FIELD_ID::ID_TXN_AMOUNT), 0x00, 0x38, amount));
+
+            std::vector<uint8_t> mer_ref_num(12, 0x00);
+            if (fieldData)
+            {
+                mer_ref_num = Common::getInstance()->FnConvertAsciiToUint8Vector(fieldData->mer_ref_num);
+            }
+
+            msg.addPayload(createPayload(0x00000014, static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM), 0x00, 0x31, mer_ref_num));
+
+            std::vector<uint8_t> receipt = {0x01};
+            msg.addPayload(createPayload(0x00000009, static_cast<uint16_t>(FIELD_ID::ID_TXN_RECEIPT_REQUIRED), 0x00, 0x38, receipt));
+
+            std::vector<uint8_t> paddingBytes(5, 0x00);
+            msg.addPayload(createPayload(0x0000000D, static_cast<uint16_t>(FIELD_ID::ID_PADDING), 0x00, 0x33, paddingBytes));
+            // End of Payload
+
+            msg.setHeaderIntegrityCRC32(htole32(msg.FnCalculateIntegrityCRC32()));
+            msg.setHeaderLength(htole32(128));
             break;
         }
 
@@ -4621,17 +4542,7 @@ void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
                 // Log the response if received the response
                 Logger::getInstance()->FnLog(msg.FnGetMsgOutputLogString(msgDataBuff), logFileName_, "UPT");
 
-                // Check the received response status
-                if (msg.getHeaderMsgStatus() == static_cast<uint32_t>(MSG_STATUS::PENDING))
-                {
-                    pendingRspRecv_.store(true);
-                }
-                else
-                {
-                    handleCmdResponse(msg);
-                    pendingRspRecv_.store(false);
-                }
-
+                handleCmdResponse(msg);
                 rspRecv_.store(true);
                 rspTimer_.cancel();
             }
@@ -4651,6 +4562,235 @@ void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
         else
         {
             Logger::getInstance()->FnLog("Ack or Rsp message sequence number incorrect.", logFileName_, "UPT");
+        }
+    }
+}
+
+void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    switch (cmd)
+    {
+        case UPT_CMD::DEVICE_STATUS_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceStatus", oss.str());
+            break;
+        }
+        case UPT_CMD::DEVICE_RESET_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceReset", oss.str());
+            break;
+        }
+        case UPT_CMD::DEVICE_TIME_SYNC_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTimeSync", oss.str());
+            break;
+        }
+        case UPT_CMD::DEVICE_PROFILE_REQUEST:
+        {
+            // To be implemented
+            break;
+        }
+        case UPT_CMD::DEVICE_SOF_LIST_REQUEST:
+        {
+            // To be implemented
+            break;
+        }
+        case UPT_CMD::DEVICE_SOF_SET_PRIORITY_REQUEST:
+        {
+            // To be implemented
+            break;
+        }
+        case UPT_CMD::DEVICE_LOGON_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceLogon", oss.str());
+            break;
+        }
+        case UPT_CMD::DEVICE_TMS_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTMS", oss.str());
+            break;
+        }
+        case UPT_CMD::DEVICE_SETTLEMENT_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceSettlement", oss.str());
+            break;
+        }
+        case UPT_CMD::DEVICE_PRE_SETTLEMENT_REQUEST:
+        {
+            // To be implemented
+            break;
+        }
+        case UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::DEVICE_RETRIEVE_LAST_TRANSACTION_STATUS_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::DEVICE_RETRIEVE_LAST_SETTLEMENT_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTRetrieveLastSettlement", oss.str());
+            break;
+        }
+        case UPT_CMD::MUTUAL_AUTHENTICATION_STEP_1_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::MUTUAL_AUTHENTICATION_STEP_2_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::CARD_DETECT_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCardDetect", oss.str());
+            break;
+        }
+        case UPT_CMD::CARD_DETAIL_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::CARD_HISTORICAL_LOG_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_AUTO_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTPaymentAuto", oss.str());
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_EFT_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_EFT_NETS_QR_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_BCA_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_CREDIT_CARD_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_NCC_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_NFP_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PAYMENT_MODE_EZ_LINK_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PRE_AUTHORIZATION_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::PRE_AUTHORIZATION_COMPLETION_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::INSTALLATION_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::VOID_PAYMENT_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::REFUND_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::CANCEL_COMMAND_REQUEST:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCommandCancel", oss.str());
+            break;
+        }
+        case UPT_CMD::TOP_UP_NETS_NCC_BY_NETS_EFT_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::TOP_UP_NETS_NFP_BY_NETS_EFT_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::CASE_DEPOSIT_REQUEST:
+        {
+           // To be implemented
+            break;
+        }
+        case UPT_CMD::UOB_REQUEST:
+        {
+           // To be implemented
+            break;
         }
     }
 }
