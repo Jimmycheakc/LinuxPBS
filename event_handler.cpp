@@ -29,6 +29,9 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleLcscReaderLogout"            ,std::bind(&EventHandler::handleLcscReaderLogout           ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderGetCardID"         ,std::bind(&EventHandler::handleLcscReaderGetCardID        ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderGetCardBalance"    ,std::bind(&EventHandler::handleLcscReaderGetCardBalance   ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardDeduct"     ,std::bind(&EventHandler::handleLcscReaderGetCardDeduct    ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardRecord"     ,std::bind(&EventHandler::handleLcscReaderGetCardRecord    ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLcscReaderGetCardFlush"      ,std::bind(&EventHandler::handleLcscReaderGetCardFlush     ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderGetTime"           ,std::bind(&EventHandler::handleLcscReaderGetTime          ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderSetTime"           ,std::bind(&EventHandler::handleLcscReaderSetTime          ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile    ,eventHandler_, std::placeholders::_1) },
@@ -322,6 +325,84 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
 }
 
 bool EventHandler::handleLcscReaderGetCardBalance(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::string value = strEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderGetCardDeduct(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::string value = strEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderGetCardRecord(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::string value = strEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleLcscReaderGetCardFlush(const BaseEvent* event)
 {
     bool ret = true;
 

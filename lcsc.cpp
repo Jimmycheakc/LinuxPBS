@@ -226,7 +226,8 @@ LCSCReader::LCSCReader()
     LastCDUploadDate_(0),
     LastCDUploadTime_(0),
     uploadLcscFileName_(""),
-    currentUploadLcscFilesState_(LCSCReader::UPLOAD_LCSC_FILES_STATE::IDLE)
+    currentUploadLcscFilesState_(LCSCReader::UPLOAD_LCSC_FILES_STATE::IDLE),
+    lastDebitTime_("")
 {
     resetRxBuffer();
     
@@ -791,6 +792,21 @@ std::string LCSCReader::getEventStringFromResponseCmdType(uint8_t respType)
             retStr = "Evt_handleLcscReaderGetCardBalance";
             break;
         }
+        case LCSC_CMD_TYPE::CARD_DEDUCT:
+        {
+            retStr = "Evt_handleLcscReaderGetCardDeduct";
+            break;
+        }
+        case LCSC_CMD_TYPE::CARD_RECORD:
+        {
+            retStr = "Evt_handleLcscReaderGetCardRecord";
+            break;
+        }
+        case LCSC_CMD_TYPE::CARD_FLUSH:
+        {
+            retStr = "Evt_handleLcscReaderGetCardFlush";
+            break;
+        }
         case LCSC_CMD_TYPE::CLK_SET:
         {
             retStr = "Evt_handleLcscReaderSetTime";
@@ -1236,6 +1252,7 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             payload.push_back(((epochSeconds >> 16) & 0xFF));
             payload.push_back(((epochSeconds >> 8) & 0xFF));
             payload.push_back((epochSeconds & 0xFF));
+            lastDebitTime_ = Common::getInstance()->FnFormatEpochTime(epochSeconds);
             // Payload field - Carpark ID
             payload.push_back(0x00);
             payload.push_back(0x00);
@@ -1245,6 +1262,8 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
         }
         case LCSC_CMD::CARD_RECORD:
         {
+            msg.setType(static_cast<uint8_t>(LCSC_CMD_TYPE::CARD_RECORD));
+            msg.setLength(0x0006);
             break;
         }
         case LCSC_CMD::CARD_FLUSH:
@@ -1780,17 +1799,6 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sLoginSuccess));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    //FnSendGetCardBalance();
-                    //FnSendGetCardIDCmd();
-                    //FnSendSetTime();
-                    //FnSendGetTime();
-                    //FnSendGetStatusCmd();
-                    //FnSendGetLogoutCmd();
-                    //FnSendUploadCFGFile("/home/root/carpark/LTA/Device_V00B.zip");
-                    //FnSendUploadCILFile("/home/root/carpark/LTA/fut3iss2.sys");
-                    //FnSendUploadBLFile("/home/root/carpark/LTA/netscsc2.blk");
-                    //FnUploadLCSCCDFiles();
-                    FnSendCardDeduct(100);
                     break;
                 }
                 case 0x01:  // Result corrupted cmd
@@ -2050,15 +2058,13 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     std::string seed = "";
                     std::string card_application_num = "";
                     std::string card_serial_num = "";
-                    std::string trans_record_1 = "";
-                    std::string trans_record_1_crc = "";
-                    std::string trans_record_2 = "";
-                    std::string trans_record_2_crc = "";
-                    std::string trp = "";
 
                     seed = Common::getInstance()->FnGetVectorCharToHexString(payload, 1, 4);
                     card_application_num = Common::getInstance()->FnGetVectorCharToHexString(payload, 5, 8);
-                    card_serial_num = Common::getInstance()->FnGetVectorCharToHexString(payload, 13, 32);
+                    card_serial_num.assign(payload.begin() + 13, payload.begin() + 13 + 32);
+
+                    // Process Trans
+                    processTrans(payload);
 
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sGetDeductSuccess));
                     oss << ",seed=" << seed;
@@ -2066,7 +2072,9 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     oss << ",CSN=" << card_serial_num;
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
-                    // To be implement
+                    // Deduct successfully, need to flush card
+                    std::shared_ptr<void> req_data = std::make_shared<uint32_t>(static_cast<uint32_t>(std::stoul(seed, nullptr, 16)));
+                    enqueueCommandToFront(LCSC_CMD::CARD_FLUSH, req_data);
                     break;
                 }
                 case 0x01:  // Result corrupted cmd
@@ -2173,6 +2181,50 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                 }
                 case 0x1e:  // Result configuration file not loaded
                 {
+                    break;
+                }
+            }
+            break;
+        }
+        case 0x23:  // Card Record
+        {
+            switch (payload[0])
+            {
+                case 0x00:  // Result success cmd
+                {
+                    std::string seed = "";
+                    seed = Common::getInstance()->FnGetVectorCharToHexString(payload, 1, 4);
+
+                    // Process Trans
+                    processTrans(payload);
+
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sGetCardRecord));
+                    oss << ",seed=" << seed;
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    break;
+                }
+                case 0x01:  // Result corrupted cmd
+                {
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCorruptedCmd));
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    break;
+                }
+                case 0x02:  // Result incomplete cmd
+                {
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sIncompleteCmd));
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    break;
+                }
+                case 0x03:  // Result unsupported cmd
+                {
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sUnsupportedCmd));
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    break;
+                }
+                case 0x14:  // Result last transaction record not available
+                {
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sNoLastTrans));
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                     break;
                 }
             }
@@ -2583,17 +2635,29 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
         }
         case LCSC_CMD::CARD_DEDUCT:
         {
-            // To be implemented
+            std::ostringstream oss;
+            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+            EventManager::getInstance()->FnEnqueueEvent("handleLcscReaderGetCardDeduct", oss.str());
             break;
         }
         case LCSC_CMD::CARD_RECORD:
         {
-            // To be implemented
+            std::ostringstream oss;
+            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+            EventManager::getInstance()->FnEnqueueEvent("handleLcscReaderGetCardRecord", oss.str());
             break;
         }
         case LCSC_CMD::CARD_FLUSH:
         {
-            // To be implemented
+            std::ostringstream oss;
+            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+            EventManager::getInstance()->FnEnqueueEvent("handleLcscReaderGetCardFlush", oss.str());
             break;
         }
         case LCSC_CMD::GET_TIME:
@@ -2658,12 +2722,11 @@ void LCSCReader::FnSendGetStatusCmd()
     enqueueCommand(LCSC_CMD::GET_STATUS_CMD);
 }
 
-int LCSCReader::FnSendGetLoginCmd()
+void LCSCReader::FnSendGetLoginCmd()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
     enqueueCommand(LCSC_CMD::LOGIN_1);
-    return 0;
 }
 
 void LCSCReader::FnSendGetLogoutCmd()
@@ -2693,6 +2756,13 @@ void LCSCReader::FnSendCardDeduct(uint32_t amount)
 {
     std::shared_ptr<void> req_data = std::make_shared<uint32_t>(amount);
     enqueueCommand(LCSC_CMD::CARD_DEDUCT, req_data);
+}
+
+void LCSCReader::FnSendCardRecord()
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    enqueueCommand(LCSC_CMD::CARD_RECORD);
 }
 
 void LCSCReader::FnSendCardFlush(uint32_t seed)
@@ -3691,4 +3761,187 @@ void LCSCReader::FnUploadCDFile2(std::string path)
             // Temp: Need to implement update FW
         }
     }
+}
+
+void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    // Transaction Record 1
+    std::vector<uint8_t> transRecordVec1;
+    std::string transRecord1 = "";
+    std::string can = "";
+    std::string lastTransHeader = "";
+    std::string lastCreditTransTRP = "";
+    std::string balanceBeforeTrans = "";
+    std::string badDebtCounter = "";
+    std::string MAC1 = "";
+    std::string transAmt = "";
+
+    transRecordVec1.assign(payload.begin() + 45, payload.begin() + 45 + 30);
+    transRecord1 = Common::getInstance()->FnVectorUint8ToBinaryString(transRecordVec1);
+    can = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(10, 64));
+    lastTransHeader = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(74, 64));
+    lastCreditTransTRP = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(138, 32));
+    balanceBeforeTrans = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(171, 24));
+    badDebtCounter = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(195, 8));
+    MAC1 = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(208, 32));
+
+    // Transaction Record 2
+    std::vector<uint8_t> transRecordVec2;
+    std::string transRecord2 = "";
+    std::string transStatus = "";
+    std::string autoLoadAmt = "";
+    std::string counter = "";
+    std::string signedCert = "";
+    std::string balanceAfterTrans = "";
+    std::string lastTransDebitOp = "";
+
+    transRecordVec2.assign(payload.begin() + 77, payload.begin() + 77 + 30);
+    transRecord2 = Common::getInstance()->FnVectorUint8ToBinaryString(transRecordVec2);
+    transStatus = Common::getInstance()->FnConvertBinaryStringToString("000" + transRecord2.substr(2, 5));
+    autoLoadAmt = Common::getInstance()->FnConvertBinaryStringToString(transRecord2.substr(16, 24));
+    counter = Common::getInstance()->FnConvertBinaryStringToString(transRecord2.substr(40, 64));
+    signedCert = Common::getInstance()->FnConvertBinaryStringToString(transRecord2.substr(104, 64));
+    balanceAfterTrans = Common::getInstance()->FnConvertBinaryStringToString(transRecord2.substr(168, 24));
+    lastTransDebitOp = Common::getInstance()->FnConvertBinaryStringToString(transRecord2.substr(192, 8));
+
+    // TRP
+    std::vector<uint8_t> TRPVec;
+    TRPVec.assign(payload.begin() + 109, payload.begin() + 109 + 4);
+
+    uint32_t amt = 0;
+    if (Common::getInstance()->FnConvertStringToHexString(transStatus) == "05")
+    {
+        amt = Common::getInstance()->FnConvertStringToDecimal(balanceBeforeTrans) - Common::getInstance()->FnConvertStringToDecimal(balanceAfterTrans) + Common::getInstance()->FnConvertStringToDecimal(autoLoadAmt);
+    }
+    else
+    {
+        amt = Common::getInstance()->FnConvertStringToDecimal(balanceBeforeTrans) - Common::getInstance()->FnConvertStringToDecimal(balanceAfterTrans);
+    }
+
+    transAmt = Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnPadLeft0_Uint32(6, amt));
+    balanceBeforeTrans = Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnPadLeft0_Uint32(6, Common::getInstance()->FnConvertStringToDecimal(balanceBeforeTrans)));
+    balanceAfterTrans = Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnPadLeft0_Uint32(6, Common::getInstance()->FnConvertStringToDecimal(balanceAfterTrans)));
+    autoLoadAmt = Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnPadLeft0_Uint32(6, Common::getInstance()->FnConvertStringToDecimal(autoLoadAmt)));
+
+    if (lastDebitTime_.empty())
+    {
+        lastDebitTime_ = Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+    }
+
+    std::string transRecord = "D" + can + '\t' + Common::getInstance()->FnConvertuint8ToString(TRPVec.back()) + transAmt + Common::getInstance()->FnConvertHexStringToString(lastDebitTime_);
+
+    for (int i = 0; i < 7; i++)
+    {
+        transRecord += '\0';
+    }
+
+    transRecord = transRecord + signedCert + counter + Common::getInstance()->FnConvertVectorUint8ToString(TRPVec)
+                    + balanceAfterTrans + lastCreditTransTRP + lastTransHeader + lastTransDebitOp + balanceBeforeTrans
+                    + badDebtCounter + autoLoadAmt + transStatus;
+
+    for (int i = 0; i < 13; i++)
+    {
+        transRecord += static_cast<char>(0xFF);
+    }
+
+    transRecord += std::string(3, static_cast<char>(0));
+
+    for (int i = 0; i < 8; i++)
+    {
+        transRecord += static_cast<char>(0xFF);
+    }
+
+    for (int i = 0; i < 13; i++)
+    {
+        transRecord += static_cast<char>(0);
+    }
+
+    transRecord += MAC1;
+
+    for (int i = 0; i < 4; i++)
+    {
+        transRecord += static_cast<char>(0);
+    }
+
+    transRecord += std::string(3, static_cast<char>(0x20));
+
+    writeLCSCTrans(transRecord);
+}
+
+void LCSCReader::writeLCSCTrans(const std::string& data)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    std::string settleFile = "";
+    std::string remoteSettleFile = "";
+    std::string detail = "";
+    std::string header = "";
+    std::string fileName = "";
+
+    if (!(boost::filesystem::exists(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
+    {
+        std::ostringstream oss;
+        oss << "Settle folder: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH << " Not Found, Create it.";
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+        if (!(boost::filesystem::create_directories(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
+        {
+            std::ostringstream oss;
+            oss << "Failed to create directory: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH;
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        }
+    }
+
+    fileName = operation::getInstance()->tParas.gsCPOID + "_" + operation::getInstance()->tParas.gsCPID + "_"
+                + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd() + "_" + Common::getInstance()->FnPadLeft0(2, operation::getInstance()->gtStation.iSID)
+                + Common::getInstance()->FnGetDateTimeFormat_hh() + ".lcs";
+    settleFile = LOCAL_LCSC_SETTLEMENT_FOLDER_PATH + "/" + fileName;
+
+    detail = data;
+
+    // Write to local
+    Logger::getInstance()->FnLog("Write settlement to local.", logFileName_, "LCSC");
+
+    std::fstream file;
+    file.open(settleFile, std::ios::in | std::ios::binary);
+    if (!file.is_open())
+    {
+        // File does not exist, create and write
+        file.clear();
+        file.open(settleFile, std::ios::out | std::ios::binary);
+        if (!file.is_open())
+        {
+            Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
+            Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
+            return;
+        }
+
+        // Create header
+        header = "H" + operation::getInstance()->tParas.gsCPID + Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()) + Common::getInstance()->FnPadLeftSpace(40, fileName);
+        header.append(67, ' '); // Padding with 67 spaces
+
+        // Write the header and detail to the file
+        file.write(header.c_str(), header.size());
+        file.write(detail.c_str(), detail.size());
+    }
+    else
+    {
+        // File exists, append the details
+        file.close();
+        file.open(settleFile, std::ios::out | std::ios::binary);
+        if (!file.is_open())
+        {
+            Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
+            Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
+            return;
+        }
+
+        // Now to the end of file and append the details
+        file.seekp(0, std::ios::end);
+        file.write(detail.c_str(), detail.size());
+    }
+
+    file.close();
 }

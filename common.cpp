@@ -1,3 +1,4 @@
+#include <bitset>
 #include <chrono>
 #include <ctime>
 #include <cctype>
@@ -59,6 +60,18 @@ std::string Common::FnGetDateTimeFormat_ddmmyyy_hhmmss()
     return oss.str();
 }
 
+std::string Common::FnGetDateTimeFormat_hh()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%H");
+    return oss.str();
+}
+
 std::string Common::FnGetDateTimeFormat_yyyymm()
 {
     auto now = std::chrono::system_clock::now();
@@ -68,6 +81,18 @@ std::string Common::FnGetDateTimeFormat_yyyymm()
 
     std::ostringstream oss;
     oss << std::put_time(&timeinfo, "%Y%m");
+    return oss.str();
+}
+
+std::string Common::FnGetDateTimeFormat_yyyymmdd()
+{
+    auto now = std::chrono::system_clock::now();
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m%d");
     return oss.str();
 }
 
@@ -128,6 +153,14 @@ std::string Common::FnConvertDateTime(uint32_t seconds)
 
     std::ostringstream oss;
     oss << std::put_time(&timeinfo, "%d/%m/%Y %H:%M:%S %p");
+    return oss.str();
+}
+
+std::string Common::FnFormatEpochTime(std::time_t epochSeconds)
+{
+    std::tm* tm = std::localtime(&epochSeconds);
+    std::ostringstream oss;
+    oss << std::put_time(tm, "%Y%m%d%H%M%S");
     return oss.str();
 }
 
@@ -372,6 +405,23 @@ std::string Common::FnPadLeft0(int width, int count)
     return ss.str();
 }
 
+std::string Common::FnPadLeft0_Uint32(int width, uint32_t count)
+{
+    std::stringstream ss;
+    ss << std::setw(width) << std::setfill('0') << count;
+    return ss.str();
+}
+
+std::string Common::FnPadLeftSpace(int width, const std::string& str)
+{
+    if (str.length() > static_cast<std::size_t>(width))
+    {
+        return str;
+    }
+
+    return std::string(width - str.length(), ' ') + str;
+}
+
 std::vector<uint8_t> Common::FnLittleEndianHexStringToVector(const std::string& hexStr)
 {
     std::vector<uint8_t> result;
@@ -384,6 +434,11 @@ std::vector<uint8_t> Common::FnLittleEndianHexStringToVector(const std::string& 
     }
 
     return result;
+}
+
+std::string Common::FnConvertuint8ToString(uint8_t value)
+{
+    return std::string(1, static_cast<char>(value));
 }
 
 std::string Common::FnConvertuint8ToHexString(uint8_t value)
@@ -601,4 +656,84 @@ std::vector<std::string> Common::FnParseString(std::string str, char c)
     }
 
     return return_vector;
+}
+
+std::string Common::FnVectorUint8ToBinaryString(const std::vector<uint8_t>& vec)
+{
+    std::string binaryString;
+
+    for (const auto& byte : vec)
+    {
+        binaryString += std::bitset<8>(byte).to_string();
+    }
+
+    return binaryString;
+}
+
+std::string Common::FnConvertBinaryStringToString(const std::string& data)
+{
+    std::string sRet;
+
+    // Iterate over the binary string in chunks of 8
+    for (std::size_t i = 0; i < data.length(); i += 8)
+    {
+        std::string byteStr = data.substr(i, 8);
+
+        // Convert the binary string (8 bits) to an unsigned long and then to a character
+        char character = static_cast<char>(std::bitset<8>(byteStr).to_ulong());
+
+        // Append the character to the result string
+        sRet += character;
+    }
+
+    return sRet;
+}
+
+std::string Common::FnConvertStringToHexString(const std::string& data)
+{
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+
+    for (char c : data)
+    {
+        ss << std::setw(2) << static_cast<int>(static_cast<unsigned char>(c));
+    }
+
+    return ss.str();
+}
+
+uint32_t Common::FnConvertStringToDecimal(const std::string& data)
+{
+    uint32_t result = 0;
+
+    for (char c : data)
+    {
+        result = (result << 8) | static_cast<uint8_t>(c);
+    }
+
+    return result;
+}
+
+std::string Common::FnConvertHexStringToString(const std::string& data)
+{
+    std::string result;
+
+    for (std::size_t i = 0; i < data.length(); i += 2)
+    {
+        // Extract two characters (one byte) from hex string
+        std::string byteString = data.substr(i, 2);
+
+        // Convert the hex byte to an integer
+        char byte = static_cast<char>(std::stoi(byteString, nullptr, 16));
+
+        // Append the corresponding character to the result string
+        result += byte;
+    }
+
+    return result;
+}
+
+std::string Common::FnConvertVectorUint8ToString(const std::vector<uint8_t>& data)
+{
+    return std::string(data.begin(), data.end());
 }

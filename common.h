@@ -18,13 +18,16 @@ public:
     void FnLogExecutableInfo(const std::string& str);
     std::string FnGetDateTime();
     std::string FnGetDateTimeFormat_ddmmyyy_hhmmss();
+    std::string FnGetDateTimeFormat_hh();
     std::string FnGetDateTimeFormat_yyyymm();
+    std::string FnGetDateTimeFormat_yyyymmdd();
     std::string FnGetDateTimeFormat_yyyymmddhhmmss();
     std::string FnGetDateTimeFormat_yyyymmdd_hhmmss();
     std::string FnGetDateTimeFormat_yyyymmddhhmm();
     std::string FnGetDateTimeFormat_yymmddhhmmss();
     std::string FeGetDateTimeFormat_VehicleTrans();
     std::string FnConvertDateTime(uint32_t epochSeconds);
+    std::string FnFormatEpochTime(std::time_t epochSeconds);
     std::time_t FnGetEpochSeconds();
     std::string FnGetDateTimeSpace();
     std::string FnGetDate();
@@ -44,11 +47,14 @@ public:
     bool FnIsStringNumeric(const std::string& str);
     std::string FnPadRightSpace(int length, const std::string& str);
     std::string FnPadLeft0(int width, int count);
+    std::string FnPadLeft0_Uint32(int width, uint32_t count);
+    std::string FnPadLeftSpace(int width, const std::string& str);
     template <typename T>
     std::string FnToHexLittleEndianStringWithZeros(T value);
     template <typename T>
     T FnLittleEndianStringToUnsignedInteger(const std::string& littleEndianStr);
     std::vector<uint8_t> FnLittleEndianHexStringToVector(const std::string& hexStr);
+    std::string FnConvertuint8ToString(uint8_t value);
     std::string FnConvertuint8ToHexString(uint8_t value);
     std::string FnConvertVectorUint8ToHexString(const std::vector<uint8_t>& data, bool little_endian = false);
     std::string FnConvertVectorUint8ToBcdString(const std::vector<uint8_t>& data);
@@ -67,6 +73,12 @@ public:
     std::string FnUint32ToString(uint32_t value);
     std::string FnBiteString(std::string& str, char c);
     std::vector<std::string> FnParseString(std::string str, char c);
+    std::string FnVectorUint8ToBinaryString(const std::vector<uint8_t>& vec);
+    std::string FnConvertBinaryStringToString(const std::string& data);
+    std::string FnConvertStringToHexString(const std::string& data);
+    uint32_t FnConvertStringToDecimal(const std::string& data);
+    std::string FnConvertHexStringToString(const std::string& data);
+    std::string FnConvertVectorUint8ToString(const std::vector<uint8_t>& data);
 
     /**
      * Singleton Common should not be cloneable.

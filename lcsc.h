@@ -51,6 +51,7 @@ class LCSCReader
 
 public:
     const std::string LOCAL_LCSC_FOLDER_PATH = "/home/root/carpark/LTA";
+    const std::string LOCAL_LCSC_SETTLEMENT_FOLDER_PATH = "/home/root/carpark/LTA_SETTLEMENT";
 
     enum class mCSCEvents : int
     {
@@ -270,11 +271,12 @@ public:
 
     void FnLCSCReaderStopRead();
     void FnSendGetStatusCmd();
-    int FnSendGetLoginCmd();
+    void FnSendGetLoginCmd();
     void FnSendGetLogoutCmd();
     void FnSendGetCardIDCmd();
     void FnSendGetCardBalance();
     void FnSendCardDeduct(uint32_t amount);
+    void FnSendCardRecord();
     void FnSendCardFlush(uint32_t seed);
     void FnSendGetTime();
     void FnSendSetTime();
@@ -331,6 +333,7 @@ private:
     int LastCDUploadDate_;
     int LastCDUploadTime_;
     std::string uploadLcscFileName_;
+    std::string lastDebitTime_;
     LCSCReader();
     void startIoContextThread();
     void enqueueCommand(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
@@ -382,6 +385,8 @@ private:
     void handleCmdErrorOrTimeout(LCSC_CMD cmd, mCSCEvents eventStatus);
     void setCurrentCmd(LCSC_CMD cmd);
     LCSC_CMD getCurrentCmd();
+    void processTrans(const std::vector<uint8_t>& payload);
+    void writeLCSCTrans(const std::string& data);
 
     // Serial read and write
     void resetRxBuffer();
