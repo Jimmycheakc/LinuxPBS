@@ -53,6 +53,7 @@ set(SOURCE_FILES
     tcp.cpp
     lpr.cpp
     ksm_reader.cpp
+    printer.cpp
     main.cpp
 )
 

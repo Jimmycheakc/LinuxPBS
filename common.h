@@ -34,6 +34,7 @@ public:
     std::string FnGetTime();
     int FnGetCurrentHour();
     int FnGetCurrentDay();
+    bool validateDateTime(const std::string& dateTime);
     uint64_t FnGetSecondsSince1January0000();
     std::string FnConvertSecondsSince1January0000ToDateTime(uint64_t seconds_since_0000);
     std::string FnGetFileName(const std::string& str);
@@ -79,6 +80,7 @@ public:
     uint32_t FnConvertStringToDecimal(const std::string& data);
     std::string FnConvertHexStringToString(const std::string& data);
     std::string FnConvertVectorUint8ToString(const std::vector<uint8_t>& data);
+    std::vector<uint8_t> FnConvertStringToVector(const std::string& str);
 
     /**
      * Singleton Common should not be cloneable.

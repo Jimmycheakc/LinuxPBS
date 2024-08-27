@@ -60,7 +60,10 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleUPTDeviceTimeSync"           ,std::bind(&EventHandler::handleUPTDeviceTimeSync          ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleUPTDeviceTMS"                ,std::bind(&EventHandler::handleUPTDeviceTMS               ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleUPTDeviceReset"              ,std::bind(&EventHandler::handleUPTDeviceReset             ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTCommandCancel"            ,std::bind(&EventHandler::handleUPTCommandCancel           ,eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleUPTCommandCancel"            ,std::bind(&EventHandler::handleUPTCommandCancel           ,eventHandler_, std::placeholders::_1) },
+
+    // Printer Event
+    {   "Evt_handlePrinterStatus"               ,std::bind(&EventHandler::handlePrinterStatus              ,eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -1117,6 +1120,30 @@ bool EventHandler::handleUPTCommandCancel(const BaseEvent* event)
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::CANCEL_COMMAND_REQUEST, strEvent->data);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handlePrinterStatus(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<int>* intEvent = dynamic_cast<const Event<int>*>(event);
+
+    if (intEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << intEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {

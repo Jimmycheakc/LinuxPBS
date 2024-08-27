@@ -24,6 +24,7 @@
 #include "odbc.h"
 #include "structuredata.h"
 #include "operation.h"
+#include "printer.h"
 #include "udp.h"
 
 
@@ -291,6 +292,7 @@ int main (int agrc, char* argv[])
     EventManager::getInstance()->FnStopEventThread();
     Upt::getInstance()->FnUptClose();
     LCSCReader::getInstance()->FnLCSCReaderClose();
+    Printer::getInstance()->FnPrinterClose();
 
     return 0;
 }

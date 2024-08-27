@@ -31,6 +31,7 @@ public:
     struct  tPBSError_struct tPBSError[20];
     struct  tseason_struct tSeason;
     std::vector<struct tVType_Struct> tVType;
+    std::vector<struct tTR_struc> tTR;
 
 
     void OperationInit(io_context& ioContext);

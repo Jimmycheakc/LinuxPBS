@@ -1,3 +1,5 @@
+#include <boost/date_time/gregorian/gregorian.hpp>
+#include <boost/date_time/posix_time/posix_time.hpp>
 #include <bitset>
 #include <chrono>
 #include <ctime>
@@ -233,6 +235,48 @@ int Common::FnGetCurrentDay()
     auto now_time = std::chrono::system_clock::to_time_t(now);
     auto local_now = *std::localtime(&now_time);
     return local_now.tm_mday; // Returns the day of the month (1-31)
+}
+
+bool Common::validateDateTime(const std::string& dateTime)
+{
+    if (dateTime.length() != 14)
+    {
+        return false;
+    }
+
+    std::string yearStr = dateTime.substr(0, 4);
+    std::string monthStr = dateTime.substr(4, 2);
+    std::string dayStr = dateTime.substr(6, 2);
+    std::string hourStr = dateTime.substr(8, 2);
+    std::string minuteStr = dateTime.substr(10, 2);
+    std::string secondStr = dateTime.substr(12, 2);
+
+    try
+    {
+        int year = std::stoi(yearStr);
+        int month = std::stoi(monthStr);
+        int day = std::stoi(dayStr);
+        int hour = std::stoi(hourStr);
+        int minute = std::stoi(minuteStr);
+        int second = std::stoi(secondStr);
+
+        boost::gregorian::date date(year, month, day);
+        if (date.is_not_a_date())
+        {
+            return false;
+        }
+
+        if (hour < 0 || hour >= 24 || minute < 0 || minute >= 60 || second < 0 || second >= 60)
+        {
+            return false;
+        }
+
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 
 uint64_t Common::FnGetSecondsSince1January0000()
@@ -736,4 +780,9 @@ std::string Common::FnConvertHexStringToString(const std::string& data)
 std::string Common::FnConvertVectorUint8ToString(const std::vector<uint8_t>& data)
 {
     return std::string(data.begin(), data.end());
+}
+
+std::vector<uint8_t> Common::FnConvertStringToVector(const std::string& str)
+{
+    return std::vector<uint8_t>(str.begin(), str.end());
 }

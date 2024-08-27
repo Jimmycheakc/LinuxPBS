@@ -92,6 +92,18 @@ CREATE TABLE IF NOT EXISTS Vehicle_type (
     update_dt DATETIME
 );
 
+-- Create TR_mst table in database
+CREATE TABLE IF NOT EXISTS TR_mst (
+    TRType INT NOT NULL DEFAULT 0,
+    Line_no INT NOT NULL DEFAULT 0,
+    Enabled INT DEFAULT 0,
+    LineText VARCHAR(50) DEFAULT NULL,
+    LineVar VARCHAR(10) DEFAULT NULL,
+    LineFont INT DEFAULT 0,
+    LineAlign INT DEFAULT 0,
+    Spare1 VARCHAR(10) DEFAULT NULL
+);
+
 -- Create a new user and grant privileges
 CREATE USER IF NOT EXISTS 'linuxpbs'@'localhost' IDENTIFIED BY 'SJ2001';
 GRANT ALL PRIVILEGES ON linux_pbs.* TO 'linuxpbs'@'localhost';

@@ -57,16 +57,19 @@ public:
     int writeparameter2local(string name,string value);
     int downloadstationsetup();
     int writestationsetup2local(tstation_struct& v);
+    int downloadTR();
+    int writetr2local(int tr_type, int line_no, int enabled, std::string line_text, std::string line_var, int line_font, int line_align);
 
 	
-     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
-	 DBError insertexittrans();
-	 DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
-	 DBError loadmessage();
-	 DBError loadParam();
-	 DBError loadstationsetup();
-     DBError loadcentralDBinfo();
-     DBError loadvehicletype();
+    DBError insertentrytrans(tEntryTrans_Struct& tEntry);
+	DBError insertexittrans();
+	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
+	DBError loadmessage();
+	DBError loadParam();
+	DBError loadstationsetup();
+    DBError loadcentralDBinfo();
+    DBError loadvehicletype();
+    DBError loadTR();
 
     int FnGetVehicleType(std::string IUCode);
     string GetPartialSeasonMsg(int iTransType);

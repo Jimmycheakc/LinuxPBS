@@ -333,6 +333,20 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->m_db->loadstationsetup();
 			break;
 		}
+		case CmdDownloadTR:
+		{
+			operation::getInstance()->writelog("Received data:" + std::string(data, length), "UDP");
+			operation::getInstance()->writelog("download TR", "UDP");
+			int ret = operation::getInstance()->m_db->downloadTR();
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " TR";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
+			operation::getInstance()->m_db->loadTR();
+			break;
+		}
 		case CmdSetLotCount:
 			break;
 		case CmdAvailableLots:

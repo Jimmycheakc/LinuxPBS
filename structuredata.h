@@ -383,6 +383,7 @@ struct  tParas_Struct
 	int giCommPortLCSC;
 	int giCommPortKDEReader;
 	int giCommPortUPOS;
+	int giCommPortPrinter;
 	string gsLocalLCSC;
 	string gsRemoteLCSC;
 	string gsRemoteLCSCBack;
@@ -449,7 +450,6 @@ struct  tParas_Struct
 	int giMaxTransInterval;
 
 
-	//int giCommPortPrinter;
 	//int giCommPortLED2;
 	//string gsSite;
 	//string gsCompany;
@@ -640,4 +640,11 @@ struct tPBSError_struct {
 	string ErrMsg;
 };
 
+
+struct tTR_struc {
+	std::string gsTR0;
+	std::string gsTR1;
+	int giTRF;
+	int giTRA;
+};
 

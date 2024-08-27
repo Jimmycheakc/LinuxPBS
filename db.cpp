@@ -1587,6 +1587,185 @@ DBError db::loadstationsetup()
 	return iNoData; 
 };
 
+int db::downloadTR()
+{
+	int ret = -1;
+	int r = -1;
+	int w = -1;
+	std::vector<ReaderItem> tResult;
+	std::vector<ReaderItem> selResult;
+	std::string sqlStmt;
+	std::stringstream dbss;
+	int tr_type;
+	int line_no;
+	int enabled;
+	std::string line_text;
+	std::string line_var;
+	int line_font;
+	int line_align;
+
+	sqlStmt = "SELECT COUNT(*) from TR_mst ";
+	sqlStmt = sqlStmt + "where TRType = 1 or TRType = 2 or TRType = 6 or TRType = 11 or TRType = 12";
+
+	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
+	if (r != 0)
+	{
+		m_remote_db_err_flag = 1;
+		operation::getInstance()->writelog("download TR fail.", "DB");
+		return ret;
+	}
+	else
+	{
+		m_remote_db_err_flag = 0;
+		dbss.str("");
+		dbss.clear();
+		dbss << "Total " << std::string(tResult[0].GetDataItem(0)) << " TR type to be download.";
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+
+	sqlStmt = "";
+	sqlStmt.clear();
+	sqlStmt = "SELECT TRType, Line_no, Enabled, LineText, LineVar, LineFont, LineAlign from TR_mst ";
+	sqlStmt = sqlStmt + "where TRType = 1 or TRType = 2 or TRType = 6 or TRType = 11 or TRType = 12";
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag = 1;
+		operation::getInstance()->writelog("download TR faile.", "DB");
+		return ret;
+	}
+	else
+	{
+		m_remote_db_err_flag = 0;
+	}
+
+	int downloadCount = 0;
+	if (selResult.size() > 0)
+	{
+		dbss.str("");
+		dbss.clear();
+		dbss << "Downloading TR " << std::to_string(selResult.size()) << " Records: Started";
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+
+		for (int j = 0; j < selResult.size(); j++)
+		{
+			tr_type = std::stoi(selResult[j].GetDataItem(0));
+			line_no = std::stoi(selResult[j].GetDataItem(1));
+			enabled = std::stoi(selResult[j].GetDataItem(2));
+			line_text = selResult[j].GetDataItem(3);
+			line_var = selResult[j].GetDataItem(4);
+			line_font = std::stoi(selResult[j].GetDataItem(5));
+			line_align = std::stoi(selResult[j].GetDataItem(6));
+
+			w = writetr2local(tr_type, line_no, enabled, line_text, line_var, line_font, line_align);
+
+			if (w == 0)
+			{
+				downloadCount++;
+				m_remote_db_err_flag = 0;
+			}
+		}
+		dbss.str("");
+		dbss.clear();
+		dbss << "Downloading TR Records, End, Total Record :" << selResult.size() << " , Downloaded Record :" << downloadCount;
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+
+	ret = downloadCount;
+
+	return ret;
+}
+
+int db::writetr2local(int tr_type, int line_no, int enabled, std::string line_text, std::string line_var, int line_font, int line_align)
+{
+	int r = -1;
+	int debug = 0;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+	std::stringstream dbss;
+
+	try
+	{
+		r = localdb->SQLSelect("SELECT * FROM TR_mst where TRType =" + std::to_string(tr_type) + " and Line_no = " + std::to_string(line_no), &selResult, false);
+		if (r != 0)
+		{
+			m_local_db_err_flag = 1;
+			operation::getInstance()->writelog("Update local TR failed.", "DB");
+			return r;
+		}
+		else
+		{
+			m_local_db_err_flag = 0;
+		}
+
+		if (selResult.size() > 0)
+		{
+			// Update param records
+			sqlStmt = "Update TR_mst SET ";
+			sqlStmt = sqlStmt + "TRType='" + std::to_string(tr_type) + "'";
+			sqlStmt = sqlStmt + "Line_no='" + std::to_string(line_no) + "'";
+			sqlStmt = sqlStmt + "Enabled='" + std::to_string(enabled) + "'";
+			sqlStmt = sqlStmt + "LineText='" + line_text + "'";
+			sqlStmt = sqlStmt + "LineVar='" + line_var + "'";
+			sqlStmt = sqlStmt + "LineFont='" + std::to_string(line_font) + "'";
+			sqlStmt = sqlStmt + "LineAlign='" + std::to_string(line_align) + "'";
+			sqlStmt = sqlStmt + "WHERE TRType=" + std::to_string(tr_type) + " and ";
+			sqlStmt = sqlStmt + "WHERE Line_no=" + std::to_string(line_no) + "";
+
+			r = localdb->SQLExecutNoneQuery(sqlStmt);
+			if (r != 0)
+			{
+				m_local_db_err_flag = 1;
+				dbss.str("");
+				dbss.clear();
+				dbss << "update local TR failed.";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else
+			{
+				m_local_db_err_flag = 0;
+			}
+		}
+		else
+		{
+			sqlStmt = "INSERT INTO TR_mst";
+			sqlStmt = sqlStmt + " (TRType, Line_no, Enabled, LineText, LineVar, LineFont, LineAlign)";
+			sqlStmt = sqlStmt + " VALUES (" + std::to_string(tr_type);
+			sqlStmt = sqlStmt + "," + std::to_string(line_no);
+			sqlStmt = sqlStmt + "," + std::to_string(enabled);
+			sqlStmt = sqlStmt + ",'" + line_text + "'";
+			sqlStmt = sqlStmt + ",'" + line_var + "'";
+			sqlStmt = sqlStmt + "," + std::to_string(line_font);
+			sqlStmt = sqlStmt + "," + std::to_string(line_align) + ")";
+
+			r = localdb->SQLExecutNoneQuery(sqlStmt);
+			if (r != 0)
+			{
+				m_local_db_err_flag = 1;
+				dbss.str("");
+				dbss.clear();
+				dbss << "insert TR to local failed";
+				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+			}
+			else
+			{
+				m_local_db_err_flag = 0;
+			}
+		}
+	}
+	catch (const std::exception & e)
+	{
+		r = -1;
+		dbss.str("");
+		dbss.clear();
+		dbss << "DB: local db error in writing rec: " << std::string(e.what());
+		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_local_db_err_flag = 1;
+	}
+
+	return r;
+}
+
 DBError db::loadcentralDBinfo()
 {
 	vector<ReaderItem> selResult;
@@ -1674,6 +1853,11 @@ DBError db::loadParam()
 				if (readerItem.GetDataItem(0) == "commportlcsc")
 				{
 					operation::getInstance()->tParas.giCommPortLCSC = std::stoi(readerItem.GetDataItem(1));
+				}
+
+				if (readerItem.GetDataItem(0) == "commportprinter")
+				{
+					operation::getInstance()->tParas.giCommPortPrinter = std::stoi(readerItem.GetDataItem(1));
 				}
 
 				if (readerItem.GetDataItem(0) == "EPS")
@@ -2747,6 +2931,47 @@ DBError db::loadmessage()
 	}
 
 	return retErr;
+}
+
+DBError db::loadTR()
+{
+	int r = -1;
+	DBError retErr;
+	vector<ReaderItem> trSelResult;
+	std::string sqlStmt;
+
+	sqlStmt = "SELECT LineText, LineVar, LineFont, LineAlign from TR_mst";
+	sqlStmt = sqlStmt + " WHERE TRType=2" + " AND Enabled = 1 ORDER BY Line_no";
+
+	r = localdb->SQLSelect(sqlStmt, &trSelResult, true);
+	if (r != 0)
+	{
+		operation::getInstance()->writelog("load LTR failed.", "DB");
+		return iLocalFail;
+	}
+
+	if (trSelResult.size() > 0)
+	{
+		int i = 0;
+		for (int j = 0; j < trSelResult.size(); j++)
+		{
+			struct tTR_struc tr;
+			tr.gsTR0 = trSelResult[j].GetDataItem(0);
+			tr.gsTR1 = trSelResult[j].GetDataItem(1);
+			tr.giTRF = std::stoi(trSelResult[j].GetDataItem(2));
+			tr.giTRA = std::stoi(trSelResult[j].GetDataItem(3));
+			operation::getInstance()->tTR.push_back(tr);
+			i++;
+		}
+		operation::getInstance()->writelog("Load " + std::to_string(i) + " Ticket/Receipt Format.", "DB");
+		return iDBSuccess;
+	}
+	else
+	{
+		operation::getInstance()->writelog("No Ticket/Receipt to load.", "DB");
+	}
+
+	return iNoData;
 }
 
 string  db::GetPartialSeasonMsg(int iTransType)

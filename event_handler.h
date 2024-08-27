@@ -75,4 +75,7 @@ private:
     bool handleUPTDeviceTMS(const BaseEvent* event);
     bool handleUPTDeviceReset(const BaseEvent* event);
     bool handleUPTCommandCancel(const BaseEvent* event);
+
+    // Printer Event Handler
+    bool handlePrinterStatus(const BaseEvent* event);
 };

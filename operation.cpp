@@ -24,6 +24,7 @@
 #include "dio.h"
 #include "ksm_reader.h"
 #include "lpr.h"
+#include "printer.h"
 #include "upt.h"
 
 operation* operation::operation_ = nullptr;
@@ -187,7 +188,21 @@ bool operation::LoadParameter()
             writelog ("Error for loading vehicle type", "OPR");
         }
        gbLoadParameter = false; 
-    } 
+    }
+    iReturn = m_db->loadTR();
+    if (iReturn != 0)
+    {
+        if (iReturn == 1)
+        {
+            writelog("No data for TR table", "OPR");
+        }
+        else
+        {
+            writelog("Error for loading TR", "OPR");
+        }
+        gbLoadParameter = false;
+    }
+
     //
     return gbLoadParameter;
 }
@@ -446,6 +461,19 @@ void operation::Initdevice(io_context& ioContext)
         auto callback = std::bind(&operation::LcdIdleTimerTimeoutHandler, this);
         pLCDIdleTimer_->start(1000, callback);
     }
+
+    if (tParas.giCommPortPrinter > 0)
+    {
+        Printer::getInstance()->FnSetPrintMode(2);
+        Printer::getInstance()->FnSetDefaultAlign(Printer::CBM_ALIGN::CBM_LEFT);
+        Printer::getInstance()->FnSetDefaultFont(2);
+        Printer::getInstance()->FnSetLeftMargin(300);
+        Printer::getInstance()->FnSetSelfTestInterval(2000);
+        Printer::getInstance()->FnSetSiteID(10);
+        Printer::getInstance()->FnSetPrinterType(Printer::PRINTER_TYPE::CBM1000);
+        Printer::getInstance()->FnPrinterInit(9600, getSerialPort(std::to_string(tParas.giCommPortPrinter)));
+    }
+
     GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
     Lpr::getInstance()->FnLprInit(ioContext);
