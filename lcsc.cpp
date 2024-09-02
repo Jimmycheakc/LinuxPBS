@@ -3930,7 +3930,7 @@ void LCSCReader::writeLCSCTrans(const std::string& data)
     {
         // File exists, append the details
         file.close();
-        file.open(settleFile, std::ios::out | std::ios::binary);
+        file.open(settleFile, std::ios::out | std::ios::binary | std::ios::app);
         if (!file.is_open())
         {
             Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
@@ -3939,7 +3939,6 @@ void LCSCReader::writeLCSCTrans(const std::string& data)
         }
 
         // Now to the end of file and append the details
-        file.seekp(0, std::ios::end);
         file.write(detail.c_str(), detail.size());
     }
 
