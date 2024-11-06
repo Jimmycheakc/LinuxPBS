@@ -1525,6 +1525,1296 @@ int db::writestationsetup2local(tstation_struct& v)
 	return r;
 }
 
+int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
+{
+	int ret = -1;
+	std::vector<ReaderItem> tResult;
+	std::vector<ReaderItem> selResult;
+	std::string sqlStmt;
+    std::stringstream dbss;
+	int r = -1;
+	int w = -1;
+	int iZoneID;
+
+	if (iCheckStatus == 1)
+	{
+		// Check tariff is downloaded or not
+		sqlStmt = "SELECT name FROM parameter_mst ";
+		sqlStmt = sqlStmt + "WHERE name='DownloadTariff' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+
+		r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+		if (r != 0)
+		{
+			m_remote_db_err_flag = 1;
+			operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
+			return ret;
+		}
+		else if (tResult.size() == 0)
+		{
+			m_remote_db_err_flag = 0;
+			operation::getInstance()->writelog("Tariff download already.", "DB");
+			return -3;
+		}
+	}
+
+	r = localdb->SQLExecutNoneQuery("DELETE FROM tariff_setup");
+	if (r != 0)
+	{
+		m_local_db_err_flag = 1;
+		operation::getInstance()->writelog("Delete tariff_setup from local failed.", "DB");
+		return -1;
+	}
+	else
+	{
+		m_local_db_err_flag = 0;
+	}
+
+	if (operation::getInstance()->gtStation.iZoneID > 0)
+	{
+		iZoneID = operation::getInstance()->gtStation.iZoneID;
+	}
+	else
+	{
+		iZoneID = 1;
+	}
+
+	operation::getInstance()->writelog("Download tariff_setup for group " + std::to_string(iGrpID) + ", zone " + std::to_string(iZoneID), "DB");
+	sqlStmt = "";
+	sqlStmt = "SELECT * FROM tariff_setup";
+	if (iGrpID > 0)
+	{
+		sqlStmt = sqlStmt + " WHERE group_id=" + std::to_string(iGrpID) + " AND Zone_id=" + std::to_string(iZoneID);
+	}
+
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag = 1;
+		operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
+		return ret;
+	}
+	else
+	{
+		m_remote_db_err_flag = 0;
+	}
+
+	int downloadCount = 0;
+	if (selResult.size() > 0)
+	{
+		for (int j = 0; j < selResult.size(); j++)
+		{
+			tariff_struct tariff;
+			tariff.tariff_id = selResult[j].GetDataItem(0);
+			tariff.day_index = selResult[j].GetDataItem(4);
+			tariff.day_type = selResult[j].GetDataItem(5);
+
+			int idx = 6;
+			for (int k = 0; k < 9; k++)
+			{
+				tariff.start_time[k] = selResult[j].GetDataItem(idx++);
+				tariff.end_time[k] = selResult[j].GetDataItem(idx++);
+				tariff.rate_type[k] = selResult[j].GetDataItem(idx++);
+				tariff.charge_time_block[k] = selResult[j].GetDataItem(idx++);
+				tariff.charge_rate[k] = selResult[j].GetDataItem(idx++);
+				tariff.grace_time[k] = selResult[j].GetDataItem(idx++);
+				tariff.first_free[k] = selResult[j].GetDataItem(idx++);
+				tariff.first_add[k] = selResult[j].GetDataItem(idx++);
+				tariff.second_free[k] = selResult[j].GetDataItem(idx++);
+				tariff.second_add[k] = selResult[j].GetDataItem(idx++);
+				tariff.third_free[k] = selResult[j].GetDataItem(idx++);
+				tariff.third_add[k] = selResult[j].GetDataItem(idx++);
+				tariff.allowance[k] = selResult[j].GetDataItem(idx++);
+				tariff.min_charge[k] = selResult[j].GetDataItem(idx++);
+				tariff.max_charge[k] = selResult[j].GetDataItem(idx++);
+			}
+			tariff.zone_cutoff = selResult[j].GetDataItem(idx++);
+			tariff.day_cutoff = selResult[j].GetDataItem(idx++);
+			tariff.whole_day_max = selResult[j].GetDataItem(idx++);
+			tariff.whole_day_min = selResult[j].GetDataItem(idx++);
+
+            w = writetariffsetup2local(tariff);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+		}
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading tariff_setup Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+	}
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadTariff'";
+        
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadTariff fetched=1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        // no record
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+	return ret;
+}
+
+int db::writetariffsetup2local(tariff_struct& tariff)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO tariff_setup";
+        sqlStmt = sqlStmt + " (tariff_id, day_index, day_type";
+        sqlStmt = sqlStmt + ", start_time1, end_time1, rate_type1, charge_time_block1";
+        sqlStmt = sqlStmt + ", charge_rate1, grace_time1, min_charge1, max_charge1";
+        sqlStmt = sqlStmt + ", first_free1, first_add1, second_free1, second_add1";
+        sqlStmt = sqlStmt + ", third_free1, third_add1, allowance1";
+        sqlStmt = sqlStmt + ", start_time2, end_time2, rate_type2, charge_time_block2";
+        sqlStmt = sqlStmt + ", charge_rate2, grace_time2, min_charge2, max_charge2";
+        sqlStmt = sqlStmt + ", first_free2, first_add2, second_free2, second_add2";
+        sqlStmt = sqlStmt + ", third_free2, third_add2, allowance2";
+        sqlStmt = sqlStmt + ", start_time3, end_time3, rate_type3, charge_time_block3";
+        sqlStmt = sqlStmt + ", charge_rate3, grace_time3, min_charge3, max_charge3";
+        sqlStmt = sqlStmt + ", first_free3, first_add3, second_free3, second_add3";
+        sqlStmt = sqlStmt + ", third_free3, third_add3, allowance3";
+        sqlStmt = sqlStmt + ", start_time4, end_time4, rate_type4, charge_time_block4";
+        sqlStmt = sqlStmt + ", charge_rate4, grace_time4, min_charge4, max_charge4";
+        sqlStmt = sqlStmt + ", first_free4, first_add4, second_free4, second_add4";
+        sqlStmt = sqlStmt + ", third_free4, third_add4, allowance4";
+        sqlStmt = sqlStmt + ", start_time5, end_time5, rate_type5, charge_time_block5";
+        sqlStmt = sqlStmt + ", charge_rate5, grace_time5, min_charge5, max_charge5";
+        sqlStmt = sqlStmt + ", first_free5, first_add5, second_free5, second_add5";
+        sqlStmt = sqlStmt + ", third_free5, third_add5, allowance5";
+        sqlStmt = sqlStmt + ", start_time6, end_time6, rate_type6, charge_time_block6";
+        sqlStmt = sqlStmt + ", charge_rate6, grace_time6, min_charge6, max_charge6";
+        sqlStmt = sqlStmt + ", first_free6, first_add6, second_free6, second_add6";
+        sqlStmt = sqlStmt + ", third_free6, third_add6, allowance6";
+        sqlStmt = sqlStmt + ", start_time7, end_time7, rate_type7, charge_time_block7";
+        sqlStmt = sqlStmt + ", charge_rate7, grace_time7, min_charge7, max_charge7";
+        sqlStmt = sqlStmt + ", first_free7, first_add7, second_free7, second_add7";
+        sqlStmt = sqlStmt + ", third_free7, third_add7, allowance7";
+        sqlStmt = sqlStmt + ", start_time8, end_time8, rate_type8, charge_time_block8";
+        sqlStmt = sqlStmt + ", charge_rate8, grace_time8, min_charge8, max_charge8";
+        sqlStmt = sqlStmt + ", first_free8, first_add8, second_free8, second_add8";
+        sqlStmt = sqlStmt + ", third_free8, third_add8, allowance8";
+        sqlStmt = sqlStmt + ", start_time9, end_time9, rate_type9, charge_time_block9";
+        sqlStmt = sqlStmt + ", charge_rate9, grace_time9, min_charge9, max_charge9";
+        sqlStmt = sqlStmt + ", first_free9, first_add9, second_free9, second_add9";
+        sqlStmt = sqlStmt + ", third_free9, third_add9, allowance9";
+        sqlStmt = sqlStmt + ", zone_cutoff, day_cutoff, whole_day_max, whole_day_min";
+        sqlStmt = sqlStmt + ")";
+        sqlStmt = sqlStmt + " VALUES (" + tariff.tariff_id;
+        sqlStmt = sqlStmt + ", " + tariff.day_index;
+        sqlStmt = sqlStmt + ", '" + tariff.day_type + "'";
+
+        for (int i = 0; i < 9; i ++)
+        {
+            sqlStmt = sqlStmt + ", '" + tariff.start_time[i] + "'";
+            sqlStmt = sqlStmt + ", '" + tariff.end_time[i] + "'";
+            sqlStmt = sqlStmt + ", " + tariff.rate_type[i];
+            sqlStmt = sqlStmt + ", " + tariff.charge_time_block[i];
+            sqlStmt = sqlStmt + ", '" + tariff.charge_rate[i] + "'";
+            sqlStmt = sqlStmt + ", " + tariff.grace_time[i];
+            sqlStmt = sqlStmt + ", " + tariff.first_free[i];
+            sqlStmt = sqlStmt + ", '" + tariff.first_add[i] + "'";
+            sqlStmt = sqlStmt + ", " + tariff.second_free[i];
+            sqlStmt = sqlStmt + ", '" + tariff.second_add[i] + "'";
+            sqlStmt = sqlStmt + ", " + tariff.third_free[i];
+            sqlStmt = sqlStmt + ", '" + tariff.third_add[i] + "'";
+            sqlStmt = sqlStmt + ", " + tariff.allowance[i];
+            sqlStmt = sqlStmt + ", '" + tariff.min_charge[i] + "'";
+            sqlStmt = sqlStmt + ", '" + tariff.max_charge[i] + "'";
+        }
+
+        sqlStmt = sqlStmt + ", " + tariff.zone_cutoff;
+        sqlStmt = sqlStmt + ", " + tariff.day_cutoff;
+        sqlStmt = sqlStmt + ", '" + tariff.whole_day_max + "'";
+        sqlStmt = sqlStmt + ", '" + tariff.whole_day_min + "'";
+        sqlStmt = sqlStmt + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert tariff setup to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadtarifftypeinfo()
+{
+    int ret = -1;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM tariff_type_info");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete tariff_type_info from local failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    operation::getInstance()->writelog("Download tariff_type_info.", "DB");
+    r = centraldb->SQLSelect("SELECT * FROM tariff_type_info", &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Download tariff_type_info failed.", "DB");
+        return ret;
+    
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            tariff_type_info_struct tariff_type;
+            tariff_type.tariff_type = selResult[j].GetDataItem(0);
+            tariff_type.start_time = selResult[j].GetDataItem(1);
+            tariff_type.end_time = selResult[j].GetDataItem(2);
+
+            w = writetarifftypeinfo2local(tariff_type);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");   // Set the underlying string to an empty string
+        dbss.clear();   // Clear the state of the stream
+        dbss << "Downloading tariff_type_info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writetarifftypeinfo2local(tariff_type_info_struct& tariff_type)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO tariff_type_info";
+        sqlStmt = sqlStmt + " (tariff_type, start_time, end_time)";
+        sqlStmt = sqlStmt + " VALUES (" + tariff_type.tariff_type;
+        sqlStmt = sqlStmt + ", '" + tariff_type.start_time + "'";
+        sqlStmt = sqlStmt + ", '" + tariff_type.end_time + "'";
+        sqlStmt = sqlStmt + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert tariff type info to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
+{
+    int ret = -1;
+    std::vector<ReaderItem> tResult;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    if (iCheckStatus == 1)
+    {
+        // Check x tariff is downloaded or not
+        sqlStmt = "SELECT name FROM parameter_mst ";
+        sqlStmt = sqlStmt + "WHERE name = 'DownloadXTariff' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+
+        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
+            return ret;
+        }
+        else if (tResult.size() == 0)
+        {
+            m_remote_db_err_flag = 0;
+            operation::getInstance()->writelog("X_Tariff download already.", "DB");
+            return -3;
+        }
+    }
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM X_Tariff");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete X_Tariff from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    operation::getInstance()->writelog("Download X_Tariff for group" + std::to_string(iGrpID) + ", site " + std::to_string(iSiteID), "DB");
+    sqlStmt = "";
+    sqlStmt = "SELECT * FROM X_Tariff";
+    sqlStmt = sqlStmt + " WHERE group_id=" + std::to_string(iGrpID) + " AND site_id=" + std::to_string(iSiteID);
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            x_tariff_struct x_tariff;
+            x_tariff.day_index = selResult[j].GetDataItem(2);
+            x_tariff.auto0 = selResult[j].GetDataItem(3);
+            x_tariff.fee0 = selResult[j].GetDataItem(4);
+            x_tariff.time1 = selResult[j].GetDataItem(5);
+            x_tariff.auto1 = selResult[j].GetDataItem(6);
+            x_tariff.fee1 = selResult[j].GetDataItem(7);
+            x_tariff.time2 = selResult[j].GetDataItem(8);
+            x_tariff.auto2 = selResult[j].GetDataItem(9);
+            x_tariff.fee2 = selResult[j].GetDataItem(10);
+            x_tariff.time3 = selResult[j].GetDataItem(11);
+            x_tariff.auto3 = selResult[j].GetDataItem(12);
+            x_tariff.fee3 = selResult[j].GetDataItem(13);
+            x_tariff.time4 = selResult[j].GetDataItem(14);
+            x_tariff.auto4 = selResult[j].GetDataItem(15);
+            x_tariff.fee4 = selResult[j].GetDataItem(16);
+
+            w = writextariff2local(x_tariff);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+        dbss.clear();   // Clear the state of the stream
+        dbss << "Downloading x_tariff Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadXTariff'";
+        
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadXTariff fetched=1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writextariff2local(x_tariff_struct& x_tariff)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO X_Tariff";
+        sqlStmt = sqlStmt + "(day_index, auto0, fee0, time1, auto1, fee1";
+        sqlStmt = sqlStmt + ", time2, auto2, fee2, time3, auto3, fee3, time4, auto4, fee4";
+        sqlStmt = sqlStmt + ")";
+        sqlStmt = sqlStmt + " VALUES ('" + x_tariff.day_index + "'";
+        sqlStmt = sqlStmt + ", " + x_tariff.auto0;
+        sqlStmt = sqlStmt + ", " + x_tariff.fee0;
+        sqlStmt = sqlStmt + ", '" + x_tariff.time1 + "'";
+        sqlStmt = sqlStmt + ", " + x_tariff.auto1;
+        sqlStmt = sqlStmt + ", " + x_tariff.fee1;
+        sqlStmt = sqlStmt + ", '" + x_tariff.time2 + "'";
+        sqlStmt = sqlStmt + ", " + x_tariff.auto2;
+        sqlStmt = sqlStmt + ", " + x_tariff.fee2;
+        sqlStmt = sqlStmt + ", '" + x_tariff.time3 + "'";
+        sqlStmt = sqlStmt + ", " + x_tariff.auto3;
+        sqlStmt = sqlStmt + ", " + x_tariff.fee3;
+        sqlStmt = sqlStmt + ", '" + x_tariff.time4 + "'";
+        sqlStmt = sqlStmt + ", " + x_tariff.auto4;
+        sqlStmt = sqlStmt + ", " + x_tariff.fee4;
+        sqlStmt = sqlStmt + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert X_Tariff to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadholidaymst(int iCheckStatus)
+{
+    int ret = -1;
+    std::vector<ReaderItem> tResult;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    if (iCheckStatus == 1)
+    {
+        // Check Whether holiday mst is downloaded or not
+        sqlStmt = "SELECT name FROM parameter_mst ";
+        sqlStmt = sqlStmt + "WHERE name='DownloadHoliday' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+        
+        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
+            return ret;
+        }
+        else if (tResult.size() == 0)
+        {
+            m_remote_db_err_flag = 0;
+            operation::getInstance()->writelog("holiday_mst download already.", "DB");
+            return -3;
+        }
+    }
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM holiday_mst");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete holiday_mst from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    operation::getInstance()->writelog("Download holiday_mst.", "DB");
+    sqlStmt = "";
+    sqlStmt = "SELECT holiday_date, descrip";
+    sqlStmt = sqlStmt + " FROM holiday_mst ";
+    sqlStmt = sqlStmt + "WHERE holiday_date > GETDATE() - 30";
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            w = writeholidaymst2local(selResult[j].GetDataItem(0), selResult[j].GetDataItem(1));
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading holiday_mst Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadHoliday'";
+
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadHoliday fetched=1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writeholidaymst2local(std::string holiday_date, std::string descrip)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO holiday_mst";
+        sqlStmt = sqlStmt + " (holiday_date, descrip)";
+        sqlStmt = sqlStmt + " VALUES ('" + holiday_date + "'";
+        sqlStmt = sqlStmt + ", '" + descrip + "')";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert holiday to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::download3tariffinfo()
+{
+    int ret = -1;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM 3Tariff_Info");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete 3Tariff_Info from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    int zone_id = operation::getInstance()->gtStation.iZoneID;
+    operation::getInstance()->writelog("Download 3Tariff_Info.", "DB");
+    sqlStmt = "";
+    sqlStmt = "SELECT * FROM [3Tariff_Info]";
+    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Download 3Tariff_Info failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            tariff_info_struct tariff_info;
+            tariff_info.rate_type = selResult[j].GetDataItem(1);
+            tariff_info.day_type = selResult[j].GetDataItem(2);
+            tariff_info.time_from = selResult[j].GetDataItem(3);
+            tariff_info.time_till = selResult[j].GetDataItem(4);
+            tariff_info.t3_start = selResult[j].GetDataItem(5);
+            tariff_info.t3_block = selResult[j].GetDataItem(6);
+            tariff_info.t3_rate = selResult[j].GetDataItem(7);
+
+            w = write3tariffinfo2local(tariff_info);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading 3Tariff_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::write3tariffinfo2local(tariff_info_struct& tariff_info)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO 3Tariff_Info";
+        sqlStmt = sqlStmt + " (Rate_Type, Day_Type, Time_From, Time_Till, T3_Start, T3_Block, T3_Rate)";
+        sqlStmt = sqlStmt + " VALUES(" + tariff_info.rate_type;
+        sqlStmt = sqlStmt + ", '" + tariff_info.day_type + "'";
+        sqlStmt = sqlStmt + ", '" + tariff_info.time_from + "'";
+        sqlStmt = sqlStmt + ", '" + tariff_info.time_till + "'";
+        sqlStmt = sqlStmt + ", " + tariff_info.t3_start;
+        sqlStmt = sqlStmt + ", " + tariff_info.t3_block;
+        sqlStmt = sqlStmt + ", " + tariff_info.t3_rate + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert 3Tariff_Info to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadratefreeinfo(int iCheckStatus)
+{
+    int ret = -1;
+    std::vector<ReaderItem> tResult;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    if (iCheckStatus == 1)
+    {
+        // Check Whether rate free info is downloaded or not
+        sqlStmt = "SELECT name FROM parameter_mst";
+        sqlStmt = sqlStmt + " WHERE name='DownloadRateFreeInfo' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+
+        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
+            return ret;
+        }
+        else if (tResult.size() == 0)
+        {
+            m_remote_db_err_flag = 0;
+            operation::getInstance()->writelog("Rate_Free_Info download already.", "DB");
+            return -3;
+        }
+    }
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Free_Info");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete Rate_Free_Info from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    int zone_id = operation::getInstance()->gtStation.iZoneID;
+    operation::getInstance()->writelog("Download Rate_Free_Info.", "DB");
+    sqlStmt = "";
+    sqlStmt = "SELECT * FROM Rate_Free_Info";
+    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            rate_free_info_struct rate_free_info;
+            rate_free_info.rate_type = selResult[j].GetDataItem(2);
+            rate_free_info.day_type = selResult[j].GetDataItem(3);
+            rate_free_info.init_free = selResult[j].GetDataItem(4);
+            rate_free_info.free_beg = selResult[j].GetDataItem(5);
+            rate_free_info.free_end = selResult[j].GetDataItem(6);
+            rate_free_info.free_time = selResult[j].GetDataItem(7);
+
+            w = writeratefreeinfo2local(rate_free_info);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading Rate_Free_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadRateFreeInfo'";
+
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadRateFreeInfo fetched = 1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writeratefreeinfo2local(rate_free_info_struct& rate_free_info)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO Rate_Free_Info";
+        sqlStmt = sqlStmt + " (Rate_Type, Day_Type, Init_Free, Free_Beg, Free_End, Free_Time)";
+        sqlStmt = sqlStmt + " VALUES (" + rate_free_info.rate_type;
+        sqlStmt = sqlStmt + ", '" + rate_free_info.day_type + "'";
+        sqlStmt = sqlStmt + ", " + rate_free_info.init_free;
+        sqlStmt = sqlStmt + ", '" + rate_free_info.free_beg + "'";
+        sqlStmt = sqlStmt + ", '" + rate_free_info.free_end + "'";
+        sqlStmt = sqlStmt + ", " + rate_free_info.free_time + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert Rate_Free_Info to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadspecialdaymst(int iCheckStatus)
+{
+    int ret = -1;
+    std::vector<ReaderItem> tResult;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    if (iCheckStatus == 1)
+    {
+        // Check Whether special day mst is downloaded or not
+        sqlStmt = "SELECT name FROM parameter_mst";
+        sqlStmt = sqlStmt + " WHERE name='DownloadSpecialDay' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+
+        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
+            return ret;
+        }
+        else if (tResult.size() == 0)
+        {
+            m_remote_db_err_flag = 0;
+            operation::getInstance()->writelog("Special_Day_mst download already.", "DB");
+            return -3;
+        }
+    }
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM Special_Day_mst");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete Special_Day_mst from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    int zone_id = operation::getInstance()->gtStation.iZoneID;
+    operation::getInstance()->writelog("Download Special_Day_mst.", "DB");
+    sqlStmt = "";
+    sqlStmt = "SELECT * FROM Special_Day_mst";
+    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            w = writespecialday2local(selResult[j].GetDataItem(2), selResult[j].GetDataItem(4), selResult[j].GetDataItem(5));
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading Special_Day_mst Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadSpecialDay'";
+
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadSpecialDay fetched=1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writespecialday2local(std::string special_date, std::string rate_type, std::string day_code)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO Special_Day_mst";
+        sqlStmt = sqlStmt + " (Special_Date, Rate_Type, Day_Code)";
+        sqlStmt = sqlStmt + " VALUES('" + special_date + "'";
+        sqlStmt = sqlStmt + ", " + rate_type;
+        sqlStmt = sqlStmt + ", '" + day_code + "')";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str("");
+            dbss.clear();
+            dbss << "Insert Special_Day_mst to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadratetypeinfo(int iCheckStatus)
+{
+    int ret = -1;
+    std::vector<ReaderItem> tResult;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    if (iCheckStatus == 1)
+    {
+        // Check Whether rate type infor is downloaded or not
+        sqlStmt = "SELECT name FROM parameter_mst";
+        sqlStmt = sqlStmt + " WHERE name='DownloadRateTypeInfo' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+
+        r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Download Rate_Type_Info failed.", "DB");
+            return ret;
+        }
+        else if (selResult.size() == 0)
+        {
+            m_remote_db_err_flag = 0;
+            operation::getInstance()->writelog("Rate_Type_Info download already.", "DB");
+            return -3;
+        }
+    }
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Type_Info");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete Rate_Type_Info from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    int zone_id = operation::getInstance()->gtStation.iZoneID;
+    operation::getInstance()->writelog("Download Rate_Type_Info.", "DB");
+    sqlStmt = "";
+    sqlStmt = "SELECT * FROM Rate_Type_Info";
+    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Donwload Rate_Type_Info failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            rate_type_info_struct rate_type_info;
+            rate_type_info.rate_type = selResult[j].GetDataItem(1);
+            //rate_type_info.has_holiday = selResult[j].GetDataItem(3);
+            rate_type_info.has_holiday_eve = selResult[j].GetDataItem(3);
+            rate_type_info.has_special_day = selResult[j].GetDataItem(4);
+            rate_type_info.has_init_free = selResult[j].GetDataItem(5);
+            rate_type_info.has_3tariff = selResult[j].GetDataItem(6);
+            //rate_type_info.has_zone_max = selResult[j].GetDataItem(1);
+            //rate_type_info.has_firstentry_rate = selResult[j].GetDataItem(1);
+
+            w = writeratetypeinfo2local(rate_type_info);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading Rate_Type_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadRateTypeInfo'";
+
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadRateTypeInfo fetched = 1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writeratetypeinfo2local(rate_type_info_struct rate_type_info)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO Rate_Type_Info";
+        sqlStmt = sqlStmt + " (Rate_Type, Has_Holiday_Eve, Has_Special_Day, Has_Init_Free, Has_3Tariff)";
+        sqlStmt = sqlStmt + " VALUES(" + rate_type_info.rate_type;
+        sqlStmt = sqlStmt + ", " + rate_type_info.has_holiday_eve;
+        sqlStmt = sqlStmt + ", " + rate_type_info.has_special_day;
+        sqlStmt = sqlStmt + ", " + rate_type_info.has_init_free;
+        sqlStmt = sqlStmt + ", " + rate_type_info.has_3tariff;
+        sqlStmt = sqlStmt + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str();
+            dbss.clear();
+            dbss << "Insert Rate_Type_Info to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
 DBError db::loadstationsetup()
 {
 	vector<ReaderItem> selResult;

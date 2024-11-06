@@ -144,6 +144,7 @@ void operation::OperationInit(io_context& ioContext)
         {
             m_db->downloadstationsetup();
             m_db->loadstationsetup();
+            m_db->downloadratetypeinfo(1);
         }
     }
 }

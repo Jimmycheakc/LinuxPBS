@@ -167,32 +167,91 @@ struct  tstation_struct
 	int iVExitID;
 };
 
-struct tariff_Struct{
-	public:
-	string tariff_id;
-	string day_index;
-	string day_type;
-	string start_time[9];
-	string end_time[9];
-	string rate_type[9];
-	string charge_time_block[9];
-	string charge_rate[9];
-	string grace_time[9];
-	string first_free[9];
-	string first_add[9];
-	string second_free[9];
-	string second_add[9];
-	string third_free[9];
-	string third_add[9];
-	string allowance[9];
-	string min_charge[9];
-	string max_charge[9];
-	string zone_cutoff;
-	string day_cutoff;
-	string whole_day_max;
-	string whole_day_min;
+struct tariff_struct
+{
+	std::string tariff_id;
+	std::string day_index;
+	std::string day_type;
+	std::string start_time[9];
+	std::string end_time[9];
+	std::string rate_type[9];
+	std::string charge_time_block[9];
+	std::string charge_rate[9];
+	std::string grace_time[9];
+	std::string first_free[9];
+	std::string first_add[9];
+	std::string second_free[9];
+	std::string second_add[9];
+	std::string third_free[9];
+	std::string third_add[9];
+	std::string allowance[9];
+	std::string min_charge[9];
+	std::string max_charge[9];
+	std::string zone_cutoff;
+	std::string day_cutoff;
+	std::string whole_day_max;
+	std::string whole_day_min;
 };
 
+struct tariff_type_info_struct
+{
+	std::string tariff_type;
+	std::string start_time;
+	std::string end_time;
+};
+
+struct x_tariff_struct
+{
+	std::string day_index;
+	std::string auto0;
+	std::string fee0;
+	std::string time1;
+	std::string auto1;
+	std::string fee1;
+	std::string time2;
+	std::string auto2;
+	std::string fee2;
+	std::string time3;
+	std::string auto3;
+	std::string fee3;
+	std::string time4;
+	std::string auto4;
+	std::string fee4;
+};
+
+
+struct tariff_info_struct
+{
+	std::string rate_type;
+	std::string day_type;
+	std::string time_from;
+	std::string time_till;
+	std::string t3_start;
+	std::string t3_block;
+	std::string t3_rate;
+};
+
+struct rate_free_info_struct
+{
+	std::string rate_type;
+	std::string day_type;
+	std::string init_free;
+	std::string free_beg;
+	std::string free_end;
+	std::string free_time;
+};
+
+struct rate_type_info_struct
+{
+	std::string rate_type;
+	std::string has_holiday;
+	std::string has_holiday_eve;
+	std::string has_special_day;
+	std::string has_init_free;
+	std::string has_3tariff;
+	std::string has_zone_max;
+	std::string has_firstentry_rate;
+};
 
 //struct  tStation_Struct g_sts;
 

@@ -59,8 +59,23 @@ public:
     int writestationsetup2local(tstation_struct& v);
     int downloadTR();
     int writetr2local(int tr_type, int line_no, int enabled, std::string line_text, std::string line_var, int line_font, int line_align);
+    int downloadtariffsetup(int iGrpID = 0, int iSiteID = 1, int iCheckStatus = 0);
+    int writetariffsetup2local(tariff_struct& tariff);
+    int downloadtarifftypeinfo();
+    int writetarifftypeinfo2local(tariff_type_info_struct& tariff_type);
+    int downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus = 0);
+    int writextariff2local(x_tariff_struct& x_tariff);
+    int downloadholidaymst(int iCheckStatus = 0);
+    int writeholidaymst2local(std::string holiday_date, std::string descrip);
+    int download3tariffinfo();
+    int write3tariffinfo2local(tariff_info_struct& tariff_info);
+    int downloadratefreeinfo(int iCheckStatus = 0);
+    int writeratefreeinfo2local(rate_free_info_struct& rate_free_info);
+    int downloadspecialdaymst(int iCheckStatus = 0);
+    int writespecialday2local(std::string special_date, std::string rate_type, std::string day_code);
+	int downloadratetypeinfo(int iCheckStatus = 0);
+    int writeratetypeinfo2local(rate_type_info_struct rate_type_info);
 
-	
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans();
 	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
