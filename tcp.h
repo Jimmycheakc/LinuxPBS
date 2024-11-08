@@ -22,6 +22,7 @@ public:
     bool isStatusGood();
 
 private:
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
     boost::asio::ip::tcp::socket socket_;
     boost::asio::ip::tcp::endpoint endpoint_;
     std::array<char, 1024> buffer_;

@@ -15,7 +15,6 @@
 #include "led.h"
 #include "log.h"
 #include "system_info.h"
-#include "test.h"
 #include "upt.h"
 #include "event_manager.h"
 #include "event_handler.h"
@@ -28,7 +27,7 @@
 #include "udp.h"
 
 
-void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::io_context* io)
+void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
 {
     auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
 
@@ -104,10 +103,12 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start); // Calculate the duration of the handler execution
 
     timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(5) + duration);
-    timer->async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, timer, io));
+    boost::asio::post(*strand_, [timer, strand_]() {
+        timer->async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, timer, strand_));
+    });
 }
 
-void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer)
+void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* logStrand_)
 {
     auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
 
@@ -230,12 +231,15 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start); // Calculate the duration of the handler execution
 
     timer->expires_at(timer->expiry() + boost::asio::chrono::seconds(60) + duration);
-    timer->async_wait(boost::bind(dailyLogHandler, boost::asio::placeholders::error, timer));
+    boost::asio::post(*logStrand_, [timer, logStrand_]() {
+        timer->async_wait(boost::bind(dailyLogHandler, boost::asio::placeholders::error, timer, logStrand_));
+    });
 }
 
-void signalHandler(int signal)
+void signalHandler(const boost::system::error_code& ec, int signal, boost::asio::io_context& ioContext, boost::asio::signal_set& signals, boost::asio::executor_work_guard<boost::asio::io_context::executor_type>& workGuard)
 {
-    if (signal == SIGINT || signal == SIGTERM)
+    std::cout << __func__ << std::endl;
+    if (!ec)
     {
         Logger::getInstance()->FnLog("Terminal signal received. Station Program terminated.");
         operation::getInstance()->SendMsg2Server("09","11Stopping...");
@@ -246,18 +250,28 @@ void signalHandler(int signal)
         LCD::getInstance()->FnLCDClearDisplayRow(1);
         LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
 
-        exit(signal);
+        // Release the work guard to allow io_context to exit
+        workGuard.reset();
+
+        // Stop the io_context to allow the run() loop to exit
+        ioContext.stop();
     }
 }
 
 int main (int agrc, char* argv[])
 {
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
-    
     // Initialization
     boost::asio::io_context ioContext;
-    boost::asio::io_context dailyLogIoContext;
+    auto workGuard = boost::asio::make_work_guard(ioContext);
+
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_ = boost::asio::make_strand(ioContext);
+    boost::asio::strand<boost::asio::io_context::executor_type> logStrand_ = boost::asio::make_strand(ioContext);
+
+    // Create a signal set to handle SIGINT and SIGTERM
+    boost::asio::signal_set signals(ioContext, SIGINT, SIGTERM);
+    signals.async_wait([&ioContext, &signals, &workGuard] (const boost::system::error_code& ec, int signal) {
+        signalHandler(ec, signal, ioContext, signals, workGuard);
+    });
 
     // Start heartbeat
     HeartbeatUdpServer heartbeatUdpServer_(ioContext, "127.0.0.1", 9000);
@@ -267,28 +281,36 @@ int main (int agrc, char* argv[])
     Logger::getInstance();
     Common::getInstance()->FnLogExecutableInfo(argv[0]);
     SystemInfo::getInstance()->FnLogSysInfo();
-   //
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
     EventManager::getInstance()->FnStartEventThread();
     operation::getInstance()->OperationInit(ioContext);
 
-    boost::asio::steady_timer dailyProcessTimer(ioContext, boost::asio::chrono::seconds(1));
-    dailyProcessTimer.async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, &dailyProcessTimer, &ioContext));
+    // Start daily process timer
+    boost::asio::steady_timer dailyProcessTimer(strand_, boost::asio::chrono::seconds(1));
+    dailyProcessTimer.async_wait(boost::bind(dailyProcessTimerHandler, boost::asio::placeholders::error, &dailyProcessTimer, &strand_));
 
-    std::thread dailyLogThread([&dailyLogIoContext] ()
+    // Start daily log timer
+    boost::asio::steady_timer dailyLogTimer(logStrand_, boost::asio::chrono::seconds(1));
+    dailyLogTimer.async_wait(boost::bind(dailyLogHandler, boost::asio::placeholders::error, &dailyLogTimer, &logStrand_));
+
+    // Create a pool of threads to run the io_context
+    std::vector<std::thread> threadPool;
+    const int numThreads = 5;
+
+    for (int i = 0; i < numThreads; i++)
     {
-        boost::asio::steady_timer dailyLogTimer(dailyLogIoContext, boost::asio::chrono::seconds(1));
-        dailyLogTimer.async_wait(boost::bind(dailyLogHandler, boost::asio::placeholders::error, &dailyLogTimer));
-        dailyLogIoContext.run();
-    });
+        threadPool.emplace_back([&ioContext]() {
+            ioContext.run();
+        });
+    }
 
-    ioContext.run();
-    
-#ifdef BUILD_TEST
-    Test::getInstance()->FnTest(argv[0]);
-    return 0;
-#endif
+    // Join all threads
+    for (auto& thread: threadPool)
+    {
+        thread.join();
+    }
 
+    // Perform cleanup actions after all threads have joined
     EventManager::getInstance()->FnStopEventThread();
     Upt::getInstance()->FnUptClose();
     LCSCReader::getInstance()->FnLCSCReaderClose();

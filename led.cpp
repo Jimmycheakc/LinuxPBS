@@ -7,10 +7,11 @@ const char LED::ETX1 = 0x0D;
 const char LED::ETX2 = 0x0A;
 
 LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
-    : serialPort_(io_context),
-    baudRate_(baudRate),
-    comPortName_(comPortName),
-    maxCharPerRow_(maxCharacterPerRow)
+    : strand_(boost::asio::make_strand(io_context)),
+      serialPort_(io_context),
+      baudRate_(baudRate),
+      comPortName_(comPortName),
+      maxCharPerRow_(maxCharacterPerRow)
 {
     std::string ledType = "";
     logFileName_ = "led";
@@ -137,11 +138,15 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
 
                 std::vector<char> msg_line1;
                 FnFormatDisplayMsg(LedId, LED::Line::FIRST, Line1Text, align, msg_line1);
-                boost::asio::write(serialPort_, boost::asio::buffer(msg_line1.data(), msg_line1.size()));
+                boost::asio::post(strand_, [this, msg_line1]() {
+                    boost::asio::write(serialPort_, boost::asio::buffer(msg_line1.data(), msg_line1.size()));
+                });
 
                 std::vector<char> msg_line2;
                 FnFormatDisplayMsg(LedId, LED::Line::SECOND, Line2Text, align, msg_line2);
-                boost::asio::write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()));
+                boost::asio::post(strand_, [this, msg_line2]() {
+                    boost::asio::write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()));
+                });
 
                 // Send LED Messages to Monitor
                 if (operation::getInstance()->FnIsOperationInitialized())
@@ -153,7 +158,9 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
             {
                 std::vector<char> msg;
                 FnFormatDisplayMsg(LedId, LED::Line::FIRST, text, align, msg);
-                boost::asio::write(serialPort_, boost::asio::buffer(msg.data(), msg.size()));
+                boost::asio::post(strand_, [this, msg]() {
+                    boost::asio::write(serialPort_, boost::asio::buffer(msg.data(), msg.size()));
+                });
             }
         }
     }

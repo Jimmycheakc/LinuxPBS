@@ -2991,16 +2991,16 @@ int db::writetr2local(int tr_type, int line_no, int enabled, std::string line_te
 		if (selResult.size() > 0)
 		{
 			// Update param records
-			sqlStmt = "Update TR_mst SET ";
-			sqlStmt = sqlStmt + "TRType='" + std::to_string(tr_type) + "'";
-			sqlStmt = sqlStmt + "Line_no='" + std::to_string(line_no) + "'";
-			sqlStmt = sqlStmt + "Enabled='" + std::to_string(enabled) + "'";
-			sqlStmt = sqlStmt + "LineText='" + line_text + "'";
-			sqlStmt = sqlStmt + "LineVar='" + line_var + "'";
-			sqlStmt = sqlStmt + "LineFont='" + std::to_string(line_font) + "'";
-			sqlStmt = sqlStmt + "LineAlign='" + std::to_string(line_align) + "'";
-			sqlStmt = sqlStmt + "WHERE TRType=" + std::to_string(tr_type) + " and ";
-			sqlStmt = sqlStmt + "WHERE Line_no=" + std::to_string(line_no) + "";
+			std::string sqlStmt = "UPDATE TR_mst SET ";
+			sqlStmt += "TRType = " + std::to_string(tr_type) + ", ";
+			sqlStmt += "Line_no = " + std::to_string(line_no) + ", ";
+			sqlStmt += "Enabled = " + std::to_string(enabled) + ", ";
+			sqlStmt += "LineText = '" + line_text + "', ";
+			sqlStmt += "LineVar = '" + line_var + "', ";
+			sqlStmt += "LineFont = " + std::to_string(line_font) + ", ";
+			sqlStmt += "LineAlign = " + std::to_string(line_align) + " ";
+			sqlStmt += "WHERE TRType = " + std::to_string(tr_type) + " AND ";
+			sqlStmt += "Line_no = " + std::to_string(line_no);
 
 			r = localdb->SQLExecutNoneQuery(sqlStmt);
 			if (r != 0)

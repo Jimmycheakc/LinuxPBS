@@ -57,15 +57,6 @@ set(SOURCE_FILES
     main.cpp
 )
 
-# Conditionally include test.cpp
-option(BUILD_TEST "Build test.cpp" OFF)
-if (BUILD_TEST)
-    list(APPEND SOURCE_FILES test.cpp)
-
-    # Add BUILD_TEST as a preprocessor definition
-    add_definitions(-DBUILD_TEST)
-endif()
-
 # Conditionally include console output log
 option(ENABLE_CONSOLE_LOG "Output console log" OFF)
 if (ENABLE_CONSOLE_LOG)

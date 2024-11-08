@@ -59,8 +59,7 @@ void operation::OperationInit(io_context& ioContext)
     tProcess.gsBroadCastIP = getIPAddress();
     try
     {
-        m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001,2001);
-        m_udp->socket_.set_option(socket_base::broadcast(true));
+        m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001, 2001, true);
     }
     catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
@@ -747,7 +746,7 @@ void operation::FnSendLogMessageToMonitor(std::string msg)
     if (m_Monitorudp->FnGetMonitorStatus())
     {
         std::string str = "[" + gtStation.sPCName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
-        m_Monitorudp->startsend(str);
+        m_Monitorudp->send(str);
     }
 }
 
@@ -1059,7 +1058,7 @@ void operation::SendMsg2Monitor(string cmdcode,string dstr)
     {
         string str="["+ gtStation.sPCName +"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
         str+=dstr+"|]";
-        m_Monitorudp->startsend(str);
+        m_Monitorudp->send(str);
         //----
         writelog ("Message to Monitor: " + str,"OPR");
     }
@@ -1069,7 +1068,7 @@ void operation::SendMsg2Server(string cmdcode,string dstr)
 {
 	string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
 	str+=dstr+"|]";
-	m_udp->startsend(str);
+	m_udp->send(str);
     //----
     writelog ("Message to PMS: " + str,"OPR");
 }
@@ -1935,6 +1934,21 @@ void operation::ProcessLCSC(const std::string& eventData)
             {
                 writelog("Received No card Event", "OPR");
             }
+            break;
+        }
+        case LCSCReader::mCSCEvents::sTimeout:
+        {
+            writelog("LCSC command timeout.","OPR");
+            break;
+        }
+        case LCSCReader::mCSCEvents::sSendcmdfail:
+        {
+            writelog("LCSC send command failed.","OPR");
+            break;
+        }
+        case LCSCReader::mCSCEvents::rNotRespCmd:
+        {
+            writelog("Not the LCSC command response.","OPR");
             break;
         }
         default:

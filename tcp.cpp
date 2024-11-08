@@ -2,7 +2,8 @@
 #include "log.h"
 
 TcpClient::TcpClient(boost::asio::io_context& io_context, const std::string& ipAddress, unsigned short port)
-    :   socket_(io_context),
+    :   strand_(boost::asio::make_strand(io_context)),
+        socket_(strand_),
         endpoint_(boost::asio::ip::address::from_string(ipAddress), port),
         buffer_(),
         status_(false)
@@ -14,7 +15,9 @@ void TcpClient::send(const std::string& message)
 {
     try
     {
-        boost::asio::write(socket_, boost::asio::buffer(message));
+        boost::asio::post(strand_, [this, message]() {
+            boost::asio::write(socket_, boost::asio::buffer(message));
+        });
     }
     catch (const boost::system::system_error& e)
     {
@@ -72,7 +75,7 @@ void TcpClient::connect()
         return;
     }
 
-    socket_.async_connect(endpoint_, [this](const boost::system::error_code& ec) {
+    socket_.async_connect(endpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& ec) {
         if (!ec)
         {
             status_.store(true);
@@ -85,7 +88,7 @@ void TcpClient::connect()
             close();
             handleError(ec.message());
         }
-    });
+    }));
 }
 
 bool TcpClient::isStatusGood()
@@ -96,7 +99,7 @@ bool TcpClient::isStatusGood()
 void TcpClient::startAsyncReceive()
 {
     socket_.async_read_some(boost::asio::buffer(buffer_),
-        [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+        boost::asio::bind_executor(strand_, [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
             if (!ec)
             {
                 handleReceivedData(buffer_.data(), bytes_transferred);
@@ -108,7 +111,7 @@ void TcpClient::startAsyncReceive()
                 close();
                 handleError(ec.message());
             }
-        });
+        }));
 }
 
 void TcpClient::handleConnect()

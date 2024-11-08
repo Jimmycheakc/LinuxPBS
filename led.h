@@ -46,6 +46,7 @@ public:
     int FnGetLEDMaxCharPerRow() const;
 
 private:
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
     boost::asio::serial_port serialPort_;
     unsigned int baudRate_;
     std::string comPortName_;

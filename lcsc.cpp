@@ -2617,20 +2617,36 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
         }
         case LCSC_CMD::GET_CARD_ID:
         {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            if (continueReadFlag_.load())
+            {
+                Logger::getInstance()->FnLog("Timeout and no card detected, continue detect.", logFileName_, "LCSC");
+                enqueueCommandToFront(LCSC_CMD::GET_CARD_ID);
+            }
+            else
+            {
+                std::ostringstream oss;
+                oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", oss.str());
+                EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", oss.str());
+            }
             break;
         }
         case LCSC_CMD::CARD_BALANCE:
         {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            if (continueReadFlag_.load())
+            {
+                Logger::getInstance()->FnLog("Timeout and no card balance detected, continue detect.", logFileName_, "LCSC");
+                enqueueCommandToFront(LCSC_CMD::CARD_BALANCE);
+            }
+            else
+            {
+                std::ostringstream oss;
+                oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", oss.str());
+                EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", oss.str());
+            }
             break;
         }
         case LCSC_CMD::CARD_DEDUCT:
