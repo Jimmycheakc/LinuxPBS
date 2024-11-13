@@ -75,6 +75,8 @@ public:
     int writespecialday2local(std::string special_date, std::string rate_type, std::string day_code);
 	int downloadratetypeinfo(int iCheckStatus = 0);
     int writeratetypeinfo2local(rate_type_info_struct rate_type_info);
+    int downloadratemaxinfo(int iCheckStatus = 0);
+    int writeratemaxinfo2local(rate_max_info_struct rate_max_info);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans();

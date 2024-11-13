@@ -1,6 +1,7 @@
 #include <iostream>
 #include <ctime>
 #include <iomanip>
+#include <stdlib.h>
 #include <sstream>
 #include <sys/time.h>
 #include <boost/algorithm/string.hpp>
@@ -491,10 +492,22 @@ void db::synccentraltime()
 			// Set the new time
 			dbss.str("");  // Set the underlying string to an empty string
     		dbss.clear();   // Clear the state of the stream
-			if (settimeofday(&newTime, nullptr) == 0) {
+			if (settimeofday(&newTime, nullptr) == 0)
+			{
 				dbss << "Time set successfully.";
     			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			} else {
+
+				if (std::system("hwclock --systohc") != 0)
+				{
+					Logger::getInstance()->FnLog("Sync error.", "", "DB");
+				}
+				else
+				{
+					Logger::getInstance()->FnLog("Sync successfully.", "", "DB");
+				}
+			}
+			else
+			{
 				dbss << "Error setting time.";
     			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 			}
@@ -2387,7 +2400,7 @@ int db::downloadratefreeinfo(int iCheckStatus)
     int zone_id = operation::getInstance()->gtStation.iZoneID;
     operation::getInstance()->writelog("Download Rate_Free_Info.", "DB");
     sqlStmt = "";
-    sqlStmt = "SELECT * FROM Rate_Free_Info";
+    sqlStmt = "SELECT Rate_Type, Day_Type, Init_Free, Free_Beg, Free_End, Free_Time FROM Rate_Free_Info";
     sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
@@ -2411,12 +2424,12 @@ int db::downloadratefreeinfo(int iCheckStatus)
         for (int j = 0; j < selResult.size(); j++)
         {
             rate_free_info_struct rate_free_info;
-            rate_free_info.rate_type = selResult[j].GetDataItem(2);
-            rate_free_info.day_type = selResult[j].GetDataItem(3);
-            rate_free_info.init_free = selResult[j].GetDataItem(4);
-            rate_free_info.free_beg = selResult[j].GetDataItem(5);
-            rate_free_info.free_end = selResult[j].GetDataItem(6);
-            rate_free_info.free_time = selResult[j].GetDataItem(7);
+            rate_free_info.rate_type = selResult[j].GetDataItem(0);
+            rate_free_info.day_type = selResult[j].GetDataItem(1);
+            rate_free_info.init_free = selResult[j].GetDataItem(2);
+            rate_free_info.free_beg = selResult[j].GetDataItem(3);
+            rate_free_info.free_end = selResult[j].GetDataItem(4);
+            rate_free_info.free_time = selResult[j].GetDataItem(5);
 
             w = writeratefreeinfo2local(rate_free_info);
 
@@ -2548,11 +2561,13 @@ int db::downloadspecialdaymst(int iCheckStatus)
     int zone_id = operation::getInstance()->gtStation.iZoneID;
     operation::getInstance()->writelog("Download Special_Day_mst.", "DB");
     sqlStmt = "";
-    sqlStmt = "SELECT * FROM Special_Day_mst";
-    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
+    sqlStmt = "SELECT convert(char(10),Special_Date,103), Rate_Type, Day_Code FROM Special_Day_mst";
+    sqlStmt = sqlStmt + " WHERE Special_Date > getdate()-1 AND (";
+	sqlStmt = sqlStmt + " Zone_ID='" + std::to_string(zone_id) + "'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
+	sqlStmt = sqlStmt + ")";
 
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
@@ -2571,7 +2586,7 @@ int db::downloadspecialdaymst(int iCheckStatus)
     {
         for (int j = 0; j < selResult.size(); j++)
         {
-            w = writespecialday2local(selResult[j].GetDataItem(2), selResult[j].GetDataItem(4), selResult[j].GetDataItem(5));
+            w = writespecialday2local(selResult[j].GetDataItem(0), selResult[j].GetDataItem(1), selResult[j].GetDataItem(2));
 
             if (w == 0)
             {
@@ -2698,7 +2713,7 @@ int db::downloadratetypeinfo(int iCheckStatus)
     int zone_id = operation::getInstance()->gtStation.iZoneID;
     operation::getInstance()->writelog("Download Rate_Type_Info.", "DB");
     sqlStmt = "";
-    sqlStmt = "SELECT * FROM Rate_Type_Info";
+    sqlStmt = "SELECT Rate_Type, Has_Holiday, Has_Holiday_Eve, Has_Special_Day, Has_Init_Free, Has_3Tariff, Has_Zone_Max FROM Rate_Type_Info";
     sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
     sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
@@ -2722,14 +2737,14 @@ int db::downloadratetypeinfo(int iCheckStatus)
         for (int j = 0; j < selResult.size(); j++)
         {
             rate_type_info_struct rate_type_info;
-            rate_type_info.rate_type = selResult[j].GetDataItem(1);
-            //rate_type_info.has_holiday = selResult[j].GetDataItem(3);
-            rate_type_info.has_holiday_eve = selResult[j].GetDataItem(3);
-            rate_type_info.has_special_day = selResult[j].GetDataItem(4);
-            rate_type_info.has_init_free = selResult[j].GetDataItem(5);
-            rate_type_info.has_3tariff = selResult[j].GetDataItem(6);
-            //rate_type_info.has_zone_max = selResult[j].GetDataItem(1);
-            //rate_type_info.has_firstentry_rate = selResult[j].GetDataItem(1);
+            rate_type_info.rate_type = selResult[j].GetDataItem(0);
+            rate_type_info.has_holiday = selResult[j].GetDataItem(1);
+            rate_type_info.has_holiday_eve = selResult[j].GetDataItem(2);
+            rate_type_info.has_special_day = selResult[j].GetDataItem(3);
+            rate_type_info.has_init_free = selResult[j].GetDataItem(4);
+            rate_type_info.has_3tariff = selResult[j].GetDataItem(5);
+            rate_type_info.has_zone_max = selResult[j].GetDataItem(6);
+            //rate_type_info.has_firstentry_rate = selResult[j].GetDataItem(7);
 
             w = writeratetypeinfo2local(rate_type_info);
 
@@ -2780,12 +2795,174 @@ int db::writeratetypeinfo2local(rate_type_info_struct rate_type_info)
     try
     {
         sqlStmt = "INSERT INTO Rate_Type_Info";
-        sqlStmt = sqlStmt + " (Rate_Type, Has_Holiday_Eve, Has_Special_Day, Has_Init_Free, Has_3Tariff)";
+        sqlStmt = sqlStmt + " (Rate_Type, Has_Holiday, Has_Holiday_Eve, Has_Special_Day, Has_Init_Free, Has_3Tariff, Has_Zone_Max)";
         sqlStmt = sqlStmt + " VALUES(" + rate_type_info.rate_type;
+        sqlStmt = sqlStmt + ", " + rate_type_info.has_holiday;
         sqlStmt = sqlStmt + ", " + rate_type_info.has_holiday_eve;
         sqlStmt = sqlStmt + ", " + rate_type_info.has_special_day;
         sqlStmt = sqlStmt + ", " + rate_type_info.has_init_free;
         sqlStmt = sqlStmt + ", " + rate_type_info.has_3tariff;
+        sqlStmt = sqlStmt + ", " + rate_type_info.has_zone_max;
+        sqlStmt = sqlStmt + ")";
+
+        r = localdb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_local_db_err_flag = 1;
+            dbss.str();
+            dbss.clear();
+            dbss << "Insert Rate_Type_Info to local failed.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 0;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        r = -1;
+        dbss.str("");
+        dbss.clear();
+        dbss << "DB: local db error in writing rec: " << std::string(e.what());
+        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        m_local_db_err_flag = 1;
+    }
+
+    return r;
+}
+
+int db::downloadratemaxinfo(int iCheckStatus)
+{
+    int ret = -1;
+    std::vector<ReaderItem> tResult;
+    std::vector<ReaderItem> selResult;
+    std::string sqlStmt;
+    std::stringstream dbss;
+    int r = -1;
+    int w = -1;
+
+    if (iCheckStatus == 1)
+    {
+        // Check Whether rate max info is downloaded or not
+        sqlStmt = "SELECT name FROM parameter_mst";
+        sqlStmt = sqlStmt + " WHERE name='DownloadRateMaxInfo' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
+
+        r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Download Rate_Max_Info failed.", "DB");
+            return ret;
+        }
+        else if (selResult.size() == 0)
+        {
+            m_remote_db_err_flag = 0;
+            operation::getInstance()->writelog("Rate_Max_Info download already.", "DB");
+            return -3;
+        }
+    }
+
+    r = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Max_Info");
+    if (r != 0)
+    {
+        m_local_db_err_flag = 1;
+        operation::getInstance()->writelog("Delete Rate_Max_Info from local failed.", "DB");
+        return -1;
+    }
+    else
+    {
+        m_local_db_err_flag = 0;
+    }
+
+    int zone_id = operation::getInstance()->gtStation.iZoneID;
+    operation::getInstance()->writelog("Download Rate_Max_Info.", "DB");
+    sqlStmt = "";
+    sqlStmt = "Select Rate_Type, Day_Type, Start_Time, End_Time, Max_Fee FROM Rate_Max_Info";
+    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
+    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
+
+    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    if (r != 0)
+    {
+        m_remote_db_err_flag = 1;
+        operation::getInstance()->writelog("Donwload Rate_Max_Info failed.", "DB");
+        return ret;
+    }
+    else
+    {
+        m_remote_db_err_flag = 0;
+    }
+
+    int downloadCount = 0;
+    if (selResult.size() > 0)
+    {
+        for (int j = 0; j < selResult.size(); j++)
+        {
+            rate_max_info_struct rate_max_info;
+            rate_max_info.rate_type = selResult[j].GetDataItem(0);
+            rate_max_info.day_type = selResult[j].GetDataItem(1);
+            rate_max_info.start_time = selResult[j].GetDataItem(2);
+            rate_max_info.end_time = selResult[j].GetDataItem(3);
+            rate_max_info.max_fee = selResult[j].GetDataItem(4);
+
+            w = writeratemaxinfo2local(rate_max_info);
+
+            if (w == 0)
+            {
+                downloadCount++;
+            }
+        }
+
+        dbss.str("");  // Set the underlying string to an empty string
+    	dbss.clear();   // Clear the state of the stream
+		dbss << "Downloading Rate_Max_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
+    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    }
+
+    if (iCheckStatus == 1)
+    {
+        sqlStmt = "";
+        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
+        sqlStmt = sqlStmt + " WHERE name='DownloadRateMaxInfo'";
+
+        r = centraldb->SQLExecutNoneQuery(sqlStmt);
+        if (r != 0)
+        {
+            m_remote_db_err_flag = 1;
+            operation::getInstance()->writelog("Set DownloadRateMaxInfo fetched = 1 failed.", "DB");
+        }
+    }
+
+    if (selResult.size() < 1)
+    {
+        ret = -1;
+    }
+    else
+    {
+        ret = downloadCount;
+    }
+
+    return ret;
+}
+
+int db::writeratemaxinfo2local(rate_max_info_struct rate_max_info)
+{
+    int r = -1;
+    std::string sqlStmt;
+    std::stringstream dbss;
+
+    try
+    {
+        sqlStmt = "INSERT INTO Rate_Max_Info";
+        sqlStmt = sqlStmt + " (Rate_Type, Day_Type, Start_Time, End_Time, Max_Fee)";
+        sqlStmt = sqlStmt + " VALUES(" + rate_max_info.rate_type;
+        sqlStmt = sqlStmt + ", '" + rate_max_info.day_type + "'";
+        sqlStmt = sqlStmt + ", '" + rate_max_info.start_time + "'";
+        sqlStmt = sqlStmt + ", '" + rate_max_info.end_time + "'";
+        sqlStmt = sqlStmt + ", " + rate_max_info.max_fee;
         sqlStmt = sqlStmt + ")";
 
         r = localdb->SQLExecutNoneQuery(sqlStmt);

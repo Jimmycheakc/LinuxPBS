@@ -253,6 +253,15 @@ struct rate_type_info_struct
 	std::string has_firstentry_rate;
 };
 
+struct rate_max_info_struct
+{
+	std::string rate_type;
+	std::string day_type;
+	std::string start_time;
+	std::string end_time;
+	std::string max_fee;
+};
+
 //struct  tStation_Struct g_sts;
 
 struct  tEntryTrans_Struct
