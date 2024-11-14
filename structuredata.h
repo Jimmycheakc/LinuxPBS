@@ -296,37 +296,37 @@ struct  tEntryTrans_Struct
 
 struct  tExitTrans_Struct
 {
-
 	string xsid;
-	string sIUNo;
-	int iTransType;
-	short  iRateType;
-	string sCardNo;
-	string sEntryTime;
 	string sExitTime;
-	string sReceiptNo;
+	string sIUNo;
+	string sCardNo;
+	int iTransType;
 	long lParkedTime;
 	float sFee;
 	float sPaidAmt=0;
-	string sPwd;
+	string sReceiptNo;
 	int iStatus;
 	float sRedeemAmt;
-	// long iRedeemTime;
 	short iRedeemTime;
-	string sTag;
-	float sPrePaid;
 	string sRedeemNo;
 	float sGSTAmt;
+	string sCHUDebitCode;
+	int iCardType;
+	float sTopupAmt;
+	string uposbatchno;
+	string feedrom;
+	string lpn;
+	
+	short  iRateType;
+	string sEntryTime;
+	string sPwd;
+	string sTag;
+	float sPrePaid;
 	int iWholeDay;
 	string sWDFrom;
 	string sWDTo;
-
-	string sCHUDebitCode;
-
 	CE_Time dtValidTo;
 	CE_Time dtValidFrom;
-	int iCardType;
-	float sTopupAmt;
 	float sOweAmt;
 	int iEntryID;
 	string sExitNo;

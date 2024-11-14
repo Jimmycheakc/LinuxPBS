@@ -357,15 +357,11 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 
 	sqlStmt = sqlStmt +  ")";
 
-	r=centraldb->SQLExecutNoneQuery(sqlStmt);
-	
-	dbss.str("");  // Set the underlying string to an empty string
-    dbss.clear();   // Clear the state of the stream
-	if (r!=0)
+	r = centraldb->SQLExecutNoneQuery(sqlStmt);
+	if (r != 0)
 	{
-       // dbss << "Insert Entry_trans to Central: fail2";
-		dbss << sqlStmt;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    	Logger::getInstance()->FnLog(sqlStmt, "", "DB");
+        Logger::getInstance()->FnLog("Insert Entry_trans to Central: fail.", "", "DB");
 		return iCentralFail;
 
 	}
@@ -413,23 +409,17 @@ processLocal:
 
 	sqlStmt = sqlStmt +  ")";
 
-	r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-	dbss.str("");  // Set the underlying string to an empty string
-    dbss.clear();   // Clear the state of the stream
-	
-	if (r!=0)
+	r = localdb->SQLExecutNoneQuery(sqlStmt);
+	if (r != 0)
 	{
-       // dbss << "Insert Entry_trans to Local: fail";
-		dbss << sqlStmt;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+        Logger::getInstance()->FnLog(sqlStmt, "", "DB");
+    	Logger::getInstance()->FnLog("Insert Entry_trans to Local: fail", "", "DB");
 		return iLocalFail;
 
 	}
 	else
 	{
-		dbss << "Insert Entry_trans to Local: success";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    	Logger::getInstance()->FnLog("Insert Entry_trans to Local: success", "", "DB");
 		operation::getInstance()->tProcess.glNoofOfflineData = operation::getInstance()->tProcess.glNoofOfflineData + 1;
 		return iDBSuccess;
 	}
@@ -4934,4 +4924,117 @@ int db::updateEntryTrans(string lpn, string sTransID)
 		
 	}
 	return r;
+}
+
+DBError db::insertexittrans(tExitTrans_Struct& tExit)
+{
+    std::string sqlStmt;
+    int r;
+    std::stringstream dbss;
+
+    if (centraldb->IsConnected() != -1)
+    {
+        centraldb->Disconnect();
+        if (centraldb->Connect() != 0)
+        {
+            dbss << "Unable to connect to central DB while inserting exit_trans table.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+            operation::getInstance()->tProcess.giSystemOnline = 1;
+            goto processLocal;
+        }
+    }
+
+    operation::getInstance()->tProcess.giSystemOnline = 0;
+
+    sqlStmt = "INSERT INTO exit_trans (station_id, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
+    sqlStmt = sqlStmt + ", parking_fee, paid_amt, receipt_no, status, redeem_amt, redeem_time, redeem_no";
+    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, card_type, top_up_amt, uposbatchno, feefrom, lpn";
+    sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
+    sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.sCardNo + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iTransType);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.lParkedTime);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sFee);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sPaidAmt);
+    sqlStmt = sqlStmt + ", '" + tExit.sReceiptNo + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iStatus);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sRedeemAmt);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iRedeemTime);
+    sqlStmt = sqlStmt + ", '" + tExit.sRedeemNo + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sGSTAmt);
+    sqlStmt = sqlStmt + ", '" + tExit.sCHUDebitCode + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iCardType);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sTopupAmt);
+    sqlStmt = sqlStmt + ", '" + tExit.uposbatchno + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.feedrom + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
+    sqlStmt = sqlStmt + ")";
+
+    r = centraldb->SQLExecutNoneQuery(sqlStmt);
+    if (r != 0)
+    {
+        Logger::getInstance()->FnLog(sqlStmt, "", "DB");
+        Logger::getInstance()->FnLog("Insert exit_trans to Central: fail.", "", "DB");
+        return iCentralFail;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Insert exit_trans to Central: success.", "", "DB");
+        return iDBSuccess;
+    }
+
+processLocal:
+
+    if (localdb->IsConnected() != 1)
+    {
+        localdb->Disconnect();
+        if (localdb->Connect() != 0)
+        {
+            dbss.str("");
+            dbss.clear();
+            dbss << "Unable to connect to local DB while inserting Exit_Trans table.";
+            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+            return iLocalFail;
+        }
+    }
+
+    sqlStmt = "INSERT INTO Exit_Trans (Station_ID, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
+    sqlStmt = sqlStmt + ", Parking_Fee, Paid_Amt, Receipt_No, Status, Redeem_amt, Redeem_time, Redeem_no";
+    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn";
+    sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
+    sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.sCardNo + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iTransType);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.lParkedTime);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sFee);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sPaidAmt);
+    sqlStmt = sqlStmt + ", '" + tExit.sReceiptNo + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iStatus);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sRedeemAmt);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iRedeemTime);
+    sqlStmt = sqlStmt + ", '" + tExit.sRedeemNo + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sGSTAmt);
+    sqlStmt = sqlStmt + ", '" + tExit.sCHUDebitCode + "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iCardType);
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sTopupAmt);
+    sqlStmt = sqlStmt + ", '" + tExit.uposbatchno + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.feedrom + "'";
+    sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
+    sqlStmt = sqlStmt + ")";
+
+    r = localdb->SQLExecutNoneQuery(sqlStmt);
+    if (r != 0)
+    {
+        Logger::getInstance()->FnLog(sqlStmt, "", "DB");
+        Logger::getInstance()->FnLog("Insert Exit_Trans to local: fail.", "", "DB");
+        return iLocalFail;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Insert Exit_Trans to Local: success", "", "DB");
+        operation::getInstance()->tProcess.glNoofOfflineData = operation::getInstance()->tProcess.glNoofOfflineData + 1;
+        return iDBSuccess;
+    }
 }

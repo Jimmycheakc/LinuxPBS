@@ -79,7 +79,7 @@ public:
     int writeratemaxinfo2local(rate_max_info_struct rate_max_info);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
-	DBError insertexittrans();
+	DBError insertexittrans(tExitTrans_Struct& tExit);
 	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
 	DBError loadmessage();
 	DBError loadParam();
