@@ -197,7 +197,6 @@ CREATE TABLE IF NOT EXISTS holiday_mst (
 CREATE TABLE IF NOT EXISTS tariff_setup (
     tariff_id INT PRIMARY KEY,
     day_index TINYINT DEFAULT 0,
-    day_type VARCHAR(100),
     start_time1 DATETIME,
     end_time1 DATETIME,
     rate_type1 TINYINT DEFAULT 0,
@@ -337,6 +336,7 @@ CREATE TABLE IF NOT EXISTS tariff_setup (
     day_cutoff SMALLINT DEFAULT 0,
     whole_day_max DECIMAL(7,3) DEFAULT 0.000,
     whole_day_min DECIMAL(7,3) DEFAULT 0.000,
+    day_type VARCHAR(100),
     update_dt DATETIME,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
 );

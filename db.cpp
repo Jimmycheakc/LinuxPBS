@@ -1685,7 +1685,7 @@ int db::writetariffsetup2local(tariff_struct& tariff)
     try
     {
         sqlStmt = "INSERT INTO tariff_setup";
-        sqlStmt = sqlStmt + " (tariff_id, day_index, day_type";
+        sqlStmt = sqlStmt + " (tariff_id, day_index";
         sqlStmt = sqlStmt + ", start_time1, end_time1, rate_type1, charge_time_block1";
         sqlStmt = sqlStmt + ", charge_rate1, grace_time1, min_charge1, max_charge1";
         sqlStmt = sqlStmt + ", first_free1, first_add1, second_free1, second_add1";
@@ -1722,11 +1722,10 @@ int db::writetariffsetup2local(tariff_struct& tariff)
         sqlStmt = sqlStmt + ", charge_rate9, grace_time9, min_charge9, max_charge9";
         sqlStmt = sqlStmt + ", first_free9, first_add9, second_free9, second_add9";
         sqlStmt = sqlStmt + ", third_free9, third_add9, allowance9";
-        sqlStmt = sqlStmt + ", zone_cutoff, day_cutoff, whole_day_max, whole_day_min";
+        sqlStmt = sqlStmt + ", zone_cutoff, day_cutoff, whole_day_max, whole_day_min, day_type";
         sqlStmt = sqlStmt + ")";
         sqlStmt = sqlStmt + " VALUES (" + tariff.tariff_id;
         sqlStmt = sqlStmt + ", " + tariff.day_index;
-        sqlStmt = sqlStmt + ", '" + tariff.day_type + "'";
 
         for (int i = 0; i < 9; i ++)
         {
@@ -1751,6 +1750,7 @@ int db::writetariffsetup2local(tariff_struct& tariff)
         sqlStmt = sqlStmt + ", " + tariff.day_cutoff;
         sqlStmt = sqlStmt + ", '" + tariff.whole_day_max + "'";
         sqlStmt = sqlStmt + ", '" + tariff.whole_day_min + "'";
+        sqlStmt = sqlStmt + ", '" + tariff.day_type + "'";
         sqlStmt = sqlStmt + ")";
 
         r = localdb->SQLExecutNoneQuery(sqlStmt);
