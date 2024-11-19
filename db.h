@@ -77,6 +77,7 @@ public:
     int writeratetypeinfo2local(rate_type_info_struct rate_type_info);
     int downloadratemaxinfo(int iCheckStatus = 0);
     int writeratemaxinfo2local(rate_max_info_struct rate_max_info);
+    int WriteTariff2RAM(tariff_struct t);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
@@ -87,6 +88,9 @@ public:
     DBError loadcentralDBinfo();
     DBError loadvehicletype();
     DBError loadTR();
+    DBError LoadTariff();
+    DBError LoadHoliday();
+    DBError ClearHoliday();
 
     int FnGetVehicleType(std::string IUCode);
     string GetPartialSeasonMsg(int iTransType);
@@ -155,6 +159,9 @@ private:
     static db* db_;
     static std::mutex mutex_;
     db();
+    //-----------------------
+    struct  tariff_struct gtariff[100][10];
+    std::vector<std::string> msholiday;
 
 };
 

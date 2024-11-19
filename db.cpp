@@ -310,7 +310,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 
 	}
 
-	//std::cout<<"m->tEntry.sSerialNo: " <<m->tEntry.sSerialNo<<std::endl;
+	//std::cout<<"operation::getInstance()->tEntry.sSerialNo: " <<operation::getInstance()->tEntry.sSerialNo<<std::endl;
 
 	if(centraldb->IsConnected()!=1)
 	{
@@ -820,7 +820,7 @@ int db::downloadvehicletype()
 			//---------------------------------------
 			
 		}
-		//m->initStnParameters();
+		//operation::getInstance()->initStnParameters();
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Downloading vehicle type Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
@@ -1404,7 +1404,7 @@ int db::downloadstationsetup()
 				downloadCount++;
 			//	printf("set station setup ok \n");
 			}
-			//m->initStnParameters();
+			//operation::getInstance()->initStnParameters();
 		}
 
 		dbss.str("");  // Set the underlying string to an empty string
@@ -2102,18 +2102,6 @@ int db::downloadholidaymst(int iCheckStatus)
         }
     }
 
-    r = localdb->SQLExecutNoneQuery("DELETE FROM holiday_mst");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete holiday_mst from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
     operation::getInstance()->writelog("Download holiday_mst.", "DB");
     sqlStmt = "";
     sqlStmt = "SELECT holiday_date, descrip";
@@ -2133,16 +2121,19 @@ int db::downloadholidaymst(int iCheckStatus)
     }
 
     int downloadCount = 0;
+
     if (selResult.size() > 0)
     {
-        for (int j = 0; j < selResult.size(); j++)
+       	ClearHoliday();
+
+	    for (int j = 0; j < selResult.size(); j++)
         {
             w = writeholidaymst2local(selResult[j].GetDataItem(0), selResult[j].GetDataItem(1));
 
             if (w == 0)
             {
                 downloadCount++;
-            }
+			}
         }
 
         dbss.str("");  // Set the underlying string to an empty string
@@ -3035,8 +3026,8 @@ DBError db::loadstationsetup()
 		};
 		operation::getInstance()->gtStation.iVirtualID = std::stoi(selResult[0].GetDataItem(10));
 		operation::getInstance()->gtStation.iGroupID = std::stoi(selResult[0].GetDataItem(11));
-		//m->gtStation.sZoneName= selResult[0].GetDataItem(11);
-		//m->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
+		//operation::getInstance()->gtStation.sZoneName= selResult[0].GetDataItem(11);
+		//operation::getInstance()->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
 		operation::getInstance()->tProcess.gbloadedStnSetup = true;
 		return iDBSuccess;
 	}
@@ -3276,8 +3267,8 @@ DBError db::loadcentralDBinfo()
 		};
 		operation::getInstance()->gtStation.iVirtualID = std::stoi(selResult[0].GetDataItem(10));
 		operation::getInstance()->gtStation.iGroupID = std::stoi(selResult[0].GetDataItem(11));
-		//m->gtStation.sZoneName= selResult[0].GetDataItem(11);
-		//m->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
+		//operation::getInstance()->gtStation.sZoneName= selResult[0].GetDataItem(11);
+		//operation::getInstance()->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
 		return iDBSuccess;
 	}
 
@@ -5038,3 +5029,239 @@ processLocal:
         return iDBSuccess;
     }
 }
+
+DBError db::LoadTariff()
+{
+
+	std::string sqlStmt;
+	std::string tbName="tariff_setup";
+
+	vector<ReaderItem> selResult;
+	
+	std::string sValue;
+	int r,j,k,i;
+	tariff_struct t;
+	int w=-1;
+	int bTried=0;
+
+	try
+	{
+
+		operation::getInstance()->writelog("Load tariff_setup: Started","DB");
+
+		Try_Again:
+		sqlStmt="Select * ";
+		sqlStmt= sqlStmt +  " FROM " + tbName + " Order by day_index";
+
+		r=localdb->SQLSelect(sqlStmt,&selResult,true);
+		if (r!=0) return iLocalFail;
+
+		if (selResult.size()>0){
+			
+			int idx = 2;
+
+			for(j=0;j<selResult.size();j++){
+				
+				t.tariff_id = selResult[j].GetDataItem(0);
+				t.day_index = selResult[j].GetDataItem(1);
+				for(int k=0;k<9;k++){
+					t.start_time[k]=selResult[j].GetDataItem(idx++);
+					if (t.start_time[k]=="NULL") t.start_time[k]="";
+					t.end_time[k]=selResult[j].GetDataItem(idx++);
+					if (t.end_time[k]=="NULL") t.end_time[k]="";
+					t.rate_type[k]=selResult[j].GetDataItem(idx++);
+					t.charge_time_block[k]=selResult[j].GetDataItem(idx++);
+					t.charge_rate[k]=selResult[j].GetDataItem(idx++);
+					t.grace_time[k]=selResult[j].GetDataItem(idx++);
+					t.min_charge[k]=selResult[j].GetDataItem(idx++);
+					t.max_charge[k]=selResult[j].GetDataItem(idx++);
+					t.first_free[k]=selResult[j].GetDataItem(idx++);
+					t.first_add[k]=selResult[j].GetDataItem(idx++);
+					t.second_free[k]=selResult[j].GetDataItem(idx++);
+					t.second_add[k]=selResult[j].GetDataItem(idx++);
+					t.third_free[k]=selResult[j].GetDataItem(idx++);
+					t.third_add[k]=selResult[j].GetDataItem(idx++);
+					t.allowance[k]=selResult[j].GetDataItem(idx++);
+				}
+				t.whole_day_max= selResult[j].GetDataItem(idx++);
+				t.whole_day_min= selResult[j].GetDataItem(idx++);
+				t.zone_cutoff= selResult[j].GetDataItem(idx++);
+				t.day_cutoff= selResult[j].GetDataItem(idx++);
+				t.day_type	= selResult[j].GetDataItem(idx++);
+
+				std::vector<std::string> tmpStr;
+		
+				boost::algorithm::split(tmpStr, t.day_type, boost::algorithm::is_any_of(","));
+				
+				for (std::size_t i = 0; i < tmpStr.size(); i++)
+				{
+					t.dtype= std::stoi(tmpStr[i]);
+					w=WriteTariff2RAM(t);
+				}
+					
+			}
+
+			operation::getInstance()->writelog("Load tariff parameters: success","DB");
+
+
+
+			return iDBSuccess;
+		}
+		else{
+			if(bTried==0)
+			{
+				downloadtariffsetup();
+				bTried=1;
+				goto Try_Again;
+				
+			}
+
+			return iNoData;
+			operation::getInstance()->writelog("Load tariff parameters error: no data in local DB","DB");
+
+		}
+	}
+	catch(const std::exception &e)
+	{
+		operation::getInstance()->writelog("Load tariff parameters error: local DB error","DB");
+		return iLocalFail;
+	}
+
+}
+
+int db::WriteTariff2RAM(tariff_struct t)
+{
+
+	time_t vfdate,vtdate;
+	CE_Time vfdt,vtdt;
+	int r=-1;// success flag
+	int debug=0;
+	int a,b;
+
+	a=t.dtype/8;
+	b=(t.dtype%8);
+	if(b==0)
+	{
+		b=8;
+		a=a-1;
+		if(a<0)a=0;
+	}
+	
+	gtariff[a][b].day_type=std::to_string(t.dtype);
+
+	gtariff[a][b].tariff_id =t.tariff_id;
+	gtariff[a][b].day_index =t.day_index;		
+	for(int k=0;k<9;k++){
+		gtariff[a][b].start_time[k] =t.start_time[k];
+		gtariff[a][b].end_time[k] =t.end_time[k];
+		gtariff[a][b].rate_type[k] =t.rate_type[k];
+		gtariff[a][b].charge_time_block[k] =t.charge_time_block[k];
+		gtariff[a][b].charge_rate[k] =t.charge_rate[k];
+		gtariff[a][b].grace_time[k] =t.grace_time[k];
+		gtariff[a][b].first_free[k] =t.first_free[k];
+		gtariff[a][b].first_add[k] =t.first_add[k];
+		gtariff[a][b].second_free[k] =t.second_free[k];
+		gtariff[a][b].second_add[k] =t.second_add[k];
+		gtariff[a][b].third_free[k] =t.third_free[k];
+		gtariff[a][b].third_add[k] =t.third_add[k];
+		gtariff[a][b].allowance[k] =t.allowance[k];
+		gtariff[a][b].min_charge[k] =t.min_charge[k];
+		gtariff[a][b].max_charge[k] =t.max_charge[k];
+	}
+	gtariff[a][b].zone_cutoff =t.zone_cutoff;
+	gtariff[a][b].day_cutoff =t.day_cutoff;
+	gtariff[a][b].whole_day_max =t.whole_day_max;
+	gtariff[a][b].whole_day_min =t.whole_day_min;
+	
+	return(1);
+}
+
+DBError db::LoadHoliday()
+{
+
+	std::string sqlStmt;
+	std::string tbName="holiday_mst";
+
+	vector<ReaderItem> selResult;
+
+	std::string sValue;
+	int r,j;
+	int w=-1;
+	int bTried=0;
+
+	try
+	{
+
+		operation::getInstance()->writelog ("Load holiday: Started", "DB");
+
+		Try_Again:
+		sqlStmt="Select date_format(holiday_date,'%Y-%m-%d') as YourDateAsString ";
+		sqlStmt= sqlStmt +  " FROM " + tbName + " Order by holiday_date";
+
+		r=localdb->SQLSelect(sqlStmt,&selResult,true);
+		if (r!=0) return iLocalFail;
+
+		if (selResult.size()>0){
+		
+			msholiday.clear();
+		
+			for(j=0;j<selResult.size();j++){
+				
+				sValue=selResult[j].GetDataItem(0);
+				msholiday.push_back(sValue);
+
+			}
+
+			operation::getInstance()->writelog("Load holiday: success", "DB");
+
+			return iDBSuccess;
+		}
+		else{
+			if(bTried==0)
+			{
+				downloadholidaymst();
+				bTried=1;
+				goto Try_Again;
+				
+			}
+
+			return iNoData;
+			operation::getInstance()->writelog("Load holiday error: no data in local DB", "DB");
+
+		}
+
+	}
+	catch(const std::exception &e)
+	{
+		operation::getInstance()->writelog("Load holiday error: local DB error", "DB");
+		return iLocalFail;
+	}
+
+}
+
+DBError db::ClearHoliday()
+{
+	std::string tableNm="holiday_mst";
+	
+	std::string sqlStmt;
+	
+	int r=-1;      // success flag
+	try {
+
+		sqlStmt="truncate table " + tableNm;
+
+		r=localdb->SQLExecutNoneQuery(sqlStmt);
+
+		if(r==0) m_local_db_err_flag=0;
+		else m_local_db_err_flag=1;
+	}
+	catch (const std::exception &e)
+	{
+		operation::getInstance()->writelog("DB: local db error in clearing: " + std::string(e.what()), "DB");
+		r=-1;
+		m_local_db_err_flag=1;
+	} 
+	if (r= 0) return iDBSuccess;
+	return iLocalFail;
+}
+

@@ -191,6 +191,7 @@ struct tariff_struct
 	std::string day_cutoff;
 	std::string whole_day_max;
 	std::string whole_day_min;
+	int dtype;
 };
 
 struct tariff_type_info_struct
