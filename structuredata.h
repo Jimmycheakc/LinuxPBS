@@ -519,101 +519,102 @@ struct  tParas_Struct
 	int giMaxTransInterval;
 
 
-	//int giCommPortLED2;
-	//string gsSite;
-	//string gsCompany;
-	//string gsZIP;
-	//string gsGSTNo;
-	//string gsAddress;
-	//string gsTel;
+	int giCommPortLED2;
+	string gsSite;
+	string gsCompany;
+	string gsZIP;
+	string gsGSTNo;
+	string gsAddress;
+	string gsTel;
 	
-	//string gsCHUIP;
-	//bool gbEnableVoice;
-	//int giVoice;
+	string gsCHUIP;
+	bool gbEnableVoice;
+	int giVoice;
 	
-	//float gsMotorRate;
-	//int giMCEntryGraceTime;
-	//int giHasThreeWheelMC;
+	float gsMotorRate;
+	int giMCEntryGraceTime;
+	int giMCyclePerDay;
+	int giHasThreeWheelMC;
 	
 
-	//bool mbOvernightCharge;
-	//string msOvernightTime;
-	//int giTariffFeeMode;
-	//int giTariffGTMode;
-	//int giFirstHourMode;
-	//int giFirstHour;
-	//int giPEAllowance;
-	//int giHr2PEAllowance;
+	bool mbOvernightCharge;
+	string msOvernightTime;
+	int giTariffFeeMode;
+	int giTariffGTMode;
+	int giFirstHourMode;
+	int giFirstHour;
+	int giPEAllowance;
+	int giHr2PEAllowance;
 	
-	//int giMaxDebitDays;
-	//int giHasHolidayEve;
+	int giMaxDebitDays;
+	int giHasHolidayEve;
 	
-	//int giProcessReversedCMD;
-	//int giExitGraceTime;
+	int giProcessReversedCMD;
+	int giExitGraceTime;
 	
-	//float gsShutterPulse;
-	//int giSeasonCharge;
-	//bool gbSeasonAsNormal;
-	//int giSeasonPayStart;
-	//int giSeasonAllowance;
+	float gsShutterPulse;
+	int giSeasonCharge;
+	bool gbSeasonAsNormal;
+	int giSeasonPayStart;
+	int giSeasonAllowance;
 	//eCheckSeason giCheckSeason;
-	//int giShowSeasonExpireDays;
-	//int giShowExpiredTime;
-	//int giCHUCnTO;
-	//int giCHUComTO;
-	//int giCHUComRetry;
-	//int giNoIURetry;
-	//int giNoCardRetry;
-	//int giCHUDebitRetry;
-	//int giNoIUWT;
-	//int giNoCardWT;
-	//int giDebitNakWT;
-	//int giCardProblemWT;
-	//int giDebitFailWT;
-	//nt giCHUDebitWT;
-	//int giNoIUAutoDebitWT;
-	//int giMaxDiffIU;
-	//int giTryTimes4NE;
+	int giShowSeasonExpireDays;
+	int giShowExpiredTime;
+	int giCHUCnTO;
+	int giCHUComTO;
+	int giCHUComRetry;
+	int giNoIURetry;
+	int giNoCardRetry;
+	int giCHUDebitRetry;
+	int giNoIUWT;
+	int giNoCardWT;
+	int giDebitNakWT;
+	int giCardProblemWT;
+	int giDebitFailWT;
+	int giCHUDebitWT;
+	int giNoIUAutoDebitWT;
+	int giMaxDiffIU;
+	int giTryTimes4NE;
 	
 	
-	//int giPrinterType;
-	//int giPrintMode;
+	int giPrinterType;
+	int giPrintMode;
 	
 	
-	//bool gbLoopAFirst;
-	//int giCloseBarrierIfTO;
-	//int giPrintReceiptTO;
-	//int giTransactionTO;
-	//int giRefreshTime;
+	bool gbLoopAFirst;
+	int giCloseBarrierIfTO;
+	int giPrintReceiptTO;
+	int giTransactionTO;
+	int giRefreshTime;
 	
-	//int giLoopC2OpenBarWT;
+	int giLoopC2OpenBarWT;
 	
-	//bool gbHasRedemption;
-	//float msOvernightAmt;
-	//int giHasLorry;
-	//int giHasContainer;
-	//int giLorryRelayTime;
-	//int giMOBRelayTimes;
+	bool gbHasRedemption;
+	float msOvernightAmt;
+	int giHasLorry;
+	int giHasContainer;
+	int giLorryRelayTime;
+	int giMOBRelayTimes;
 	
-	//int giUpdateAfterExit;
+	int giUpdateAfterExit;
 	
 	
 
-	//int giV3TransType;
-	//int giV4TransType;
-	//int giV5TransType;
-	//int giUseMagCard;
+	int giV3TransType;
+	int giV4TransType;
+	int giV5TransType;
+	int giUseMagCard;
 	
 	
-	//int showtime;
-	//int hasinternal_link;
+	int showtime;
+	int hasinternal_link;
 	
-	//int has_internal;
-	//string attached_dbname;
-	//string attached_dbserver;
+	int has_internal;
+	string attached_dbname;
+	string attached_dbserver;
 	
-	//int attachedexit_udpport;
-	//int attachedexit_id;
+	int attachedexit_udpport;
+	int attachedexit_id;
 
 };
 

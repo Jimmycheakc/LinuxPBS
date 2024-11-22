@@ -24,6 +24,7 @@ public:
     std::atomic<bool> isOperationInitialized_;
     struct  tstation_struct gtStation;
     struct  tEntryTrans_Struct tEntry; 
+    struct  tExitTrans_Struct tExit;
     struct  tProcess_Struct tProcess;
     struct  tParas_Struct tParas;
 	struct  tMsg_Struct tMsg;

@@ -5265,3 +5265,825 @@ DBError db::ClearHoliday()
 	return iLocalFail;
 }
 
+
+int db::GetDayTypeWithHE(CE_Time curr_date)
+{
+	int iRet;
+	CE_Time next_date;
+	iRet=curr_date.getweekday();
+
+	next_date.SetTime(curr_date.GetUnixTimestamp()+86400);
+	operation::getInstance()->writelog("next date time is: " + next_date.DateString(), "DB");
+	
+	if(iRet!=6)
+	{
+		if(iRet!=7)
+		{
+			for(int i=0; i<msholiday.size();i++){
+				if(next_date.DateString().compare(msholiday[i])==0)
+				{
+					iRet=8;
+					break;
+				}
+			}
+		}
+	}
+	
+	for(int i=0; i<msholiday.size();i++){
+		if(curr_date.DateString().compare(msholiday[i])==0)
+		{
+			iRet=7;
+			return(iRet);
+		}
+	}
+	return(iRet);
+}
+
+int db::GetDayTypeNoPE(CE_Time curr_date)
+{
+	int iRet;
+	iRet=curr_date.getweekday();
+	for(int i=0; i<msholiday.size();i++){
+		if(curr_date.DateString().compare(msholiday[i])==0)
+		{
+			iRet=8;
+			return(iRet);
+		}
+	}
+	return(iRet);
+}
+
+int db::GetDayType(CE_Time curr_date)
+{
+	int Ret;
+	if(operation::getInstance()->tParas.giHasHolidayEve==1)
+		Ret=GetDayTypeWithHE(curr_date);//PH is 7, EvePH is 8
+	else
+		Ret=GetDayTypeNoPE(curr_date);
+	return(Ret);
+	
+}
+
+float db::HasPaidWithinPeriod(string sTimeFrom, string sTimeTo)
+{
+	string msCurrentIU;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	if(operation::getInstance()->gtStation.iType==tientry)
+	msCurrentIU=operation::getInstance()->tEntry.sIUTKNo;
+	else
+	msCurrentIU=operation::getInstance()->tExit.sIUNo;
+	//msCurrentIU="1111737999912287";
+	
+	if((msCurrentIU.length()==10)||((operation::getInstance()->tParas.giMCyclePerDay==2)&&(msCurrentIU.length()==16)))
+	{
+		//ok
+	}
+	else
+	return(0);
+
+	int r=-1;
+	float w=-1;
+	
+	sqlStmt= "Select paid_amt From exit_trans ";
+	sqlStmt=sqlStmt + "WHERE iu_tk_no = '"+msCurrentIU;
+	sqlStmt=sqlStmt + "'and paid_amt >0";
+	
+	if(msCurrentIU.length()==16)
+	sqlStmt=sqlStmt + " and (trans_type=7 or trans_type=22)";
+	sqlStmt=sqlStmt + " And convert(char(19),exit_time,120) > '"+ sTimeFrom+ "'";
+
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	
+	if(r!=0) 
+	{
+		m_remote_db_err_flag=1;
+		goto processLocal;
+	}
+	else m_remote_db_err_flag=0;
+
+	if (selResult.size()>0)
+	{
+		w=std::stof(selResult[0].GetDataItem(0));
+		operation::getInstance()->writelog("payfee is: " + std::to_string(w), "DB");
+		return w;
+	}
+	if (selResult.size()<1){
+		r=-1; //should raise error
+		goto processLocal;
+	}
+	
+processLocal:
+
+	sqlStmt= "Select paid_amt From entry_trans ";
+	sqlStmt=sqlStmt + " Where iu_tk_no='"+ msCurrentIU + "' and paid_amt>0";
+
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+
+	if(r!=0) m_local_db_err_flag=1;
+	else  m_local_db_err_flag=0;
+
+	if (selResult.size()>0)
+	{
+		w=std::stof(selResult[0].GetDataItem(0));
+		operation::getInstance()->writelog("payfee is: " + std::to_string(w), "DB");
+		return w;
+	}
+	return w;
+
+}
+
+double db::RoundIt(double val, int giTariffFeeMode)
+{
+	double iRet;
+	
+	if(giTariffFeeMode==1) iRet=ceilf(val); // rounded up
+	else if(giTariffFeeMode==2) iRet=floorf(val); //rounded down
+	else if(giTariffFeeMode==3) iRet=roundf(val); //normal(.5 to 1)
+	return(iRet);
+	
+};
+
+
+double db::CalFeeRAM2GR(string eTime, string payTime,int iTransType) 
+{
+	CE_Time entryTime;
+	CE_Time payDT;
+	CE_Time calTime;
+	CE_Time currentTime;
+	CE_Time PD,pt;
+	CE_Time Lpd,Npd;
+	entryTime.SetTime(eTime);
+	payDT.SetTime(payTime);
+	double dayFee=0, zoneFee=0;
+	int iDayType;
+	bool bFirstFreed = false; // for first free time, only once
+	bool bGotDayInfo = false; // for get day info, only once for a day
+	bool b24HourBlock = false;
+	bool bCheckGT = false; //for grace time, only valid for 1st zone
+	bool bMCPerDayChecked= false;
+	int i24HourBlocks;
+	int s24HourFee=0, s24HourCharges=0;
+	string dtStr;
+	CE_Time zt;
+
+	string sT[9],eT[9];
+	int rateType[10],GT[10];
+	double chargeRate[9];
+	int CTB[9];
+	double zoneMin[9],zoneMax[9];
+	double firstAdd[9],secondAdd[9],thirdAdd[9];
+	int firstFree[9],secondFree[9],thirdFree[9];
+	int iAllowance[9];
+	int maxZone, zoneRateType;
+	int iZoneCutoff,iDayCutoff;
+	double dayMin, dayMax;
+	int iNextGT,iNextRT;
+	CE_Time zoneTime[10];
+	
+	int currentZone, currentRateType;
+	int currentCTB, currentGT;
+	double currentRate=0, currentMin=0, currentMax=0;
+	double currentAdd, currentAdd2, currentAdd3;
+	int currentFree, currentFree2, currentFree3;
+	int currentAllowance;
+	double charge=0;
+	int timediff;
+	float haspaid;
+	double iRet=0;
+
+	
+	operation::getInstance()->writelog("Entry Time: " + entryTime.DateTimeString(), "DB");
+	operation::getInstance()->writelog("Pay Time: " + payDT.DateTimeString(), "DB");
+
+	timediff = calTime.diffmin(entryTime.GetUnixTimestamp(), payDT.GetUnixTimestamp());
+
+	if(timediff<0) return(0);
+
+	long a,b;
+
+	a=entryTime.Second();
+	b=payDT.Second();
+	
+	if (a<b)
+	{
+		payDT.SetTime(payDT.GetUnixTimestamp()+60);
+		operation::getInstance()->writelog("add one minutes", "DB");
+	}
+	currentTime.SetTime(payDT.GetUnixTimestamp());
+
+	PD.SetTime(entryTime.Year(),entryTime.Month(),entryTime.Day(),0,0,0);
+	pt.SetTime(entryTime.GetUnixTimestamp());
+	
+	operation::getInstance()->writelog("Time1: " + pt.DateTimeString(), "DB");
+	operation::getInstance()->writelog("Time2: " + currentTime.DateTimeString(), "DB");
+
+	while(1)
+	{
+		timediff=calTime.diffday(PD.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+		if(timediff<0)
+		break;
+		if(bGotDayInfo==false)
+		{
+			dayFee=0;
+			Lpd.SetTime(PD.GetUnixTimestamp()-86400);
+			iDayType=GetDayType(Lpd);
+			operation:: getInstance()->writelog("last day Type:" + to_string(iDayType), "DB");
+			if(gtariff[iTransType][iDayType].start_time[0].empty())
+			{
+				operation::getInstance()->writelog("No Tariff defined for DayType: "+to_string(iDayType), "DB");
+				return(-2); //No Tariff defined for DayType
+			}
+			maxZone=0;
+			for(int k=1;k<10;k++){
+				if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
+				{
+					maxZone=k;
+					operation::getInstance()->writelog("Max zone for last day is: " + to_string(maxZone), "DB");
+					break;
+				}
+			};
+			
+			if(maxZone==0) return(-4); //time zone wrong
+			// put last zone of last day in array(0)
+			rateType[0]=std::stoi(gtariff[iTransType][iDayType].rate_type[maxZone-1]);
+			chargeRate[0]=std::stod(gtariff[iTransType][iDayType].charge_rate[maxZone-1]);
+			CTB[0]=std::stoi(gtariff[iTransType][iDayType].charge_time_block[maxZone-1]);
+			zoneMin[0]=std::stod(gtariff[iTransType][iDayType].min_charge[maxZone-1]);
+			zoneMax[0]=std::stod(gtariff[iTransType][iDayType].max_charge[maxZone-1]);
+			GT[0]=std::stoi(gtariff[iTransType][iDayType].grace_time[maxZone-1]);
+			firstAdd[0]=std::stod(gtariff[iTransType][iDayType].first_add[maxZone-1]);
+			firstFree[0]=std::stoi(gtariff[iTransType][iDayType].first_free[maxZone-1]);
+			secondAdd[0]=std::stod(gtariff[iTransType][iDayType].second_add[maxZone-1]);
+			secondFree[0]=std::stoi(gtariff[iTransType][iDayType].second_free[maxZone-1]);
+			thirdAdd[0]=std::stod(gtariff[iTransType][iDayType].third_add[maxZone-1]);
+			thirdFree[0]=std::stoi(gtariff[iTransType][iDayType].third_free[maxZone-1]);
+			iAllowance[0]=std::stoi(gtariff[iTransType][iDayType].allowance[maxZone-1]);
+			zt.SetTime(gtariff[iTransType][iDayType].start_time[maxZone-1]);
+			dtStr=Lpd.DateString()+" "+zt.TimeString();
+			operation::getInstance()->writelog ("Zone time is:" + dtStr, "DB");
+			zoneTime[0].SetTime(dtStr);
+			operation::getInstance()->writelog ("Zone time is:" + zoneTime[0].DateTimeString(), "DB");
+			//get day of PD
+			iDayType=GetDayType(PD);
+			operation::getInstance()->writelog("Current day Type: "+ iDayType, "DB");
+			if(gtariff[iTransType][iDayType].start_time[0].empty())
+			{
+				operation::getInstance()->writelog ("No Tariff defined for Daytype: "+ to_string(iDayType), "DB");
+				return(-2); //No Tariff defined for DayType
+			}
+
+			maxZone=0;
+			for(int k=1;k<10;k++){
+				if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
+				{
+					maxZone=k;
+					operation::getInstance()->writelog ("max zone for current day is: "+ maxZone,"DB");
+					break;
+				}
+			}
+			if(maxZone==0) return(-4); //time zone wrong
+			for(int k=1;k<=maxZone;k++){
+				rateType[k]=std::stoi(gtariff[iTransType][iDayType].rate_type[k-1]);
+				chargeRate[k]=std::stod(gtariff[iTransType][iDayType].charge_rate[k-1]);
+				CTB[k]=std::stoi(gtariff[iTransType][iDayType].charge_time_block[k-1]);
+				zoneMin[k]=std::stod(gtariff[iTransType][iDayType].min_charge[k-1]);
+				zoneMax[k]=std::stod(gtariff[iTransType][iDayType].max_charge[k-1]);
+				GT[k]=std::stoi(gtariff[iTransType][iDayType].grace_time[k-1]);
+				firstAdd[k]=std::stod(gtariff[iTransType][iDayType].first_add[k-1]);
+				firstFree[k]=std::stoi(gtariff[iTransType][iDayType].first_free[k-1]);
+				secondAdd[k]=std::stod(gtariff[iTransType][iDayType].second_add[k-1]);
+				secondFree[k]=std::stoi(gtariff[iTransType][iDayType].second_free[k-1]);
+				thirdAdd[k]=std::stod(gtariff[iTransType][iDayType].third_add[k-1]);
+				thirdFree[k]=std::stoi(gtariff[iTransType][iDayType].third_free[k-1]);
+				iAllowance[k]=std::stoi(gtariff[iTransType][iDayType].allowance[k-1]);
+				
+				//operation::getInstance()->writelog("Zone time from db is: " + gtariff[iTransType][iDayType].start_time[k-1], "DB");
+				zt.SetTime(gtariff[iTransType][iDayType].start_time[k-1]);
+				//operation::getInstance()->writelog("Zone time convert is: " + zt.DateTimeString(), "DB");
+				dtStr=PD.DateString()+" "+zt.TimeString();
+				
+				operation::getInstance()->writelog("Zone time plus pd date is: " + dtStr, "DB");
+				zoneTime[k].SetTime(dtStr);
+				operation::getInstance()->writelog("zone time convert is: " + zoneTime[k].DateTimeString(), "DB");
+			}
+			dayMin = std::stod(gtariff[iTransType][iDayType].whole_day_min);
+			dayMax = std::stod(gtariff[iTransType][iDayType].whole_day_max);
+			iZoneCutoff = std::stoi(gtariff[iTransType][iDayType].zone_cutoff);
+			iDayCutoff = std::stoi(gtariff[iTransType][iDayType].day_cutoff);
+
+			operation::getInstance()->writelog("daymin =" + to_string(dayMin), "DB");
+			operation::getInstance()->writelog("dayMax = "+ to_string(dayMax), "DB");
+			//get firstzone for next day
+			Npd.SetTime(PD.GetUnixTimestamp()+86400);
+			iDayType=GetDayType(Npd);
+			operation::getInstance()->writelog("Next day type: "+ to_string(iDayType), "DB");
+			if(gtariff[iTransType][iDayType].start_time[0].empty())
+			{
+				operation::getInstance()->writelog ("No tariff defined for DayType: " + to_string(iDayType), "DB");
+				return(-2); //No Tariff defined for DayType
+			}
+			iNextGT = stoi(gtariff[iTransType][iDayType].grace_time[0]);
+			iNextRT = stoi(gtariff[iTransType][iDayType].rate_type[0]);
+			zt.SetTime(gtariff[iTransType][iDayType].start_time[0]);
+			if(iDayCutoff==1)
+			dtStr=Npd.DateString()+" 00:00:00";
+			else
+			dtStr=Npd.DateString()+" "+zt.TimeString();
+			operation::getInstance()->writelog("zone time is:" + dtStr,"DB");
+			zoneTime[maxZone+1].SetTime(dtStr);
+			operation::getInstance()->writelog("convert zone time = " + zoneTime[maxZone+1].DateTimeString(), "DB");
+			GT[maxZone+1]=iNextGT;
+			rateType[maxZone+1]=iNextRT;
+			bGotDayInfo = true;
+			
+			if((dayMin==dayMax)&&(dayMin>0))
+			{
+				operation::getInstance()->writelog ("In 24hrmode","DB");
+				b24HourBlock= true;
+				s24HourFee=dayMin;
+				dayMin=0;
+				dayMax=0;
+			}
+			else
+			{
+				operation::getInstance()->writelog ("Out 24hrmode","DB");
+				b24HourBlock= false;
+				i24HourBlocks=0;
+			}
+			
+		}
+		//if defined 24 hour block, and blocks>0
+		if(b24HourBlock == true)
+		{
+			timediff=calTime.diffhour(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+			i24HourBlocks=timediff/24;
+		}
+		else
+		i24HourBlocks=0;
+		
+		if(i24HourBlocks>0)
+		{
+			s24HourCharges=s24HourCharges+s24HourFee;
+			pt.SetTime(pt.GetUnixTimestamp()+86400);
+			currentRateType=0;
+			bCheckGT= true;
+			operation::getInstance()->writelog("24hr charge: " + s24HourCharges, "DB");
+		}
+		else
+		{
+			for(int k=1;k<=maxZone+1;k++)
+			{
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[k].GetUnixTimestamp());
+				operation::getInstance()->writelog("diff min for zone" + timediff, "DB");
+				if(timediff>0)
+				{
+					currentZone=k-1;
+					break;
+				}
+			};
+			operation::getInstance()->writelog("current zone is: " + currentZone, "DB");
+			
+			currentRateType = rateType[currentZone];
+			currentRate = chargeRate[currentZone];
+			currentCTB = CTB[currentZone];
+			currentMin = zoneMin[currentZone];
+			currentMax = zoneMax[currentZone];
+			currentGT = GT[currentZone];
+			currentAdd = firstAdd[currentZone];
+			currentFree = firstFree[currentZone];
+
+			currentAdd2 = secondAdd[currentZone];
+			currentFree2 = secondFree[currentZone];
+			currentAdd3 = thirdAdd[currentZone];
+			currentFree3 = thirdFree[currentZone];
+
+			currentAllowance = iAllowance[currentZone];
+			
+			if((currentRateType<1)||(currentRateType>2))
+			return(-3);
+			operation::getInstance()->writelog("currentRateType: " + currentRateType, "DB");
+			operation::getInstance()->writelog("cureent Rate: "+ std::to_string(currentRate),"DB");
+			operation::getInstance()->writelog("currentCTB: "+ currentCTB,"DB");
+			operation::getInstance()->writelog("currentFree: " + currentFree,"DB");
+			operation::getInstance()->writelog("currentAdd: " + std::to_string(currentAdd),"DB");
+			operation::getInstance()->writelog("currentGT: "+ currentGT,"DB");
+			operation::getInstance()->writelog("currentMax: "+ std::to_string(currentMax),"DB");
+			operation::getInstance()->writelog("currentMin: "+ std::to_string(currentMin),"DB");
+			operation::getInstance()->writelog("currentAllowance: "+ to_string(currentAllowance),"DB");
+		}
+		
+		// check grace time
+		
+		if(bCheckGT==false)
+		{
+			if(currentGT>0)
+			{
+				operation::getInstance()->writelog("fee start time: " + pt.DateTimeString(),"DB");
+				operation::getInstance()->writelog("cal fee time: " + currentTime.DateTimeString(),"DB");
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+				operation::getInstance()->writelog("diff min for zone" + timediff,"DB");
+				if(timediff>currentGT)
+				{
+					operation::getInstance()->writelog("Not grace time","DB");
+					bCheckGT=true;
+				}
+				else
+				{
+					operation::getInstance()->writelog("within grace period","DB");
+					return(0);
+				}
+			}
+			else
+					bCheckGT=true;
+		}
+		
+		// push time, get zone fee
+		zoneFee =0;
+
+		if(currentRateType==1)
+		{
+			if (currentCTB==0)
+			return(-3);
+			if(currentAllowance>0)
+			{
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+				operation::getInstance()->writelog("time diff for allowance is "+ timediff,"DB");
+				if(((charge>0)||(dayFee>0))&&(timediff<=currentAllowance))
+				{
+					operation::getInstance()->writelog("within allowance, no change","DB");
+					break;
+				}
+			};
+			
+			if(currentFree>0)
+			{
+				if(((operation::getInstance()->tParas.giFirstHourMode==0)||((dayFee==0)&&(charge==0)))&& (bFirstFreed==false))
+				{
+					if(operation::getInstance()->tParas.giFirstHour>0)
+					{
+						operation::getInstance()->writelog("gifirsthour: "+ operation::getInstance()->tParas.giFirstHour,"DB");
+						timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+						if(timediff<=currentFree)
+						{
+							if(iZoneCutoff==1)
+							pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+							else
+							pt.SetTime(pt.GetUnixTimestamp()+(currentFree*60));
+							operation::getInstance()->writelog("New pt time in first mode: "+ pt.DateTimeString(),"DB");
+							zoneFee=currentAdd;
+							timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+							if(timediff<=0)
+							{
+								dayFee=dayFee + zoneFee;
+								break;
+							}
+							else
+							{
+								if((operation::getInstance()->tParas.giFirstHour>1)&&(iZoneCutoff==0))
+								{
+									
+									timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+									if((timediff<=0)&&(rateType[currentZone+1]==2))
+									{
+										zoneFee= currentAdd;
+										goto SettleFirstFree1;
+									}
+									pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
+									zoneFee = currentAdd + currentAdd2;
+									operation::getInstance()->writelog("I am here1","DB");
+									timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+									if(timediff<=0)
+									{
+										dayFee=dayFee + zoneFee;
+										break;
+									}
+									else
+									{
+										if(operation::getInstance()->tParas.giFirstHour>2)
+										{
+											timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+											if((timediff<=0)&& (rateType[currentZone+1]==2))
+											{
+												zoneFee = currentAdd + currentAdd2;
+												goto SettleFirstFree1;
+											}
+											pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+											zoneFee = currentAdd + currentAdd2 + currentAdd3;
+											timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+											if(timediff<=0)
+											{
+												dayFee=dayFee + zoneFee;
+												break;
+											}
+										}
+									}
+								}
+
+SettleFirstFree1:
+								if(operation::getInstance()->tParas.giFirstHourMode==1)
+								bFirstFreed=true;
+							}
+						}
+						else
+						{
+							zoneFee = currentAdd;
+							pt.SetTime(pt.GetUnixTimestamp()+(currentFree*60));
+							timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+							if(timediff<=0)
+							{
+								dayFee=dayFee + zoneFee;
+								break;
+							}
+							else
+							{
+								if(operation::getInstance()->tParas.giFirstHour>1)
+								{
+									timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+									if(timediff<= currentFree2)
+									{
+										if(iZoneCutoff==1)
+										pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+										else
+										pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
+										operation::getInstance()->writelog( "New pt time in first mode 2 "+pt.DateTimeString(),"DB");
+										zoneFee = currentAdd + currentAdd2;
+										timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+										if(timediff<=0)
+										{
+											dayFee=dayFee + zoneFee;
+											break;
+										}
+										else
+										{
+											if((operation::getInstance()->tParas.giFirstHour>2)&&(iZoneCutoff==0))
+											{
+												timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+												if((timediff<=0)&& (rateType[currentZone+1]==2))
+												{
+													zoneFee = currentAdd + currentAdd2;
+													goto SettleFirstFree2;
+												}
+												pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+												zoneFee = currentAdd + currentAdd2 + currentAdd3;
+												timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+												if(timediff<=0)
+												{
+													dayFee=dayFee + zoneFee;
+													break;
+												}
+											}
+SettleFirstFree2:
+											if(operation::getInstance()->tParas.giFirstHourMode==1)
+											bFirstFreed=true;
+										}
+									}
+									else
+									{
+										zoneFee = currentAdd + currentAdd2;
+										pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
+										operation::getInstance()->writelog( "2nd New pt time"+pt.DateTimeString(),"DB");
+										timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+										if(timediff<=0)
+										{
+											dayFee=dayFee + zoneFee;
+											break;
+										}
+										else
+										{
+											if(operation::getInstance()->tParas.giFirstHour>2)
+											{
+												timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+												if(timediff<= currentFree3)
+												{
+													if(iZoneCutoff==1)
+													pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+													else
+													pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+													operation::getInstance()->writelog( "New pt time in first mode 3 "+pt.DateTimeString(),"DB");
+													zoneFee = currentAdd + currentAdd2 + currentAdd3;
+													timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+													if(timediff<=0)
+													{
+														dayFee=dayFee + zoneFee;
+														break;
+													}
+													else
+													{
+														if(operation::getInstance()->tParas.giFirstHourMode==1)
+														bFirstFreed=true;
+													}
+												}
+												else
+												{
+													
+													zoneFee = currentAdd + currentAdd2 + currentAdd3;
+													pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+													operation::getInstance()->writelog( "3rd New pt time"+pt.DateTimeString(),"DB");
+													timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+													if(timediff<=0)
+													{
+														dayFee=dayFee + zoneFee;
+														break;
+													}
+													else
+													{
+														if(operation::getInstance()->tParas.giFirstHourMode==1)
+														bFirstFreed = true;
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			operation::getInstance()->writelog("Zone Fee after 1st hr rate is "+std::to_string(zoneFee),"DB");
+			while(1)
+			{
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+				
+				if(timediff<=0) break;
+				
+				if(currentAllowance>0)
+				{
+					timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+					if(((charge>0)||(dayFee>0)||(zoneFee>0))&&(timediff<=currentAllowance))
+					{
+						operation::getInstance()->writelog("within allowance, no change","DB");
+					}
+					else
+					zoneFee = zoneFee + currentRate;
+				}
+				else
+				zoneFee = zoneFee + currentRate;
+				
+				if((currentMax>0)&&(zoneFee>=currentMax))
+				{
+					pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+					break;
+				}
+				pt.SetTime(pt.GetUnixTimestamp()+(currentCTB*60));
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+				if(timediff<=0) break;
+			}
+			
+			if(iZoneCutoff==1)
+			{
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+				if(timediff<0)
+				{
+					if((operation::getInstance()->tParas.giHr2PEAllowance>0)&& (rateType[currentZone+1]==2))
+					{
+						timediff=calTime.diffmin(entryTime.GetUnixTimestamp(), payDT.GetUnixTimestamp());
+						if(timediff>operation::getInstance()->tParas.giHr2PEAllowance)
+						{
+							pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+						}
+					}
+					else
+					{
+						pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+					}
+				}
+			};
+			operation::getInstance()->writelog("zone Fee is: "+ std::to_string(zoneFee),"DB");
+			
+		};	
+		
+		if(currentRateType==2)
+		{
+			operation::getInstance()->writelog("zone Fee enter currentRateType  is: "+ std::to_string(zoneFee),"DB");
+			if((operation::getInstance()->tParas.giMCyclePerDay>0)&&(iTransType== 2))
+			{
+				if((bMCPerDayChecked== false)&&(currentRate>0))
+				{
+					haspaid= HasPaidWithinPeriod(zoneTime[currentZone].DateTimeString(),zoneTime[currentZone+1].DateTimeString());
+					if(haspaid>0)
+					{
+						currentRate=0;
+					}
+				}
+				bMCPerDayChecked=true;
+			}
+			if(currentAllowance>0)
+			{
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+				
+				if(((charge>0)||(dayFee>0))&&(timediff<=currentAllowance))
+				{
+					operation::getInstance()->writelog("within allowance, no change","DB");
+				}
+				else
+				zoneFee = zoneFee + currentRate;
+			}
+			else
+			zoneFee = zoneFee + currentRate;
+			
+			operation::getInstance()->writelog("PEallowance is "+ operation::getInstance()->tParas.giPEAllowance,"DB");
+			
+			if(operation::getInstance()->tParas.giPEAllowance>0)
+			{
+				operation::getInstance()->writelog("pt before gi Allowance is : "+pt.DateTimeString(),"DB");
+				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+				operation::getInstance()->writelog("time diff in gi is "+timediff,"DB");
+				if(timediff<operation::getInstance()->tParas.giPEAllowance)
+				{
+					pt.SetTime(pt.GetUnixTimestamp()+(operation::getInstance()->tParas.giPEAllowance*60));
+					operation::getInstance()->writelog("pt in gi Allowance 1 is : "+pt.DateTimeString(),"DB");
+				}
+				else
+				{
+					pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+					operation::getInstance()->writelog("pt in gi Allowance 2 is : "+pt.DateTimeString(),"DB");
+				}
+				operation::getInstance()->writelog("pt in gi Allowance is : "+pt.DateTimeString(),"DB");
+			}
+			else
+			pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+			operation::getInstance()->writelog("zone Fee at currentRateType  is: "+ std::to_string(zoneFee),"DB");
+		};
+		operation::getInstance()->writelog("day Fee before current min is: "+ std::to_string(dayFee),"DB");
+		operation::getInstance()->writelog("zone Fee before current min is: "+std::to_string(zoneFee),"DB");
+		operation::getInstance()->writelog("currentMin Fee is: "+ std::to_string(currentMin),"DB");
+		operation::getInstance()->writelog("currentMax Fee is: "+ std::to_string(currentMax),"DB");
+		if((currentMin>0)&&(zoneFee<currentMin))
+		zoneFee=currentMin;
+		if((currentMax>0)&&(zoneFee>currentMax))
+		zoneFee=currentMax;
+		dayFee = dayFee + zoneFee;
+		operation::getInstance()->writelog("pt is : "+pt.DateTimeString(),"DB");
+		operation::getInstance()->writelog("PD is : "+PD.DateTimeString(),"DB");
+		operation::getInstance()->writelog("day Fee is: "+ std::to_string(dayFee),"DB");
+		operation::getInstance()->writelog("zone Fee after current min is: "+ std:: to_string(zoneFee),"DB");
+		operation::getInstance()->writelog(std::to_string(PD.GetUnixTimestamp()),"DB");
+		operation::getInstance()->writelog(std::to_string(pt.GetUnixTimestamp()),"DB");
+		timediff=calTime.diffday(PD.GetUnixTimestamp(),pt.GetUnixTimestamp()); 
+		operation::getInstance()->writelog("diff day is"+ std::to_string(timediff),"DB");
+		
+		if(timediff>0)
+		{
+			operation::getInstance()->writelog("day Feeq is: "+std::to_string(dayFee),"DB");
+			operation::getInstance()->writelog("charge Feeq is: "+ std::to_string(charge),"DB");
+			if((dayMin>0)&&(dayFee<dayMin))
+			dayFee=dayMin;
+			if((dayMax>0)&&(dayFee>dayMax))
+			dayFee=dayMax;
+			charge=charge+dayFee;
+			dayFee=0;
+			bGotDayInfo= false;
+			PD.SetTime(PD.GetUnixTimestamp()+86400);
+			operation::getInstance()->writelog("next day PD is:"+PD.DateTimeString(),"DB");
+			operation::getInstance()->writelog("day Feeb is: "+ std::to_string(dayFee),"DB");
+			operation::getInstance()->writelog("charge Feeb is: "+ std::to_string(charge),"DB");
+		}
+		timediff=calTime.diffmin(pt.GetUnixTimestamp(),currentTime.GetUnixTimestamp());
+		if(timediff<=0) break;
+		string log;
+		log=pt.DateTimeString() + to_string(charge);
+		operation::getInstance()->writelog("loop 24hr block ="+ std::to_string(b24HourBlock),"DB");
+		
+		operation::getInstance()->writelog(log,"DB");
+	}
+	
+	if(dayFee>0) // day fee have not add into charge
+	{
+		operation::getInstance()->writelog("day Fee0 is: "+std::to_string(dayFee),"DB");
+		operation::getInstance()->writelog("charge Fee0 is: "+std::to_string(charge),"DB");
+		if((dayMin>0)&&(dayFee<dayMin))
+		dayFee=dayMin;
+		if((dayMax>0)&&(dayFee>dayMax))
+		dayFee=dayMax;
+		charge=charge+dayFee;
+		operation::getInstance()->writelog("day Fee1 is: "+ std::to_string(dayFee),"DB");
+		operation::getInstance()->writelog("charge Fee1 is: "+std::to_string(charge),"DB");
+	}
+	operation::getInstance()->writelog("After loop 24hr block ="+ std::to_string(b24HourBlock),"DB");
+	
+	if(b24HourBlock==true)
+	{
+		operation::getInstance()->writelog("b 24hr block ","DB");
+		operation::getInstance()->writelog("b 24hr charge: "+ std::to_string(s24HourCharges),"DB");
+		if(charge> s24HourFee) charge=s24HourFee;
+		operation::getInstance()->writelog("b charge: "+std::to_string(charge),"DB");
+		charge= s24HourCharges+charge;
+	}
+	
+	if(operation::getInstance()->tParas.giTariffFeeMode>0)
+	{
+		iRet=RoundIt(charge, operation::getInstance()->tParas.giTariffFeeMode)/100;
+	}
+	else iRet=charge;
+	
+	
+	operation::getInstance()->writelog("fee is: "+ std::to_string(iRet),"DB");
+	operation::getInstance()->writelog("pt time is: "+pt.DateTimeString(),"DB");
+	return(iRet);
+	
+
+}
+

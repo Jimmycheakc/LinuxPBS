@@ -78,6 +78,12 @@ public:
     int downloadratemaxinfo(int iCheckStatus = 0);
     int writeratemaxinfo2local(rate_max_info_struct rate_max_info);
     int WriteTariff2RAM(tariff_struct t);
+    int GetDayType(CE_Time curr_date);
+    int GetDayTypeNoPE(CE_Time curr_date);
+    int GetDayTypeWithHE(CE_Time curr_date);
+    float HasPaidWithinPeriod(string sTimeFrom, string sTimeTo);
+    double RoundIt(double val, int giTariffFeeMode);
+    double CalFeeRAM2GR(string eTime, string payTime,int iTransType);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
