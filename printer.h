@@ -227,10 +227,10 @@ private:
     std::string cmdLeftMargin_;
     std::string cmdCut_;
     int lastAlign_;
-    std::string Align_[3];
-    std::string FC_[16];
-    std::string FF_[12];
-    std::string Font_[16];
+    std::string Align_[4];
+    std::string FC_[17];
+    std::string FF_[13];
+    std::string Font_[17];
     bool isPrinterError_;
     int selfTestInterval_;
     boost::asio::deadline_timer selfTestTimer_;

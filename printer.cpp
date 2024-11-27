@@ -29,36 +29,36 @@ Printer::Printer()
     selfTestTimer_(ioContext_)
 {
     // Initialize fronts
-    FC_[0]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
-    FC_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x08'});
-    FC_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x10'});
-    FC_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
-    FC_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x30'});
-    FC_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x18'});
-    FC_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x28'});
-    FC_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x38'});
-    FC_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
-    FC_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x09'});
-    FC_[10] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x11'});
-    FC_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
-    FC_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x31'});
-    FC_[13] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x19'});
-    FC_[14] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x29'});
-    FC_[15] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x39'});
+    FC_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
+    FC_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x08'});
+    FC_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x10'});
+    FC_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
+    FC_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x30'});
+    FC_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x18'});
+    FC_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x28'});
+    FC_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x38'});
+    FC_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
+    FC_[10]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x09'});
+    FC_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x11'});
+    FC_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
+    FC_[13] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x31'});
+    FC_[14] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x19'});
+    FC_[15] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x29'});
+    FC_[16] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x39'});
 
     // Initialize FTP fronts
-    FF_[0]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
-    FF_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
-    FF_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x02'});
-    FF_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x03'});
-    FF_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x12'});
-    FF_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x13'});
-    FF_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
-    FF_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
-    FF_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x22'});
-    FF_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x23'});
-    FF_[10] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x32'});
-    FF_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x33'});
+    FF_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
+    FF_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
+    FF_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x02'});
+    FF_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x03'});
+    FF_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x12'});
+    FF_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x13'});
+    FF_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
+    FF_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
+    FF_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x22'});
+    FF_[10]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x23'});
+    FF_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x32'});
+    FF_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x33'});
 
     // Initialize align
     Align_[0] = "";
@@ -498,7 +498,7 @@ void Printer::setPrinterSetting(Printer::PRINTER_TYPE type, int align, int font,
             cmdLeftMargin_ = cmdLeftMarginSS_.str();
             cmdCutSS_ << ASCII::ESC << 'i';
             cmdCut_ = cmdCutSS_.str();
-            for (int i = 0; i < 16; i++)
+            for (int i = 0; i < 17; i++)
             {
                 Font_[i] = FC_[i];
             }
@@ -513,7 +513,7 @@ void Printer::setPrinterSetting(Printer::PRINTER_TYPE type, int align, int font,
             cmdLeftMargin_ = cmdLeftMarginSS_.str();
             cmdCutSS_ << ASCII::GS << std::string("V") << static_cast<char>(0);
             cmdCut_ = cmdCutSS_.str();
-            for (int i = 0; i < 12; i++)
+            for (int i = 0; i < 13; i++)
             {
                 Font_[i] = FF_[i];
             }
@@ -533,14 +533,19 @@ void Printer::setPrinterSetting(Printer::PRINTER_TYPE type, int align, int font,
         }
         case PRINTER_TYPE::CBM1000:
         {
-            std::stringstream cmdLeftMarginSS_, cmdCutSS_;
-            cmdLeftMarginSS_ << ASCII::ESC << 'D' << static_cast<char>(leftMargin_) << static_cast<char>(1) << static_cast<char>(0) << ASCII::TAB;
-            cmdLeftMargin_ = "";
-            cmdLeftMargin_.clear();
-            cmdLeftMargin_ = cmdLeftMarginSS_.str();
+            std::stringstream cmdLeftMarginSS_;
+
+            if (cmdLeftMargin_.empty())
+            {
+                cmdLeftMarginSS_ << ASCII::ESC << 'D' << static_cast<char>(leftMargin_) << static_cast<char>(1) << static_cast<char>(0) << ASCII::TAB;
+                cmdLeftMargin_ = "";
+                cmdLeftMargin_.clear();
+                cmdLeftMargin_ = cmdLeftMarginSS_.str();
+            }
+            std::stringstream cmdCutSS_;
             cmdCutSS_ << ASCII::GS << 'V' << static_cast<char>(1);
             cmdCut_ = cmdCutSS_.str();
-            for (int i = 0; i < 16; i++)
+            for (int i = 0; i < 17; i++)
             {
                 Font_[i] = FC_[i];
             }
@@ -647,7 +652,7 @@ void Printer::FnFullCut(int bottom)
 void Printer::FnGetAllFonts()
 {
     std::stringstream outputSS_;
-    for (int i = 0; i < (sizeof(Font_)/sizeof(Font_[0])); i++)
+    for (int i = 1; i < (sizeof(Font_)/sizeof(Font_[0])); i++)
     {
         outputSS_.str("");
         outputSS_.clear();

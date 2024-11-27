@@ -63,7 +63,10 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleUPTCommandCancel"            ,std::bind(&EventHandler::handleUPTCommandCancel           ,eventHandler_, std::placeholders::_1) },
 
     // Printer Event
-    {   "Evt_handlePrinterStatus"               ,std::bind(&EventHandler::handlePrinterStatus              ,eventHandler_, std::placeholders::_1) }
+    {   "Evt_handlePrinterStatus"               ,std::bind(&EventHandler::handlePrinterStatus              ,eventHandler_, std::placeholders::_1) },
+
+    // Barcode Scanner Event
+    {   "Evt_handleBarcodeReceived"             ,std::bind(&EventHandler::handleBarcodeReceived            ,eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -1143,6 +1146,30 @@ bool EventHandler::handlePrinterStatus(const BaseEvent* event)
     {
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << intEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleBarcodeReceived(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else

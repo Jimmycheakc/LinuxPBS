@@ -26,6 +26,8 @@
 #include "lpr.h"
 #include "printer.h"
 #include "upt.h"
+#include "barcode_reader.h"
+#include "boost/algorithm/string.hpp"
 
 operation* operation::operation_ = nullptr;
 std::mutex operation::mutex_;
@@ -467,7 +469,7 @@ void operation::Initdevice(io_context& ioContext)
         Printer::getInstance()->FnSetPrintMode(2);
         Printer::getInstance()->FnSetDefaultAlign(Printer::CBM_ALIGN::CBM_LEFT);
         Printer::getInstance()->FnSetDefaultFont(2);
-        Printer::getInstance()->FnSetLeftMargin(300);
+        //Printer::getInstance()->FnSetLeftMargin(0);
         Printer::getInstance()->FnSetSelfTestInterval(2000);
         Printer::getInstance()->FnSetSiteID(10);
         Printer::getInstance()->FnSetPrinterType(Printer::PRINTER_TYPE::CBM1000);
@@ -477,6 +479,7 @@ void operation::Initdevice(io_context& ioContext)
     GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
     Lpr::getInstance()->FnLprInit(ioContext);
+    BARCODE_READER::getInstance()->FnBarcodeReaderInit();
 
     // Loop A timer
     pLoopATimer_ = std::make_unique<boost::asio::deadline_timer>(ioContext);
@@ -2552,4 +2555,183 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
             break;
         }
     }
+}
+
+
+void operation::PrintTR(bool bForSeason)
+{
+    std::string gsSite = "NUH KENT RIDGE WING";
+    std::string gsCompany;
+    std::string gsAddress;
+    std::string gsZIP;
+    std::string gsGSTNo = " M2-0069889-4";
+    std::string gsTel;
+    std::string exitReceiptNo = " R000000033";
+    std::string entrySerialNo;
+    std::string vehicleType = " Car";
+    std::string iuNo = " 1111900155064907";
+    std::string cardNo = " 1111900155064907";
+    std::string entryTime = " 12/01/2023 10:51:24";
+    std::string exitTime = " 12/01/2023 11:18:06";
+    std::string parkTime = " 00:27";
+    std::string amt = " $0.97";
+    std::string cardBal = " $24.30";
+    std::string owefee;
+    std::string fee;
+    std::string pm;
+    std::string admin;
+    std::string app;
+    std::string tamt;
+    std::string rdmamt;
+    std::string rebateamt;
+    std::string rebatebal;
+    std::string rebatedate;
+    std::string gstamt;
+
+    std::vector<std::string> gsTR(operation::getInstance()->tTR.size());
+    for (std::size_t i = 0; i < operation::getInstance()->tTR.size(); i++)
+    {
+        std::string gsTR_lowercase = operation::getInstance()->tTR[i].gsTR1.empty() ? "" : boost::algorithm::to_lower_copy(operation::getInstance()->tTR[i].gsTR1);
+
+        if (gsTR_lowercase == "site")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsSite;
+        }
+        else if (gsTR_lowercase == "comp")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsCompany;
+        }
+        else if (gsTR_lowercase == "addr")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsAddress;
+        }
+        else if (gsTR_lowercase == "zip")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsZIP;
+        }
+        else if (gsTR_lowercase == "gstno")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsGSTNo;
+        }
+        else if (gsTR_lowercase == "gsTel")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsTel;
+        }
+        else if (gsTR_lowercase == "rno")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + exitReceiptNo;
+        }
+        else if (gsTR_lowercase == "tno")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + entrySerialNo;
+        }
+        else if (gsTR_lowercase == "vtype")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + vehicleType;
+        }
+        else if (gsTR_lowercase == "itno")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + iuNo;
+        }
+        else if (gsTR_lowercase == "card")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + cardNo;
+        }
+        else if (gsTR_lowercase == "et")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + entryTime;
+        }
+        else if (gsTR_lowercase == "pt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + exitTime;
+        }
+        else if (gsTR_lowercase == "pkt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + parkTime;
+        }
+        else if (gsTR_lowercase == "amt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + amt;
+        }
+        else if (gsTR_lowercase == "bal")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + cardBal;
+        }
+        else if (gsTR_lowercase == "owefee")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + owefee;
+        }
+        else if (gsTR_lowercase == "fee")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + fee;
+        }
+        else if (gsTR_lowercase == "pm")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + pm;
+        }
+        else if (gsTR_lowercase == "admin")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + admin;
+        }
+        else if (gsTR_lowercase == "app")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + app;
+        }
+        else if (gsTR_lowercase == "tamt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + tamt;
+        }
+        else if (gsTR_lowercase == "rdmamt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rdmamt;
+        }
+        else if (gsTR_lowercase == "rebateamt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rebateamt;
+        }
+        else if (gsTR_lowercase == "rebatebal")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rebatebal;
+        }
+        else if (gsTR_lowercase == "rebatedate")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rebatedate;
+        }
+        else if (gsTR_lowercase == "gstamt")
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gstamt;
+        }
+        else
+        {
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0;
+        }
+    }
+
+    Printer::getInstance()->FnPrintLine("Clear Buffer", 99);
+
+    for (std::size_t i = 0; i < gsTR.size(); i++)
+    {
+        std::cout << gsTR[i] << std::endl;
+        char F = gsTR[i][0];
+
+        if (F == '@')
+        {
+            int lines = std::stoi(gsTR[i].substr(1));
+            Printer::getInstance()->FnFeedLine(lines);
+        }
+        else if (F == '*')
+        {
+            std::string barcode = gsTR[i].substr(1);
+            Printer::getInstance()->FnPrintBarCode(barcode, operation::getInstance()->tTR[i].giTRF, operation::getInstance()->tTR[i].giTRA, 20);
+        }
+        else
+        {
+            if (!gsTR[i].empty() && gsTR[i].find("N/A") == std::string::npos)
+            {
+                Printer::getInstance()->FnPrintLine(gsTR[i], operation::getInstance()->tTR[i].giTRF, operation::getInstance()->tTR[i].giTRA);
+            }
+        }
+    }
+
+    Printer::getInstance()->FnFullCut();
 }

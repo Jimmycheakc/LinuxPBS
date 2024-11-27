@@ -7,7 +7,7 @@ fi
 
 cd build/
 
-source ~/workspace2/SDK_2022.1/environment-setup-cortexa72-cortexa53-xilinx-linux
+source ~/workspace2/SDK_2/environment-setup-cortexa72-cortexa53-xilinx-linux
 
 make clean
 
