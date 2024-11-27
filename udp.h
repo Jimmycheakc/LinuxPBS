@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <ctime>
 #include "boost/asio.hpp"
+#include <boost/algorithm/string.hpp>
 #include "log.h"
 
 using namespace boost::asio;
@@ -31,7 +32,7 @@ typedef enum : unsigned int
     CmdLockupbarrier        = 67,
     CmdAvailableLots        = 68,
     CmdBroadcastSaveTrans   = 90,
-    CmdFeeTest              = 120,
+    CmdFeeTest              = 301,
     CmdSetDioOutput         = 303
 } udp_rx_command;
 
@@ -92,33 +93,7 @@ public:
     udp::endpoint senderEndpoint_;
     enum { max_length = 1024 };
     char data_[max_length];
-
-    void startreceive()
-    {
-        socket_.async_receive_from(buffer(data_, max_length), senderEndpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& error, std::size_t bytes_received)
-        {
-            if (!error)
-            {
-                if (socket_.local_endpoint().port() == 2001)
-                {
-                    processdata(data_, bytes_received);
-                }
-                else if (socket_.local_endpoint().port() == 2008)
-                {
-                    processmonitordata(data_, bytes_received);
-                }
-            }
-            else
-            {
-                std::stringstream dbss;
-                dbss << "Error receiving message: " << error.message() ;
-                Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
-            }
-
-            startreceive();  // Continue with the next receive operation
-        }));
-    }
-
+    void startreceive();
     void startsend(const std::string& message)
     {
         socket_.async_send_to(buffer(message), serverEndpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& error, std::size_t /*bytes_sent*/)

@@ -135,7 +135,6 @@ void operation::OperationInit(io_context& ioContext)
         //-----
         m_db->downloadseason();
         m_db->moveOfflineTransToCentral();
-       
     }else {
         tProcess.gbInitParamFail = 1;
         writelog("Unable to load parameter, Please download or check!", "OPR");
@@ -201,7 +200,9 @@ bool operation::LoadParameter()
         }
         gbLoadParameter = false;
     }
-
+    iReturn = m_db->LoadTariff();
+   // double parkingfee = m_db->CalFeeRAM2GR("2024-11-26 08:00:00","2024-11-26 10:00:00",0);
+   // writelog("parkingfee = " + std::to_string(parkingfee), "OPR");
     //
     return gbLoadParameter;
 }
@@ -677,7 +678,10 @@ string operation:: getIPAddress()
     }
     
     pclose(pipe);
-
+    //------
+    tParas.gsLocalIP = result;
+    writelog ("local IP address: " + result, "OPR");
+    //-----
     size_t lastDotPosition = result.find_last_of('.');
     result = result.substr(0, lastDotPosition + 1)+ "255";
     // Output the result

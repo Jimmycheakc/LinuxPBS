@@ -90,6 +90,7 @@ public:
 	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
 	DBError loadmessage();
 	DBError loadParam();
+    DBError loadparamfromCentral();
 	DBError loadstationsetup();
     DBError loadcentralDBinfo();
     DBError loadvehicletype();

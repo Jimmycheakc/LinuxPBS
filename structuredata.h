@@ -446,13 +446,39 @@ struct tVType_Struct
 
 struct  tParas_Struct
 {
+	//----site Info
+	int giGroupID;
+	int giSite;
+	string gsCompany;
+	string gsZIP;
+	string gsGSTNo;
+	string gsAddress;
+	string gsTel;
 	string gsCentralDBName;
 	string gsCentralDBServer;
+	string gsLocalIP;
+	int local_udpport; 
+	int remote_udpport; 
+	int giTicketSiteID;
+	int giEPS;
+
+	//-----comport 
 	int giCommPortAntenna;
 	int giCommPortLCSC;
 	int giCommPortKDEReader;
 	int giCommPortUPOS;
 	int giCommPortPrinter;
+	int giCommPortLED;
+	int giCommportLED401;
+	int giCommPortLED2;
+
+	//--- Ant
+	int giAntMaxRetry;
+	int giAntMinOKTimes;
+	bool gbAntiIURepetition;
+	int giAntInqTO;
+
+	//--- LCSC 
 	string gsLocalLCSC;
 	string gsRemoteLCSC;
 	string gsRemoteLCSCBack;
@@ -461,105 +487,20 @@ struct  tParas_Struct
 	string gsCPOID;
 	string gsCPID;
 	string gscarparkcode;
-	int giUploadBLTO;	//not in current central DB
-	int giCommPortLED;
-	int giHasMCycle;
-	int giTicketSiteID;
-	int giEPS;
 
-	int giDataKeepDays;
-	int gsBarrierPulse;
-
-	int giAntMaxRetry;
-	int giAntMinOKTimes;
-	int giAntInqTO;
-	bool gbAntiIURepetition;
-
-	int giCommportLED401;
-	int giAllowMultiEntry; //not in current central DB
-	int giMCAllowMultiEntry; //not in current central DB
-
-	int giIsHDBSite;
-	string gsAllowedHolderType;
-	
+	//--- LED
 	int giLEDMaxChar;
 	
-	bool gbAlwaysTryOnline;
-	bool gbAutoDebitNoEntry;
-	
-	int giLoopAHangTime;
-	int giOperationTO;
+	//----LPR(ini)
+	string lprip_front; 
+	string lprip_rear; 
+	int wait_lpr_notime; 
+	string nexpa_dbserver;
+	string nexpa_dbname; 
+	int sid;	
 
-	eFullAction giFullAction;
-	int giBarrierOpenTooLongTime;
-	int giBitBarrierArmBroken;
-	int giMCControlAction;
-	
-	bool gbLockBarrier;	//not in current central DB
-
-	string gsLogBackFolder;
-	int giLogKeepDays;
-	string gsDBBackupFolder;
-	int giMaxSendOfflineNo;
-	long glMaxLocalDBSize;
-
-	string lprip_front; //not in current central DB
-	string lprip_rear; //not in current central DB
-	int wait_lpr_notime; //not in current central DB
-	string nexpa_dbserver; //not in current central DB
-	string nexpa_dbname; //not in current central DB
-	int sid;	//not in current central DB
-
-	int taxi_control; //not in current central DB
-	int local_udpport; //not in current central DB
-	int remote_udpport; //not in current central DB
-	int not_allow_hourly; //not in current central DB
-	int cepas_enable; //not in current central DB
-
-	int giMaxTransInterval;
-
-
-	int giCommPortLED2;
-	string gsSite;
-	string gsCompany;
-	string gsZIP;
-	string gsGSTNo;
-	string gsAddress;
-	string gsTel;
-	
+	//---- CHU
 	string gsCHUIP;
-	bool gbEnableVoice;
-	int giVoice;
-	
-	float gsMotorRate;
-	int giMCEntryGraceTime;
-	int giMCyclePerDay;
-	int giHasThreeWheelMC;
-	
-
-	bool mbOvernightCharge;
-	string msOvernightTime;
-	int giTariffFeeMode;
-	int giTariffGTMode;
-	int giFirstHourMode;
-	int giFirstHour;
-	int giPEAllowance;
-	int giHr2PEAllowance;
-	
-	int giMaxDebitDays;
-	int giHasHolidayEve;
-	
-	int giProcessReversedCMD;
-	int giExitGraceTime;
-	
-	float gsShutterPulse;
-	int giSeasonCharge;
-	bool gbSeasonAsNormal;
-	int giSeasonPayStart;
-	int giSeasonAllowance;
-	//eCheckSeason giCheckSeason;
-	int giShowSeasonExpireDays;
-	int giShowExpiredTime;
 	int giCHUCnTO;
 	int giCHUComTO;
 	int giCHUComRetry;
@@ -575,46 +516,73 @@ struct  tParas_Struct
 	int giNoIUAutoDebitWT;
 	int giMaxDiffIU;
 	int giTryTimes4NE;
-	
-	
-	int giPrinterType;
-	int giPrintMode;
-	
-	
-	bool gbLoopAFirst;
-	int giCloseBarrierIfTO;
-	int giPrintReceiptTO;
-	int giTransactionTO;
-	int giRefreshTime;
-	
-	int giLoopC2OpenBarWT;
-	
-	bool gbHasRedemption;
-	float msOvernightAmt;
-	int giHasLorry;
-	int giHasContainer;
-	int giLorryRelayTime;
-	int giMOBRelayTimes;
-	
-	int giUpdateAfterExit;
-	
-	
+	eFullAction giFullAction;
 
+	//----special function
+	int giHasMCycle;
+	int giAllowMultiEntry; 
+	int giMCAllowMultiEntry; 
+	bool gbAutoDebitNoEntry;
+	int giIsHDBSite;
+	bool gbseasonOnly;
+	int giHasHolidayEve;
+	int giProcessReversedCMD;
+	bool gbHasRedemption;
+
+	//-----I/O 
+	int giLoopAHangTime;
+	int giBarrierOpenTooLongTime;
+	int giBitBarrierArmBroken;
+	int gsBarrierPulse;
+	bool gbLockBarrier;
+	float gsShutterPulse;
+
+	//----system info
+	int giOperationTO;
+	int giDataKeepDays;
+	string gsLogBackFolder;
+	int giLogKeepDays;
+	int giMaxTransInterval;
+	int giMaxDebitDays;
+	bool gbAlwaysTryOnline;
+	int giMaxSendOfflineNo;
+	long glMaxLocalDBSize;
+	string gsDBBackupFolder;
+
+	//--- tariff 
+	int giTariffFeeMode;
+	int giTariffGTMode;
+	int giFirstHourMode;
+	int giFirstHour;
+	int giPEAllowance;
+	int giHr2PEAllowance;
 	int giV3TransType;
 	int giV4TransType;
 	int giV5TransType;
-	int giUseMagCard;
-	
-	
-	int showtime;
+
+	//---- car park with carpark 
 	int hasinternal_link;
-	
 	int has_internal;
 	string attached_dbname;
 	string attached_dbserver;
-	
 	int attachedexit_udpport;
 	int attachedexit_id;
+
+	//----season 
+	string gsAllowedHolderType;
+	int giSeasonCharge;
+	bool gbSeasonAsNormal;
+	int giSeasonPayStart;
+	int giSeasonAllowance;
+	int giShowSeasonExpireDays;
+	int giShowExpiredTime;
+
+	//----- M/C 
+	float gsMotorRate;
+	int giMCEntryGraceTime;
+	int giMCyclePerDay;
+	int giHasThreeWheelMC;
+	int giMCControlAction;	
 
 };
 

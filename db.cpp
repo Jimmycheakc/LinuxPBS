@@ -3279,7 +3279,9 @@ DBError db::loadParam()
 {
 	int r = -1;
 	vector<ReaderItem> selResult;
-
+	//------
+	loadparamfromCentral();
+	//------
 	r = localdb->SQLSelect("SELECT ParamName, ParamValue FROM Param_mst", &selResult, true);
 	if (r != 0)
 	{
@@ -3506,6 +3508,26 @@ DBError db::loadParam()
 	return iNoData;
 }
 
+DBError db::loadparamfromCentral()
+{
+	int r;
+	vector<ReaderItem> tResult;
+
+	r = centraldb->SQLSelect("SELECT group_id,site_id FROM site_setup", &tResult, true);
+	if (r != 0)
+	{
+		return iCentralFail;
+	}
+
+	if (tResult.size()>0)
+	{
+		operation::getInstance()->tParas.giGroupID = std::stoi(tResult[0].GetDataItem(0));
+		operation::getInstance()->tParas.giSite = std::stoi(tResult[0].GetDataItem(0));
+		return iDBSuccess;
+	}
+	return iNoData;
+
+}
 
 DBError db::loadvehicletype()
 {
@@ -5050,18 +5072,17 @@ DBError db::LoadTariff()
 		operation::getInstance()->writelog("Load tariff_setup: Started","DB");
 
 		Try_Again:
-		sqlStmt="Select * ";
-		sqlStmt= sqlStmt +  " FROM " + tbName + " Order by day_index";
+		sqlStmt="select * ";
+		sqlStmt= sqlStmt +  "from " + tbName + " order by day_index";
+
+	//	operation::getInstance()->writelog(sqlStmt, "DB");
 
 		r=localdb->SQLSelect(sqlStmt,&selResult,true);
 		if (r!=0) return iLocalFail;
-
 		if (selResult.size()>0){
-			
-			int idx = 2;
-
 			for(j=0;j<selResult.size();j++){
-				
+				int idx = 2;
+	//			operation::getInstance()->writelog("loading"+ std::to_string(j), "DB");
 				t.tariff_id = selResult[j].GetDataItem(0);
 				t.day_index = selResult[j].GetDataItem(1);
 				for(int k=0;k<9;k++){
@@ -5092,13 +5113,17 @@ DBError db::LoadTariff()
 				std::vector<std::string> tmpStr;
 		
 				boost::algorithm::split(tmpStr, t.day_type, boost::algorithm::is_any_of(","));
-				
-				for (std::size_t i = 0; i < tmpStr.size(); i++)
+
+				operation::getInstance()->writelog("loading Tday_Type = "+ t.day_type, "DB");
+
+				for (std::size_t i = 0; i < tmpStr.size() - 1; i++)
 				{
 					t.dtype= std::stoi(tmpStr[i]);
+				//	operation::getInstance()->writelog("loading day_Type = "+ std::to_string(t.dtype), "DB");
 					w=WriteTariff2RAM(t);
+				//	operation::getInstance()->writelog("loadingA next", "DB");	
 				}
-					
+				//operation::getInstance()->writelog("loading next", "DB");	
 			}
 
 			operation::getInstance()->writelog("Load tariff parameters: success","DB");

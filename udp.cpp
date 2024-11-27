@@ -206,8 +206,6 @@ void udpclient::processdata (const char* data, std::size_t length)
 		}
 		case CmdStatusOnline:
 			break;
-		case CmdFeeTest:
-			break;
 		case CmdUpdateSeason:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -238,8 +236,41 @@ void udpclient::processdata (const char* data, std::size_t length)
 			}
 			break;
 		}
-		case CmdDownloadTariff:
+		case CmdFeeTest:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->writelog("Fee test command","UDP");
+			std::vector<std::string> tmpStr;
+			boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
+			operation::getInstance()->writelog ("Entry Time: " + tmpStr[0],"UDP");
+			operation::getInstance()->writelog ("Exit Time: " + tmpStr[1],"UDP");
+			operation::getInstance()->writelog ("Rate Type: " + tmpStr[2],"UDP");
+			double parkingfee; 
+			parkingfee = operation::getInstance()->m_db->CalFeeRAM2GR(tmpStr[0],tmpStr[1],std::stoi(tmpStr[2]));
+			if (parkingfee > 0)
+			{
+				sData = pField.Field(3);
+				sData = sData + "," + std::to_string(parkingfee) + ", Fee OK";
+				operation::getInstance()->SendMsg2Server("301", sData);
+			}
+			
 			break;
+
+		}
+		case CmdDownloadTariff:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->writelog("download Tariff","UDP");
+			int ret = operation::getInstance()->m_db->downloadtariffsetup(operation::getInstance()->tParas.giGroupID,operation::getInstance()->tParas.giSite, 0);
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Tariff";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
+			operation::getInstance()->m_db->LoadTariff();
+			break;
+		}
 		case CmdDownloadHoliday:
 			break;
 		case CmdUpdateParam:
@@ -390,3 +421,33 @@ bool udpclient::FnGetMonitorStatus()
 {
 	return monitorStatus_;
 }
+
+void udpclient::startreceive()
+    {
+        socket_.async_receive_from(buffer(data_, max_length), senderEndpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& error, std::size_t bytes_received)
+        {
+            if (!error)
+            {
+                std::string sender_ip = senderEndpoint_.address().to_string();    
+				         
+                if (sender_ip != operation:: getInstance()->tParas.gsLocalIP) {
+                    if (socket_.local_endpoint().port() == 2001)
+                    {
+                        processdata(data_, bytes_received);
+                     }
+                    else if (socket_.local_endpoint().port() == 2008)
+                    {
+                        processmonitordata(data_, bytes_received);
+                    }
+                }
+            }
+            else
+            {
+                std::stringstream dbss;
+                dbss << "Error receiving message: " << error.message() ;
+                Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
+            }
+
+            startreceive();  // Continue with the next receive operation
+        }));
+    }
