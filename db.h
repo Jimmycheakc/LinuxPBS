@@ -84,6 +84,7 @@ public:
     float HasPaidWithinPeriod(string sTimeFrom, string sTimeTo);
     double RoundIt(double val, int giTariffFeeMode);
     double CalFeeRAM2GR(string eTime, string payTime,int iTransType);
+    string CalParkedTime(long lpt);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
@@ -167,7 +168,7 @@ private:
     static std::mutex mutex_;
     db();
     //-----------------------
-    struct  tariff_struct gtariff[100][10];
+    struct  tariff_struct gtariff[300][10];
     std::vector<std::string> msholiday;
 
 };

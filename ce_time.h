@@ -65,6 +65,7 @@ public:
 	string DateString();
 	string Datestr();
     string DateTimeString();
+    string DateTimeStringNoS();
     string DateTimeNumberOnlyString();
 	CE_Time(string tstr);
 	static string compiletime();

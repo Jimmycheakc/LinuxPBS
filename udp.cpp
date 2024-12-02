@@ -12,6 +12,7 @@
 #include "lcd.h"
 #include "log.h"
 #include "version.h"
+#include "common.h"
 
 void udpclient::processmonitordata (const char* data, std::size_t length) 
 {
@@ -181,6 +182,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 	}
 	
     rxcmd = std::stoi(pField.Field(2));
+	//---------
     switch(rxcmd)
     {
 		case CmdStopStationSoftware:
@@ -242,16 +244,16 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("Fee test command","UDP");
 			std::vector<std::string> tmpStr;
 			boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
-			operation::getInstance()->writelog ("Entry Time: " + tmpStr[0],"UDP");
-			operation::getInstance()->writelog ("Exit Time: " + tmpStr[1],"UDP");
-			operation::getInstance()->writelog ("Rate Type: " + tmpStr[2],"UDP");
+			//operation::getInstance()->writelog ("Entry Time: " + tmpStr[0],"UDP");
+			//operation::getInstance()->writelog ("Exit Time: " + tmpStr[1],"UDP");
+			//operation::getInstance()->writelog ("Rate Type: " + tmpStr[2],"UDP");
 			double parkingfee; 
 			parkingfee = operation::getInstance()->m_db->CalFeeRAM2GR(tmpStr[0],tmpStr[1],std::stoi(tmpStr[2]));
-			if (parkingfee > 0)
+			if (parkingfee >= 0)
 			{
 				sData = pField.Field(3);
-				sData = sData + "," + std::to_string(parkingfee) + ", Fee OK";
-				operation::getInstance()->SendMsg2Server("301", sData);
+				sData = sData + "," + Common::getInstance()->SetFeeFormat(parkingfee) + ", Fee OK";
+				operation::getInstance()->SendMsg2Server("302", sData);
 			}
 			
 			break;
@@ -428,7 +430,10 @@ void udpclient::startreceive()
         {
             if (!error)
             {
-                std::string sender_ip = senderEndpoint_.address().to_string();    
+                std::string sender_ip = senderEndpoint_.address().to_string();  
+				
+				//operation::getInstance()->writelog("remove IP:" + sender_ip, "UDP");
+				//operation::getInstance()->writelog("Local IP:"+ operation:: getInstance()->tParas.gsLocalIP, "UDP");  
 				         
                 if (sender_ip != operation:: getInstance()->tParas.gsLocalIP) {
                     if (socket_.local_endpoint().port() == 2001)

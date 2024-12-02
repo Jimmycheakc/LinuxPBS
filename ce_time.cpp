@@ -377,17 +377,16 @@ string CE_Time::Datestr()
 string CE_Time::DateTimeString()
 {
     string dtStr="";
+    dtStr=DateString()+" "+TimeString();
+    return dtStr;
+}
 
-    try//2019.07.05 QC, modified for return empty string
-    {
-        dtStr=DateString()+" "+TimeString();
-
-    }
-    catch(...)
-    {
-
-    }
-    return dtStr;//DateString()+" "+TimeString();
+string CE_Time::DateTimeStringNoS()
+{
+    string dtStr="";
+    dtStr=DateString()+" "+TimeString();
+    dtStr= dtStr.substr(0, dtStr.length() - 2) + "00";
+    return dtStr;
 }
 
 string CE_Time::DateTimeNumberOnlyString()
@@ -467,9 +466,9 @@ int CE_Time::diffday(time_t qt1, time_t qt2)
 	int d1,d2,iRet;
 	d1=int((qt1+(time_zone*3600))/86400);
 	d2=int((qt2+(time_zone*3600))/86400);
-	printf("d1 is %d and d2 is %d\n",d1,d2);
+//	printf("d1 is %d and d2 is %d\n",d1,d2);
 	iRet=d2-d1;
-	printf("iret is %d\n",iRet);
+//	printf("iret is %d\n",iRet);
 	return(iRet);
 }
 int CE_Time::diffhour(time_t qt1, time_t qt2)

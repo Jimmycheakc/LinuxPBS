@@ -777,6 +777,14 @@ std::string Common::FnConvertHexStringToString(const std::string& data)
     return result;
 }
 
+std::string Common::SetFeeFormat(double fee)
+{
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << fee;
+    std::string gsFee = oss.str();
+    return gsFee;
+}
+
 std::string Common::FnConvertVectorUint8ToString(const std::vector<uint8_t>& data)
 {
     return std::string(data.begin(), data.end());

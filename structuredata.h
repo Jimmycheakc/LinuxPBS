@@ -447,7 +447,7 @@ struct tVType_Struct
 struct  tParas_Struct
 {
 	//----site Info
-	int giGroupID;
+	int giGroupID;    
 	int giSite;
 	string gsCompany;
 	string gsZIP;
