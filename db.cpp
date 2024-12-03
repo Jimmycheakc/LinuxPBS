@@ -3298,209 +3298,388 @@ DBError db::loadParam()
 		{
 			if (readerItem.getDataSize() == 2)
 			{
-				if (readerItem.GetDataItem(0) == "CommPortAntenna")
+				try
 				{
-					operation::getInstance()->tParas.giCommPortAntenna = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "CommPortAntenna")
+					{
+						operation::getInstance()->tParas.giCommPortAntenna = std::stoi(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "commportlcsc")
-				{
-					operation::getInstance()->tParas.giCommPortLCSC = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "commportlcsc")
+					{
+						operation::getInstance()->tParas.giCommPortLCSC = std::stoi(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "commportprinter")
-				{
-					operation::getInstance()->tParas.giCommPortPrinter = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "commportprinter")
+					{
+						operation::getInstance()->tParas.giCommPortPrinter = std::stoi(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "EPS")
-				{
-					operation::getInstance()->tParas.giEPS = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "EPS")
+					{
+						operation::getInstance()->tParas.giEPS = std::stoi(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "carparkcode")
-				{
-					operation::getInstance()->tParas.gscarparkcode = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "carparkcode")
+					{
+						operation::getInstance()->tParas.gscarparkcode = readerItem.GetDataItem(1);
+					}
 
-				if (readerItem.GetDataItem(0) == "locallcsc")
-				{
-				    operation::getInstance()->tParas.gsLocalLCSC = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "locallcsc")
+					{
+						operation::getInstance()->tParas.gsLocalLCSC = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "remotelcsc")
-				{
-				    operation::getInstance()->tParas.gsRemoteLCSC = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "remotelcsc")
+					{
+						operation::getInstance()->tParas.gsRemoteLCSC = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "remotelcscback")
-				{
-				    operation::getInstance()->tParas.gsRemoteLCSCBack = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "remotelcscback")
+					{
+						operation::getInstance()->tParas.gsRemoteLCSCBack = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "CSCRcdfFolder")
-				{
-				    operation::getInstance()->tParas.gsCSCRcdfFolder = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "CSCRcdfFolder")
+					{
+						operation::getInstance()->tParas.gsCSCRcdfFolder = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "CSCRcdackFolder")
-				{
-				    operation::getInstance()->tParas.gsCSCRcdackFolder = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "CSCRcdackFolder")
+					{
+						operation::getInstance()->tParas.gsCSCRcdackFolder = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "CPOID")
-				{
-				    operation::getInstance()->tParas.gsCPOID = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "CPOID")
+					{
+						operation::getInstance()->tParas.gsCPOID = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "CPID")
-				{
-				    operation::getInstance()->tParas.gsCPID = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "CPID")
+					{
+						operation::getInstance()->tParas.gsCPID = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "CommPortLED")
-				{
-				    operation::getInstance()->tParas.giCommPortLED = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "CommPortLED")
+					{
+						operation::getInstance()->tParas.giCommPortLED = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "HasMCycle")
-				{
-				    operation::getInstance()->tParas.giHasMCycle = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "HasMCycle")
+					{
+						operation::getInstance()->tParas.giHasMCycle = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "TicketSiteID")
-				{
-				    operation::getInstance()->tParas.giTicketSiteID = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "TicketSiteID")
+					{
+						operation::getInstance()->tParas.giTicketSiteID = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "DataKeepDays")
-				{
-				    operation::getInstance()->tParas.giDataKeepDays = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "DataKeepDays")
+					{
+						operation::getInstance()->tParas.giDataKeepDays = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "BarrierPulse")
-				{
-				    operation::getInstance()->tParas.gsBarrierPulse = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "BarrierPulse")
+					{
+						operation::getInstance()->tParas.gsBarrierPulse = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "AntMaxRetry")
-				{
-				    operation::getInstance()->tParas.giAntMaxRetry = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "AntMaxRetry")
+					{
+						operation::getInstance()->tParas.giAntMaxRetry = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "AntMinOKTimes")
-				{
-				    operation::getInstance()->tParas.giAntMinOKTimes = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "AntMinOKTimes")
+					{
+						operation::getInstance()->tParas.giAntMinOKTimes = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "AntInqTO")
-				{
-				    operation::getInstance()->tParas.giAntInqTO = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "AntInqTO")
+					{
+						operation::getInstance()->tParas.giAntInqTO = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "AntiIURepetition")
-				{
-				    operation::getInstance()->tParas.gbAntiIURepetition = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-				}
+					if (readerItem.GetDataItem(0) == "AntiIURepetition")
+					{
+						operation::getInstance()->tParas.gbAntiIURepetition = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+					}
 
-                if (readerItem.GetDataItem(0) == "commportled401")
-				{
-				    operation::getInstance()->tParas.giCommportLED401 = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "commportled401")
+					{
+						operation::getInstance()->tParas.giCommportLED401 = std::stoi(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "commportreader")
-				{
-				    operation::getInstance()->tParas.giCommPortKDEReader = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "commportreader")
+					{
+						operation::getInstance()->tParas.giCommPortKDEReader = std::stoi(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "CommPortCPT")
-				{
-				    operation::getInstance()->tParas.giCommPortUPOS = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "CommPortCPT")
+					{
+						operation::getInstance()->tParas.giCommPortUPOS = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "IsHDBSite")
-				{
-				    operation::getInstance()->tParas.giIsHDBSite = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "IsHDBSite")
+					{
+						operation::getInstance()->tParas.giIsHDBSite = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "allowedholdertype")
-				{
-				    operation::getInstance()->tParas.gsAllowedHolderType = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "allowedholdertype")
+					{
+						operation::getInstance()->tParas.gsAllowedHolderType = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "LEDMaxChar")
-				{
-				    operation::getInstance()->tParas.giLEDMaxChar = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "LEDMaxChar")
+					{
+						operation::getInstance()->tParas.giLEDMaxChar = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "AlwaysTryOnline")
-				{
-				    operation::getInstance()->tParas.gbAlwaysTryOnline = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-				}
+					if (readerItem.GetDataItem(0) == "AlwaysTryOnline")
+					{
+						operation::getInstance()->tParas.gbAlwaysTryOnline = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+					}
 
-                if (readerItem.GetDataItem(0) == "AutoDebitNoEntry")
-				{
-				    operation::getInstance()->tParas.gbAutoDebitNoEntry = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-				}
+					if (readerItem.GetDataItem(0) == "AutoDebitNoEntry")
+					{
+						operation::getInstance()->tParas.gbAutoDebitNoEntry = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+					}
 
-                if (readerItem.GetDataItem(0) == "LoopAHangTime")
-				{
-				    operation::getInstance()->tParas.giLoopAHangTime = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "LoopAHangTime")
+					{
+						operation::getInstance()->tParas.giLoopAHangTime = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "OperationTO")
-				{
-				    operation::getInstance()->tParas.giOperationTO = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "OperationTO")
+					{
+						operation::getInstance()->tParas.giOperationTO = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "FullAction")
-				{
-				    operation::getInstance()->tParas.giFullAction = static_cast<eFullAction>(std::stoi(readerItem.GetDataItem(1)));
-				}
+					if (readerItem.GetDataItem(0) == "FullAction")
+					{
+						operation::getInstance()->tParas.giFullAction = static_cast<eFullAction>(std::stoi(readerItem.GetDataItem(1)));
+					}
 
-                if (readerItem.GetDataItem(0) == "barrieropentoolongtime")
-				{
-				    operation::getInstance()->tParas.giBarrierOpenTooLongTime = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "barrieropentoolongtime")
+					{
+						operation::getInstance()->tParas.giBarrierOpenTooLongTime = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "bitbarrierarmbroken")
-				{
-				    operation::getInstance()->tParas.giBitBarrierArmBroken = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "bitbarrierarmbroken")
+					{
+						operation::getInstance()->tParas.giBitBarrierArmBroken = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "mccontrolaction")
-				{
-				    operation::getInstance()->tParas.giMCControlAction = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "mccontrolaction")
+					{
+						operation::getInstance()->tParas.giMCControlAction = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "LogBackFolder")
-				{
-				    operation::getInstance()->tParas.gsLogBackFolder = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "LogBackFolder")
+					{
+						operation::getInstance()->tParas.gsLogBackFolder = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "LogKeepDays")
-				{
-				    operation::getInstance()->tParas.giLogKeepDays = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "LogKeepDays")
+					{
+						operation::getInstance()->tParas.giLogKeepDays = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "DBBackupFolder")
-				{
-				    operation::getInstance()->tParas.gsDBBackupFolder = readerItem.GetDataItem(1);
-				}
+					if (readerItem.GetDataItem(0) == "DBBackupFolder")
+					{
+						operation::getInstance()->tParas.gsDBBackupFolder = readerItem.GetDataItem(1);
+					}
 
-                if (readerItem.GetDataItem(0) == "maxsendofflineno")
-				{
-				    operation::getInstance()->tParas.giMaxSendOfflineNo = std::stoi(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "maxsendofflineno")
+					{
+						operation::getInstance()->tParas.giMaxSendOfflineNo = std::stoi(readerItem.GetDataItem(1));
+					}
 
-                if (readerItem.GetDataItem(0) == "maxlocaldbsize")
-				{
-				    operation::getInstance()->tParas.glMaxLocalDBSize = std::stol(readerItem.GetDataItem(1));
-				}
+					if (readerItem.GetDataItem(0) == "maxlocaldbsize")
+					{
+						operation::getInstance()->tParas.glMaxLocalDBSize = std::stol(readerItem.GetDataItem(1));
+					}
 
-				if (readerItem.GetDataItem(0) == "MaxTransInterval")
+					if (readerItem.GetDataItem(0) == "MaxTransInterval")
+					{
+						operation::getInstance()->tParas.giMaxTransInterval = std::stol(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "NoIURetry")
+					{
+						operation::getInstance()->tParas.giNoIURetry = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "MaxDiffIU")
+					{
+						operation::getInstance()->tParas.giMaxDiffIU = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "LockBarrier")
+					{
+						operation::getInstance()->tParas.gbLockBarrier = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+					}
+
+					if (readerItem.GetDataItem(0) == "commportled2")
+					{
+						operation::getInstance()->tParas.giCommPortLED2 = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "CHUIP")
+					{
+						operation::getInstance()->tParas.gsCHUIP = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "Site")
+					{
+						operation::getInstance()->tParas.gsSite = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "Address")
+					{
+						operation::getInstance()->tParas.gsAddress = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "TryTimes4NE")
+					{
+						operation::getInstance()->tParas.giTryTimes4NE = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "processreversedcmd")
+					{
+						operation::getInstance()->tParas.giProcessReversedCMD = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "hasthreewheelmc")
+					{
+						operation::getInstance()->tParas.giHasThreeWheelMC = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "MaxDebitDays")
+					{
+						operation::getInstance()->tParas.giMaxDebitDays = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "FirstHourMode")
+					{
+						operation::getInstance()->tParas.giFirstHourMode = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "PEAllowance")
+					{
+						operation::getInstance()->tParas.giPEAllowance = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "TariffFeeMode")
+					{
+						operation::getInstance()->tParas.giTariffFeeMode = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "TariffGTmode")
+					{
+						operation::getInstance()->tParas.giTariffGTMode = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "Hr2PEAllowance")
+					{
+						operation::getInstance()->tParas.giHr2PEAllowance = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "SeasonCharge")
+					{
+						operation::getInstance()->tParas.giSeasonCharge = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "ShowSeasonExpireDays")
+					{
+						operation::getInstance()->tParas.giShowSeasonExpireDays = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "ShowExpiredTime")
+					{
+						operation::getInstance()->tParas.giShowExpiredTime = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "MCyclePerDay")
+					{
+						operation::getInstance()->tParas.giMCyclePerDay = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "V3TransType")
+					{
+						operation::getInstance()->tParas.giV3TransType = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "V4TransType")
+					{
+						operation::getInstance()->tParas.giV4TransType = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "V5TransType")
+					{
+						operation::getInstance()->tParas.giV5TransType = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "FirstHour")
+					{
+						operation::getInstance()->tParas.giFirstHour = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "HasHolidayEve")
+					{
+						operation::getInstance()->tParas.giHasHolidayEve = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "HasRedemption")
+					{
+						operation::getInstance()->tParas.gbHasRedemption = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
+					}
+
+					if (readerItem.GetDataItem(0) == "Company")
+					{
+						operation::getInstance()->tParas.gsCompany = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "GSTNo")
+					{
+						operation::getInstance()->tParas.gsGSTNo = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "Tel")
+					{
+						operation::getInstance()->tParas.gsTel = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "ZIP")
+					{
+						operation::getInstance()->tParas.gsZIP = readerItem.GetDataItem(1);
+					}
+
+					if (readerItem.GetDataItem(0) == "GSTRate")
+					{
+						operation::getInstance()->tParas.gfGSTRate = std::stof(readerItem.GetDataItem(1));
+					}
+				}
+				catch (const std::invalid_argument &e)
 				{
-				    operation::getInstance()->tParas.giMaxTransInterval = std::stol(readerItem.GetDataItem(1));
+					std::stringstream ss;
+					ss << "Invalid argument for key '" << readerItem.GetDataItem(0)
+						<< "' with value '" << readerItem.GetDataItem(1) << "': " << e.what();
+					Logger::getInstance()->FnLog(ss.str(), "", "DB");
+				}
+				catch (const std::out_of_range &e)
+				{
+					std::stringstream ss;
+					ss << "Out of range for key '" << readerItem.GetDataItem(0)
+						<< "' with value '" << readerItem.GetDataItem(1) << "': " << e.what();
+					Logger::getInstance()->FnLog(ss.str(), "", "DB");
+				}
+				catch (const std::exception &e)
+				{
+					std::stringstream ss;
+					ss << "Error processing key '" << readerItem.GetDataItem(0)
+						<< "': " << e.what();
+					Logger::getInstance()->FnLog(ss.str(), "", "DB");
 				}
 			}
 		}

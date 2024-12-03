@@ -449,34 +449,35 @@ struct  tParas_Struct
 	//----site Info
 	int giGroupID;    
 	int giSite;
-	string gsCompany;
-	string gsZIP;
-	string gsGSTNo;
-	string gsAddress;
-	string gsTel;
+	string gsCompany;			// DB Loaded: Company
+	string gsZIP;				// *DB Loaded: ZIP, but not use
+	string gsGSTNo;				// *DB Loaded: GSTNo, but not use
+	string gsSite;				// *DB Loaded: giSite, but not use
+	string gsAddress;			// *DB Loaded: gsAddress, but not use
+	string gsTel;				// *DB Loaded: Tel, but not use
 	string gsCentralDBName;
 	string gsCentralDBServer;
 	string gsLocalIP;
 	int local_udpport; 
 	int remote_udpport; 
-	int giTicketSiteID;
+	int giTicketSiteID;			// *DB Loaded: TicketSiteID, but not use
 	int giEPS;
 
 	//-----comport 
-	int giCommPortAntenna;
-	int giCommPortLCSC;
-	int giCommPortKDEReader;
+	int giCommPortAntenna;			// DB Loaded: CommPortAntenna
+	int giCommPortLCSC;				// DB Loaded: commportlcsc
+	int giCommPortKDEReader;		// DB Loaded: CommPortReader
 	int giCommPortUPOS;
-	int giCommPortPrinter;
-	int giCommPortLED;
-	int giCommportLED401;
-	int giCommPortLED2;
+	int giCommPortPrinter;			// DB Loaded: CommPortPrinter
+	int giCommPortLED;				// DB Loaded: CommPortLED
+	int giCommportLED401;			// DB Loaded: commportled401
+	int giCommPortLED2;				// *DB Loaded: commportled2, but not use
 
 	//--- Ant
-	int giAntMaxRetry;
-	int giAntMinOKTimes;
-	bool gbAntiIURepetition;
-	int giAntInqTO;
+	int giAntMaxRetry;				// *DB Loaded: AntMaxRetry, but hardcoded to 3
+	int giAntMinOKTimes;			// DB Loaded: AntMinOKTimes
+	bool gbAntiIURepetition;		// *DB Loaded: AntiIURepetition, but not use
+	int giAntInqTO;					// DB Loaded: AntInqTO
 
 	//--- LCSC 
 	string gsLocalLCSC;
@@ -484,12 +485,12 @@ struct  tParas_Struct
 	string gsRemoteLCSCBack;
 	string gsCSCRcdfFolder;
 	string gsCSCRcdackFolder;
-	string gsCPOID;
-	string gsCPID;
+	string gsCPOID;					// DB Loaded: CPOID
+	string gsCPID;					// DB Loaded: CPID
 	string gscarparkcode;
 
 	//--- LED
-	int giLEDMaxChar;
+	int giLEDMaxChar;				// DB Loaded: LEDMaxChar
 	
 	//----LPR(ini)
 	string lprip_front; 
@@ -500,11 +501,11 @@ struct  tParas_Struct
 	int sid;	
 
 	//---- CHU
-	string gsCHUIP;
+	string gsCHUIP;						// *DB Loaded: CHUIP, but not use
 	int giCHUCnTO;
 	int giCHUComTO;
 	int giCHUComRetry;
-	int giNoIURetry;
+	int giNoIURetry;					// *DB Loaded: NoIURetry, but not use
 	int giNoCardRetry;
 	int giCHUDebitRetry;
 	int giNoIUWT;
@@ -514,51 +515,51 @@ struct  tParas_Struct
 	int giDebitFailWT;
 	int giCHUDebitWT;
 	int giNoIUAutoDebitWT;
-	int giMaxDiffIU;
-	int giTryTimes4NE;
-	eFullAction giFullAction;
+	int giMaxDiffIU;					// *DB Loaded: MaxDiffIU, but not use
+	int giTryTimes4NE;					// *DB Loaded: TryTimes4NE, but not use
+	eFullAction giFullAction;			// DB Loaded: FullAction
 
 	//----special function
-	int giHasMCycle;
+	int giHasMCycle;					// *DB Loaded: HasMCycle, but not use
 	int giAllowMultiEntry; 
 	int giMCAllowMultiEntry; 
-	bool gbAutoDebitNoEntry;
-	int giIsHDBSite;
+	bool gbAutoDebitNoEntry;			// *DB Loaded: AutoDebitNoEntry, but not use
+	int giIsHDBSite;					// *DB Loaded: IsHDBSite, but not use
 	bool gbseasonOnly;
-	int giHasHolidayEve;
-	int giProcessReversedCMD;
-	bool gbHasRedemption;
+	int giHasHolidayEve;				// DB Loaded: HasHolidayEve
+	int giProcessReversedCMD;			// *DB Loaded: processreversedcmd, but not use
+	bool gbHasRedemption;				// *DB Loaded: HasRedemption, but not use
 
 	//-----I/O 
-	int giLoopAHangTime;
-	int giBarrierOpenTooLongTime;
+	int giLoopAHangTime;				// *DB Loaded: LoopAHangTime, but not use
+	int giBarrierOpenTooLongTime;		// *DB Loaded: barrieropentoolongtime, but no use
 	int giBitBarrierArmBroken;
 	int gsBarrierPulse;
-	bool gbLockBarrier;
+	bool gbLockBarrier;					// *DB Loaded: LockBarrier, but not use
 	float gsShutterPulse;
 
 	//----system info
-	int giOperationTO;
-	int giDataKeepDays;
+	int giOperationTO;					// DB Loaded: OperationTO
+	int giDataKeepDays;					// *DB Loaded: DataKeepDays, but not use
 	string gsLogBackFolder;
-	int giLogKeepDays;
-	int giMaxTransInterval;
-	int giMaxDebitDays;
+	int giLogKeepDays;					// *DB Loaded: LogKeepDays, but not use
+	int giMaxTransInterval;				// DB Loaded: MaxTransInterval
+	int giMaxDebitDays;					// *DB Loaded: MaxDebitDays, but not use
 	bool gbAlwaysTryOnline;
-	int giMaxSendOfflineNo;
+	int giMaxSendOfflineNo;				// *DB Loaded: MaxSendOfflineNo, but not use
 	long glMaxLocalDBSize;
 	string gsDBBackupFolder;
 
 	//--- tariff 
-	int giTariffFeeMode;
-	int giTariffGTMode;
-	int giFirstHourMode;
-	int giFirstHour;
-	int giPEAllowance;
-	int giHr2PEAllowance;
-	int giV3TransType;
-	int giV4TransType;
-	int giV5TransType;
+	int giTariffFeeMode;				// DB Loaded: TariffFeeMode
+	int giTariffGTMode;					// *DB Loaded: TariffGTmode, but not use
+	int giFirstHourMode;				// DB Loaded: FirstHourMode
+	int giFirstHour;					// DB Loaded: FirstHour
+	int giPEAllowance;					// DB Loaded: PEAllowance
+	int giHr2PEAllowance;				// DB Loaded: Hr2PEAllowance
+	int giV3TransType;					// *DB Loaded: V3TransType, but not use
+	int giV4TransType;					// *DB Loaded: V4TransType, but not use
+	int giV5TransType;					// *DB Loaded: V5TransType, but not use
 
 	//---- car park with carpark 
 	int hasinternal_link;
@@ -570,20 +571,22 @@ struct  tParas_Struct
 
 	//----season 
 	string gsAllowedHolderType;
-	int giSeasonCharge;
+	int giSeasonCharge;					// *DB Loaded: SeasonCharge, but not use
 	bool gbSeasonAsNormal;
 	int giSeasonPayStart;
 	int giSeasonAllowance;
-	int giShowSeasonExpireDays;
-	int giShowExpiredTime;
+	int giShowSeasonExpireDays;			// *DB Loaded: ShowSeasonExpireDays, but not use
+	int giShowExpiredTime;				// *DB Loaded: ShowExpiredTime, but not use
 
 	//----- M/C 
 	float gsMotorRate;
 	int giMCEntryGraceTime;
-	int giMCyclePerDay;
-	int giHasThreeWheelMC;
-	int giMCControlAction;	
+	int giMCyclePerDay;					// DB Loaded: MCyclePerDay
+	int giHasThreeWheelMC;				// *DB Loaded: hasthreewheelmc, but not use
+	int giMCControlAction;
 
+	//----- Others
+	float gfGSTRate;					// *DB Loaded: GSTRate, but not use
 };
 
 struct  tMsg_Struct

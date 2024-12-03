@@ -31,6 +31,7 @@ public:
     std::string FnGetWaitLPRNoTime() const;
     std::string FnGetLPRErrorTime() const;
     std::string FnGetLPRErrorCount() const;
+    bool FnGetShowTime() const;
     std::string FnGetBlockIUPrefix() const;
 
     // Confirm [DI]
@@ -82,6 +83,7 @@ private:
     std::string WaitLPRNoTime_;
     std::string LPRErrorTime_;
     std::string LPRErrorCount_;
+    bool ShowTime_;
     std::string BlockIUPrefix_;
 
     // Confirm [DI]

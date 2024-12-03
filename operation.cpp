@@ -49,7 +49,7 @@ operation* operation::getInstance()
 
 void operation::OperationInit(io_context& ioContext)
 {
-   
+    operationStrand_ = std::make_unique<boost::asio::io_context::strand>(ioContext);
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
     tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
     tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
@@ -233,7 +233,7 @@ void operation::LoopACome()
 
     // Loop A timer - To prevent loop A hang
     pLoopATimer_->expires_from_now(boost::posix_time::seconds(operation::getInstance()->tParas.giOperationTO));
-    pLoopATimer_->async_wait([this] (const boost::system::error_code &ec)
+    pLoopATimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
     {
         if (!ec)
         {
@@ -249,7 +249,7 @@ void operation::LoopACome()
             ss << "Loop A timer timeout error :" << ec.message();
             Logger::getInstance()->FnLog(ss.str(), "", "OPR");
         }
-    });
+    }));
 
     ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
     Clearme();
@@ -459,9 +459,26 @@ void operation::Initdevice(io_context& ioContext)
 
     if (LCD::getInstance()->FnLCDInit())
     {
-        pLCDIdleTimer_ = std::make_unique<Timer>();
-        auto callback = std::bind(&operation::LcdIdleTimerTimeoutHandler, this);
-        pLCDIdleTimer_->start(1000, callback);
+        pLCDIdleTimer_ = std::make_unique<boost::asio::deadline_timer>(ioContext);
+
+        pLCDIdleTimer_->expires_from_now(boost::posix_time::seconds(1));
+        pLCDIdleTimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
+        {
+            if (!ec)
+            {
+                this->LcdIdleTimerTimeoutHandler();
+            }
+            else if (ec == boost::asio::error::operation_aborted)
+            {
+                Logger::getInstance()->FnLog("LCD Idle timer cancelled.", "", "OPR");
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << "LCD Idle timer timeout error :" << ec.message();
+                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+            }
+        }));
     }
 
     if (tParas.giCommPortPrinter > 0)
@@ -490,7 +507,15 @@ void operation::LcdIdleTimerTimeoutHandler()
     if ((tProcess.gbcarparkfull.load() == false) && (tProcess.gbLoopApresent.load() == false))
     {
         ShowLEDMsg(tProcess.getIdleMsg(0), tProcess.getIdleMsg(1));
-        std::string LCDMsg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
+        std::string LCDMsg = "";
+        if (IniParser::getInstance()->FnGetShowTime())
+        {
+            LCDMsg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
+        }
+        else
+        {
+            LCDMsg = tParas.gsCompany;
+        }
         char * sLCDMsg = const_cast<char*>(LCDMsg.data());
         LCD::getInstance()->FnLCDDisplayRow(2, sLCDMsg);
     }
@@ -498,6 +523,26 @@ void operation::LcdIdleTimerTimeoutHandler()
     {
         ShowLEDMsg(tProcess.getIdleMsg(0), tProcess.getIdleMsg(1));
     }
+
+    // Restart the lcd idle timer
+    pLCDIdleTimer_->expires_at(pLCDIdleTimer_->expires_at() + boost::posix_time::seconds(1));
+    pLCDIdleTimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
+    {
+        if (!ec)
+        {
+            this->LcdIdleTimerTimeoutHandler();
+        }
+        else if (ec == boost::asio::error::operation_aborted)
+        {
+            Logger::getInstance()->FnLog("LCD Idle timer cancelled.", "", "OPR");
+        }
+        else
+        {
+            std::stringstream ss;
+            ss << "LCD Idle timer timeout error :" << ec.message();
+            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+        }
+    }));
 }
 
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)

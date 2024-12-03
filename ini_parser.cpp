@@ -71,6 +71,7 @@ void IniParser::FnReadIniFile()
     WaitLPRNoTime_                  = pt.get<std::string>("setting.WaitLPRNoTime", "");
     LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");
     LPRErrorCount_                  = pt.get<std::string>("setting.LPRErrorCount", "");
+    ShowTime_                       = (std::stoi(pt.get<std::string>("setting.ShowTime", "")) == 1) ? true : false;
     BlockIUPrefix_                  = pt.get<std::string>("setting.BlockIUPrefix", "");
 
     // Confirm [DI]
@@ -196,6 +197,11 @@ std::string IniParser::FnGetLPRErrorTime() const
 std::string IniParser::FnGetLPRErrorCount() const
 {
     return LPRErrorCount_;
+}
+
+bool IniParser::FnGetShowTime() const
+{
+    return ShowTime_;
 }
 
 std::string IniParser::FnGetBlockIUPrefix() const

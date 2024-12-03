@@ -245,7 +245,7 @@ void signalHandler(const boost::system::error_code& ec, int signal, boost::asio:
         operation::getInstance()->SendMsg2Server("09","11Stopping...");
 
         // Display Station Stopped on LCD
-        std::string LCDMsg = "Station Stopped!";
+        std::string LCDMsg = "Station Stopped!    ";
         char* sLCDMsg = const_cast<char*>(LCDMsg.data());
         LCD::getInstance()->FnLCDClearDisplayRow(1);
         LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
@@ -295,7 +295,7 @@ int main (int agrc, char* argv[])
 
     // Create a pool of threads to run the io_context
     std::vector<std::thread> threadPool;
-    const int numThreads = 5;
+    const int numThreads = 6;
 
     for (int i = 0; i < numThreads; i++)
     {

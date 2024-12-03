@@ -10,7 +10,6 @@
 #include "db.h"
 #include "udp.h"
 #include "lpr.h"
-#include "timer.h"
 #include "upt.h"
 
 class operation
@@ -109,7 +108,8 @@ private:
     
     static operation* operation_;
     static std::mutex mutex_;
-    std::unique_ptr<Timer> pLCDIdleTimer_;
+    std::unique_ptr<boost::asio::io_context::strand> operationStrand_;
+    std::unique_ptr<boost::asio::deadline_timer> pLCDIdleTimer_;
     std::unique_ptr<boost::asio::deadline_timer> pLoopATimer_;
     operation();
     ~operation() {
