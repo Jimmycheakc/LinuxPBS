@@ -55,6 +55,23 @@ void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
     initRearCamera(mainIOContext, lprIp4Rear_, lprPort_, "CH1");
 }
 
+void Lpr::FnLprClose()
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+
+    if (pFrontCamera_)
+    {
+        pFrontCamera_->close();
+        pFrontCamera_.reset();
+    }
+
+    if (pRearCamera_)
+    {
+        pRearCamera_->close();
+        pRearCamera_.reset();
+    }
+}
+
 void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH)
 {
     if (cameraIP.empty())
@@ -81,6 +98,7 @@ void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
         pFrontCamera_->setCloseHandler([this]() { handleFrontSocketClose(); });
         pFrontCamera_->setReceiveHandler([this](const char* data, std::size_t length) { handleReceiveFrontCameraData(data, length); });
         pFrontCamera_->setErrorHandler([this](std::string error_message) { handleFrontSocketError(error_message); });
+        pFrontCamera_->connect();
 
         startReconnectTimer();
 
@@ -223,6 +241,7 @@ void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
             pRearCamera_->setCloseHandler([this]() { handleRearSocketClose(); });
             pRearCamera_->setReceiveHandler([this](const char* data, std::size_t length) { handleReceiveRearCameraData(data, length); });
             pRearCamera_->setErrorHandler([this](std::string error_message) { handleRearSocketError(error_message); });
+            pRearCamera_->connect();
 
             startReconnectTimer2();
 

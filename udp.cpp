@@ -204,10 +204,49 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->Sendmystatus();
+
+			if ((operation::getInstance()->tParas.giEPS == 2) && (operation::getInstance()->gtStation.iType == tiExit))
+			{
+				if ((CHU_CLIENT::getInstance()->FnGetCHUStatus() == false) && (operation::getInstance()->tProcess.fbConnectingCHU.load() == false))
+				{
+					operation::getInstance()->ConnectCHU();
+				}
+			}
 			break;
 		}
 		case CmdStatusOnline:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+
+			// If system current state is offline
+			if (operation::getInstance()->tProcess.giSystemOnline != 0)
+			{
+				std::stringstream ss;
+				ss << "Status: " << (operation::getInstance()->tProcess.giSystemOnline == 0) ? "Online" : "Offline";
+				operation::getInstance()->writelog(ss.str(), "UDP");
+
+				// Set the system current state to online
+				operation::getInstance()->tProcess.giSystemOnline = 0;
+
+				// Check and move the offline data
+				if (operation::getInstance()->tProcess.glNoofOfflineData > 0)
+				{
+					db::getInstance()->moveOfflineTransToCentral();
+				}
+
+				// Check CHU status
+				if ((operation::getInstance()->tParas.giEPS == 2) && (operation::getInstance()->gtStation.iType == tiExit))
+				{
+
+					if ((CHU_CLIENT::getInstance()->FnGetCHUStatus() == false) && (operation::getInstance()->tProcess.fbConnectingCHU.load() == false))
+					{
+						operation::getInstance()->ConnectCHU();
+					}
+				}
+			}
+			operation::getInstance()->SendMsg2Server("99", "");
 			break;
+		}
 		case CmdUpdateSeason:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");

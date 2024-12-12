@@ -25,6 +25,7 @@
 #include "operation.h"
 #include "printer.h"
 #include "udp.h"
+#include "chu_client.h"
 
 
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
@@ -315,6 +316,8 @@ int main (int agrc, char* argv[])
     Upt::getInstance()->FnUptClose();
     LCSCReader::getInstance()->FnLCSCReaderClose();
     Printer::getInstance()->FnPrinterClose();
+    Lpr::getInstance()->FnLprClose();
+    CHU_CLIENT::getInstance()->FnChuClientClose();
 
     return 0;
 }

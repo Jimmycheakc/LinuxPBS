@@ -290,7 +290,8 @@ struct  tEntryTrans_Struct
 	bool gbEntryOK;
 	int giShowType;
 	string gsTransID;
-	
+	string sTag;
+	string sCHUDebitCode;
 };
 
 
@@ -349,6 +350,8 @@ struct  tExitTrans_Struct
 	string video_location;
 	string video1_location;
 	string sRPLPN;
+
+	std::atomic<bool> gbUposDoingDeduction;
 };
 
 
@@ -356,7 +359,7 @@ struct  tProcess_Struct
 {
 	
 	bool gbsavedtrans;
-	atomic<bool> gbcarparkfull;
+	std::atomic<bool> gbcarparkfull;
 	long glNoofOfflineData;
 	string fsLastCardNo;
 	int is_season;
@@ -365,9 +368,13 @@ struct  tProcess_Struct
 	int giSystemOnline;
 	string fsLastPaidIU;
 	string fsLastReadCard;
+	float fsCardBal;
+	std::string fsLastDebitFailTime;
+	int fiShowType;
+	std::string fsPossibleTopUPTime;
 	string gsDefaultIU; 
 	string gsBroadCastIP;
-	atomic<bool> gbLoopApresent;
+	std::atomic<bool> gbLoopApresent;
 	bool gbLoopAIsOn;
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
@@ -381,6 +388,13 @@ struct  tProcess_Struct
 	int giCardIsIn;
 	int giLastHousekeepingDate;
 //	bool gbwaitLoopA;
+	std::atomic<bool> fbReadIUfromAnt;
+	int fiLastCHUCmd;
+	std::atomic<bool> fbConnectingCHU;
+	int fiCardType;
+	std::atomic<bool> fbPaid;
+	std::chrono::time_point<std::chrono::steady_clock> lastTransTime;
+	std::mutex lastTransTimeMutex;
 
 	std::string IdleMsg[2];
 	std::mutex idleMsgMutex;
@@ -431,6 +445,18 @@ struct  tProcess_Struct
 		std::lock_guard<std::mutex> lock(lastIUEntryTimeMutex);
 		return lastIUEntryTime;
 	}
+
+	void setLastTransTime(const std::chrono::time_point<std::chrono::steady_clock>& time)
+	{
+		std::lock_guard<std::mutex> lock(lastTransTimeMutex);
+		lastTransTime = time;
+	}
+
+	std::chrono::time_point<std::chrono::steady_clock> getLastTransTime()
+	{
+		std::lock_guard<std::mutex> lock(lastTransTimeMutex);
+		return lastTransTime;
+	}
 };
 
 
@@ -460,7 +486,7 @@ struct  tParas_Struct
 	string gsLocalIP;
 	int local_udpport; 
 	int remote_udpport; 
-	int giTicketSiteID;			// *DB Loaded: TicketSiteID, but not use
+	int giTicketSiteID;			// DB Loaded: TicketSiteID
 	int giEPS;
 
 	//-----comport 
@@ -501,8 +527,8 @@ struct  tParas_Struct
 	int sid;	
 
 	//---- CHU
-	string gsCHUIP;						// *DB Loaded: CHUIP, but not use
-	int giCHUCnTO;
+	string gsCHUIP;						// DB Loaded: CHUIP
+	int giCHUCnTO;						// DB Loaded: CHUCnTO
 	int giCHUComTO;
 	int giCHUComRetry;
 	int giNoIURetry;					// *DB Loaded: NoIURetry, but not use

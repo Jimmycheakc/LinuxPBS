@@ -29,6 +29,7 @@ public:
     void FnLprInit(boost::asio::io_context& mainIOContext);
     void FnSendTransIDToLPR(const std::string& transID);
     struct LPREventData deserializeEventData(const std::string& serializeData);
+    void FnLprClose();
 
     /**
      * Singleton Lpr should not be cloneable.

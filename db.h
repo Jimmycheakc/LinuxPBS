@@ -105,7 +105,7 @@ public:
 
     void moveOfflineTransToCentral();
 	int insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter);
-	int insertTransToCentralExitTransTmp(tExitTrans_Struct tex);
+	int insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex);
 	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
     int clearseason();
     int IsBlackListIU(string sIU);

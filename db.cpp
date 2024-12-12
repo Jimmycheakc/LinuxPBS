@@ -3660,6 +3660,11 @@ DBError db::loadParam()
 					{
 						operation::getInstance()->tParas.gfGSTRate = std::stof(readerItem.GetDataItem(1));
 					}
+
+					if (readerItem.GetDataItem(0) == "CHUCnTO")
+					{
+						operation::getInstance()->tParas.giCHUCnTO = std::stof(readerItem.GetDataItem(1));
+					}
 				}
 				catch (const std::invalid_argument &e)
 				{
@@ -4864,7 +4869,7 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 }
 
 
-int db::insertTransToCentralExitTransTmp(tExitTrans_Struct tex)
+int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex)
 {
 
 	int r=0;

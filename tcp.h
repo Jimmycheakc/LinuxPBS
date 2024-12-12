@@ -20,6 +20,8 @@ public:
     void setReceiveHandler(std::function<void(const char* data, std::size_t length)> handler);
     void setErrorHandler(std::function<void(std::string error_message)> handler);
     bool isStatusGood();
+    std::string getIPAddress() const;
+    unsigned short getPort() const;
 
 private:
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;

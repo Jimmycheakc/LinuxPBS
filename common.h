@@ -25,7 +25,7 @@ public:
     std::string FnGetDateTimeFormat_yyyymmdd_hhmmss();
     std::string FnGetDateTimeFormat_yyyymmddhhmm();
     std::string FnGetDateTimeFormat_yymmddhhmmss();
-    std::string FeGetDateTimeFormat_VehicleTrans();
+    std::string FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::string FnFormatEpochTime(std::time_t epochSeconds);
     std::time_t FnGetEpochSeconds();
@@ -44,7 +44,7 @@ public:
     std::string FnGetVectorCharToHexString(const std::vector<uint8_t>& data, std::size_t startPos, std::size_t length);
     std::string FnGetDisplayVectorCharToHexString(const std::vector<char>& data);
     std::string FnGetDisplayVectorCharToHexString(const std::vector<uint8_t>& data);
-    bool FnIsNumeric(const std::vector<char>& data);
+    bool FnIsNumeric(const std::string& str);
     bool FnIsStringNumeric(const std::string& str);
     std::string FnPadRightSpace(int length, const std::string& str);
     std::string FnPadLeft0(int width, int count);

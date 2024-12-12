@@ -166,8 +166,8 @@ std::string Common::FnFormatEpochTime(std::time_t epochSeconds)
     return oss.str();
 }
 
-std::string Common::FeGetDateTimeFormat_VehicleTrans() 
- {
+std::string Common::FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss() 
+{
     auto now = std::chrono::system_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
     auto timer = std::chrono::system_clock::to_time_t(now);
@@ -404,16 +404,22 @@ std::string Common::FnGetDisplayVectorCharToHexString(const std::vector<uint8_t>
     return hexStream.str();
 }
 
-bool Common::FnIsNumeric(const std::vector<char>& data)
+bool Common::FnIsNumeric(const std::string& str)
 {
-    for (char character : data)
+    if (str.empty())
     {
-        if (!std::isdigit(static_cast<unsigned char>(character)))
-        {
-            return false;
-        }
+        return false;
     }
-    return true;
+
+    try
+    {
+        std::stod(str);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        return false;
+    }
 }
 
 bool Common::FnIsStringNumeric(const std::string& str)

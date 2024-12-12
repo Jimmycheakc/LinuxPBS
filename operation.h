@@ -11,6 +11,7 @@
 #include "udp.h"
 #include "lpr.h"
 #include "upt.h"
+#include "chu_client.h"
 
 class operation
 {
@@ -85,6 +86,19 @@ public:
     void ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation);
     void processUPT(Upt::UPT_CMD cmd, const std::string& eventData);
     void PrintTR(bool bForSeason = false);
+    void ConnectCHU();
+    void processMsgOnCHUConnect(const CHU_CLIENT::CHUCmd& cmd, const std::string& data);
+    void SendMsg2CHU(CHU_CLIENT::CHUCmd cmd, const std::string& data);
+    void CHUConnectHandler();
+    void CHUCloseHandler();
+    void CHUDataArrivalHandler(const char* data, std::size_t length);
+    void CHUErrorHandler(std::string error_msg);
+    void ReadIUfromAnt(int iWhy);
+    void RetryEntryInq(int iRetryType);
+    void DebitOK(const std::string& sIUNO, const std::string& sCardNo, 
+                const std::string& sPaidAmt = "", const std::string& sBal = "",
+                int iCardType = 0, const std::string& sTopupAmt = "",
+                int iGWStatus = 0, const std::string& sTransTime = "");
 
     void Openbarrier();
 

@@ -8,7 +8,7 @@ TcpClient::TcpClient(boost::asio::io_context& io_context, const std::string& ipA
         buffer_(),
         status_(false)
 {
-    connect();
+
 }
 
 void TcpClient::send(const std::string& message)
@@ -34,8 +34,16 @@ void TcpClient::close()
 {
     if (socket_.is_open())
     {
+        // Cancel any ongoing async operations
         boost::system::error_code ec;
-        socket_.close(ec);
+        socket_.cancel(ec); // This ensures that any pending operations are aborted.
+
+        if (ec)
+        {
+            handleError(ec.message());
+        }
+
+        socket_.close(ec);  // Handle any error that occurs while canceling.
 
         if (!ec)
         {
@@ -46,6 +54,9 @@ void TcpClient::close()
             handleError(ec.message());
         }
     }
+
+    // Reset status
+    status_.store(false);
 }
 
 void TcpClient::setConnectHandler(std::function<void()> handler)
@@ -76,7 +87,12 @@ void TcpClient::connect()
     }
 
     socket_.async_connect(endpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& ec) {
-        if (!ec)
+        if (ec == boost::asio::error::operation_aborted)
+        {
+            status_.store(false);
+            handleError("Connection aborted during async_connect.");
+        }
+        else if (!ec)
         {
             status_.store(true);
             handleConnect();
@@ -144,4 +160,28 @@ void TcpClient::handleError(std::string error_message)
     {
         errorHandler_(error_message);
     }
+}
+
+std::string TcpClient::getIPAddress() const
+{
+    // Check if address is valid
+    if (endpoint_.address() == boost::asio::ip::address{})
+    {
+        // Return empty string or error message if address is not valid
+        return "";
+    }
+
+    return endpoint_.address().to_string();
+}
+
+unsigned short TcpClient::getPort() const
+{
+    // Check if the port is valid
+    if (endpoint_.port() == 0)
+    {
+        // Return 0 or handle the case where the port is invalid
+        return 0;
+    }
+
+    return endpoint_.port();
 }
