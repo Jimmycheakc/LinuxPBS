@@ -83,7 +83,7 @@ public:
     int GetDayTypeWithHE(CE_Time curr_date);
     float HasPaidWithinPeriod(string sTimeFrom, string sTimeTo);
     double RoundIt(double val, int giTariffFeeMode);
-    double CalFeeRAM2GR(string eTime, string payTime,int iTransType);
+    double CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckGT = false);
     string CalParkedTime(long lpt);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);

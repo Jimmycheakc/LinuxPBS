@@ -244,9 +244,6 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->writelog("Fee test command","UDP");
 			std::vector<std::string> tmpStr;
 			boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
-			//operation::getInstance()->writelog ("Entry Time: " + tmpStr[0],"UDP");
-			//operation::getInstance()->writelog ("Exit Time: " + tmpStr[1],"UDP");
-			//operation::getInstance()->writelog ("Rate Type: " + tmpStr[2],"UDP");
 			double parkingfee; 
 			parkingfee = operation::getInstance()->m_db->CalFeeRAM2GR(tmpStr[0],tmpStr[1],std::stoi(tmpStr[2]));
 			if (parkingfee >= 0)
@@ -274,7 +271,19 @@ void udpclient::processdata (const char* data, std::size_t length)
 			break;
 		}
 		case CmdDownloadHoliday:
+		{
+			operation::getInstance()->writelog("Received data:"+ std::string(data,length), "UDP");
+			operation::getInstance()->writelog("download Holiday", "UDP");
+			int ret = operation:: getInstance()-> m_db->downloadholidaymst(1);
+			if (ret > 0)
+			{
+				std::stringstream ss;
+				ss << "Download " << ret << " Holiday";
+				operation::getInstance()->SendMsg2Server("99", ss.str());
+			}
+			operation::getInstance()->m_db->LoadHoliday();
 			break;
+		}
 		case CmdUpdateParam:
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
@@ -456,3 +465,5 @@ void udpclient::startreceive()
             startreceive();  // Continue with the next receive operation
         }));
     }
+
+	

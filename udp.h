@@ -95,7 +95,7 @@ public:
     char data_[max_length];
     void startreceive();
     void startsend(const std::string& message)
-    {
+    {     
         socket_.async_send_to(buffer(message), serverEndpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& error, std::size_t /*bytes_sent*/)
         {
             if (!error)

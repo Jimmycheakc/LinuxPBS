@@ -549,6 +549,7 @@ struct  tParas_Struct
 	int giMaxSendOfflineNo;				// *DB Loaded: MaxSendOfflineNo, but not use
 	long glMaxLocalDBSize;
 	string gsDBBackupFolder;
+	string gsZoneEntries;
 
 	//--- tariff 
 	int giTariffFeeMode;				// DB Loaded: TariffFeeMode
