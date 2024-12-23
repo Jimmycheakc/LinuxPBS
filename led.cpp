@@ -229,7 +229,6 @@ void LED::FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string te
     // Msg Tail
     result.push_back(LED::ETX1);
     result.push_back(LED::ETX2);
-    result.push_back(0x00);
 }
 
 // LED Manager

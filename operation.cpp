@@ -724,6 +724,8 @@ void operation:: Setdefaultparameter()
 
     // tExitTrans_Struct initialization
     tExit.gbUposDoingDeduction.store(false);
+    tExit.bPayByEZPay.store(false);
+    tExit.bPayByVCC.store(false);
 }
 
 string operation:: getIPAddress() 
@@ -1578,9 +1580,7 @@ void operation::ManualOpenBarrier()
 {
      writelog ("Manual open barrier.", "OPR");
      if (gtStation.iType == tientry){
-        CE_Time dt;
-	    string dtStr=dt.DateString()+" "+dt.TimeWithMsString();
-	    tEntry.sEntryTime=dtStr;
+	    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();;
         tEntry.iStatus = 4;
         //---------
         m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tEntry.sIUTKNo);
@@ -2634,33 +2634,102 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
 
 void operation::PrintTR(bool bForSeason)
 {
-    std::string gsSite = "NUH KENT RIDGE WING";
-    std::string gsCompany;
-    std::string gsAddress;
-    std::string gsZIP;
-    std::string gsGSTNo = " M2-0069889-4";
-    std::string gsTel;
-    std::string exitReceiptNo = " R000000033";
-    std::string entrySerialNo;
-    std::string vehicleType = " Car";
-    std::string iuNo = " 1111900155064907";
-    std::string cardNo = " 1111900155064907";
-    std::string entryTime = " 12/01/2023 10:51:24";
-    std::string exitTime = " 12/01/2023 11:18:06";
-    std::string parkTime = " 00:27";
-    std::string amt = " $0.97";
-    std::string cardBal = " $24.30";
-    std::string owefee;
-    std::string fee;
-    std::string pm;
-    std::string admin;
-    std::string app;
-    std::string tamt;
-    std::string rdmamt;
-    std::string rebateamt;
-    std::string rebatebal;
-    std::string rebatedate;
-    std::string gstamt;
+    int iCurrentType;
+    static int iLastType;
+    std::string sSerialNo;
+
+    if (iLastType == 0)
+    {
+        iLastType = gtStation.iType;
+    }
+
+    if (gtStation.iType == tiAPS && tExit.iTransType == 11)
+    {
+        // Temp: will do in future - tExit.sIUNo = cPrinter.bEncode(Format(tExit.sExitTime, "yyyymmddHHmmss"), giStationID)
+        // Temp: will do in future - WriteLog "Barcode: " & tExit.sIUNO, "PBS"
+        iCurrentType = 11;
+    }
+    else if ((bForSeason == true) && (tParas.giSeasonCharge == 1) /* Temp: will do in future - && (tSeason.sIUNO <> "")*/)
+    {
+        iCurrentType = 12;
+    }
+    else
+    {
+        iCurrentType = gtStation.iType;
+    }
+
+    if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
+    {
+        iCurrentType = 2;
+    }
+
+    if (iLastType != iCurrentType)
+    {
+        m_db->loadTR(iCurrentType);
+        iLastType = iCurrentType;
+    }
+
+    tProcess.glLastSerialNo = tProcess.glLastSerialNo + 1;
+    std::string combinedString = std::to_string(tProcess.glLastSerialNo) + std::to_string(gtStation.iSID);
+    std::ostringstream formattedString;
+    formattedString << std::setw(9) << std::setfill('0') << combinedString;
+    sSerialNo = formattedString.str();
+    // Temp: will do in future - SaveSerialNo
+
+    if (gtStation.iType == tientry)
+    {
+        if (tProcess.giEntryDebit < 2)
+        {
+            tEntry.sSerialNo = tParas.gsHdTk + sSerialNo;
+            tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+            // Temp: will do in future - i = CheckVType
+            // Temp: will do in future - tEntry.sIUTKNo = cPrinter.bEncode(Format(Now, "yyyymmddHHmmss"), giStationID, i)
+            // Temp: will do in future - tEntry.iTransType = i * 3  '0=car, 3=lorry, 6=M\cycle
+        }
+        else
+        {
+            tEntry.sReceiptNo = tParas.gsHdRec + sSerialNo;
+        }
+    }
+    else
+    {
+        if (iCurrentType == 12)
+        {
+            // Temp: will do in futue - tSeason.sReceiptNo = tParas.gsHdRec & sSerialNo
+        }
+        else
+        {
+            tExit.sReceiptNo = tParas.gsHdRec + sSerialNo;
+        }
+    }
+
+    std::string gsSite = tParas.gsSite;
+    std::string gsCompany = tParas.gsCompany;
+    std::string gsAddress = tParas.gsAddress;
+    std::string gsZIP = tParas.gsZIP;
+    std::string gsGSTNo = tParas.gsGSTNo;
+    std::string gsTel = tParas.gsTel;
+    std::string exitReceiptNo = "";
+    std::string entrySerialNo = sSerialNo;
+    std::string vehicleType = "";
+    std::string iuNo = "";
+    std::string cardNo = "";
+    std::string entryTime = "";
+    std::string exitTime = "";
+    std::string parkTime = "";
+    std::string amt = "";
+    std::string cardBal = "";
+    std::string owefee = "";
+    std::string fee = "";
+    std::string pm = "";
+    std::string admin = "";
+    std::string app = "";
+    std::string tamt = "";
+    std::string rdmamt = "";
+    std::string rebateamt = "";
+    std::string rebatebal = "";
+    std::string rebatedate = "";
+    std::string gstamt = "";
 
     std::vector<std::string> gsTR(operation::getInstance()->tTR.size());
     for (std::size_t i = 0; i < operation::getInstance()->tTR.size(); i++)
@@ -2693,87 +2762,360 @@ void operation::PrintTR(bool bForSeason)
         }
         else if (gsTR_lowercase == "rno")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + exitReceiptNo;
+            if (iCurrentType == 12)
+            {
+                // Temp: will do in futue - exitReceiptNo = tSeason.sReceiptNo
+            }
+            else if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
+            {
+                exitReceiptNo = tEntry.sReceiptNo;
+            }
+            else
+            {
+                exitReceiptNo = tExit.sReceiptNo;
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + exitReceiptNo;
         }
         else if (gsTR_lowercase == "tno")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + entrySerialNo;
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + entrySerialNo;
         }
         else if (gsTR_lowercase == "vtype")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + vehicleType;
+            if (gtStation.iType == tientry)
+            {
+                vehicleType = GetVTypeStr(tEntry.iTransType);
+            }
+            else
+            {
+                vehicleType = GetVTypeStr(tExit.iTransType);
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + vehicleType;
         }
         else if (gsTR_lowercase == "itno")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + iuNo;
+            if (gtStation.iType == tientry)
+            {
+                iuNo = tEntry.sIUTKNo;
+            }
+            else
+            {
+                if (iCurrentType == 12)
+                {
+                    // Temp: will do in futue - iuNo = tSeason.sIUNO;
+                }
+                else
+                {
+                    iuNo = tExit.sIUNo;
+                }
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + iuNo;
         }
         else if (gsTR_lowercase == "card")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + cardNo;
+            if ((tExit.bPayByEZPay.load() == false) && (tExit.bPayByVCC.load() == false))
+            {
+                if (iCurrentType == 12)
+                {
+                    // Temp: will do in futue - tSeason.sCardNo
+                }
+                else if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
+                {
+                    cardNo = tEntry.sCardNo;
+                }
+                else
+                {
+                    if (tExit.sPaidAmt > 0)
+                    {
+                        cardNo = tExit.sCardNo;
+                    }
+                }
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + cardNo;
         }
         else if (gsTR_lowercase == "et")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + entryTime;
+            try
+            {
+                if (gtStation.iType == tientry)
+                {
+                    entryTime = Common::getInstance()->FnFormatDateTime(tEntry.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
+                }
+                else
+                {
+                    if (tExit.sEntryTime == "")
+                    {
+                        entryTime = " N/A";
+                    }
+                    else
+                    {
+                        entryTime = Common::getInstance()->FnFormatDateTime(tExit.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                Logger::getInstance()->FnLog(std::string("Format date time exception error: ") + ex.what(), "", "OPR");
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + entryTime;
         }
         else if (gsTR_lowercase == "pt")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + exitTime;
+            try
+            {
+                if (iCurrentType == 12)
+                {
+                    // Temp: will do in futue - exitTime = Format(tSeason.sExitTime, "dd/mm/yyyy HH:mm:ss")
+                }
+                else
+                {
+                    exitTime = Common::getInstance()->FnFormatDateTime(tExit.sExitTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                Logger::getInstance()->FnLog(std::string("Format date time exception error: ") + ex.what(), "", "OPR");
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + exitTime;
         }
         else if (gsTR_lowercase == "pkt")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + parkTime;
+            parkTime = db::getInstance()->CalParkedTime(tExit.lParkedTime);
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + parkTime;
         }
         else if (gsTR_lowercase == "amt")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + amt;
+            std::string payType = "";
+
+            try
+            {
+                std::ostringstream formattedStream;
+                formattedStream << std::fixed << std::setprecision(2) << tExit.sPaidAmt;
+
+                float formattedAmt = std::stof(formattedStream.str());
+
+                if (formattedAmt > 0)
+                {
+                    if (iCurrentType == 12)
+                    {
+                        // Temp: will do in futue - Format(tSeason.sPaidAmt, "0.00")
+                    }
+                    else
+                    {
+                        if (tProcess.giEntryDebit == 0)
+                        {
+                            amt = std::to_string(formattedAmt);
+                        }
+                        else
+                        {
+                            float sumAmt = tExit.sPaidAmt + tExit.sPrePaid;
+
+                            std::ostringstream formattedSumAmtStream;
+                            formattedSumAmtStream << std::fixed << std::setprecision(2) << sumAmt;
+
+                            float formattedSumAmt = std::stof(formattedSumAmtStream.str());
+
+                            amt = std::to_string(formattedSumAmt);
+                        }
+                    }
+                }
+
+                if (tExit.bPayByEZPay.load() == true)
+                {
+                    payType = " (by EZPay)";
+                }
+                
+                if (tExit.bPayByVCC == true)
+                {
+                    payType = " (by VCC)";
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                Logger::getInstance()->FnLog(std::string("String to float exception error: ") + ex.what(), "", "OPR");
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + amt + payType;
         }
         else if (gsTR_lowercase == "bal")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + cardBal;
+            if (tExit.sPaidAmt > 0)
+            {
+                if ((tExit.bPayByEZPay == false) && (tExit.bPayByVCC == false) && (tProcess.fsCardBal > 0))
+                {
+                    if (iCurrentType == 12)
+                    {
+                        // Temp: will do in futue - Format(tSeason.sBal, "0.00")
+                    }
+                    else
+                    {
+                        std::stringstream ss;
+                        ss << "card type: " << tProcess.fiCardType << ", fsCardBal: " << tProcess.fsCardBal;
+                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        
+                        std::ostringstream formattedCardBalStream;
+                        formattedCardBalStream << std::fixed << std::setprecision(2) << tProcess.fsCardBal;
+
+                        cardBal = formattedCardBalStream.str();
+                    }
+                }
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + cardBal;
         }
         else if (gsTR_lowercase == "owefee")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + owefee;
+            if (gtStation.iSubType == iXwithVEPay)
+            {
+                if (tExit.sOweAmt >= 0)
+                {
+                    // Temp: will do in futue - gsTR(i) = "(" & gtStations(gtStations(tExit.iEntryID).iVExitID).sZoneName & ") " & gsTR0(i) & " $" & Format(tExit.sOweAmt, "0.00")
+                }
+                else
+                {
+                    // Temp: will do in futue - gsTR(i) = "(" & gtStations(gtStations(tExit.iEntryID).iVExitID).sZoneName & ") " & gsTR0(i) & " $" & Format(0, "0.00")
+                }
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + owefee;
         }
         else if (gsTR_lowercase == "fee")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + fee;
+            if (tProcess.giEntryDebit == 0)
+            {
+                std::stringstream ss;
+                ss << "tExit.sFee: " << tExit.sFee << ", tExit.sPrePaid: " << tExit.sPrePaid; 
+                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+
+                if (gtStation.iSubType == iXwithVEPay)
+                {
+                    float sumFee = tExit.sFee + tExit.sPrePaid;
+                    std::ostringstream formattedSumFeeStream;
+                    formattedSumFeeStream << std::fixed << std::setprecision(2) << sumFee;
+                    fee = formattedSumFeeStream.str();
+                    gsTR[i] = "(" + gtStation.sZoneName + ")" + operation::getInstance()->tTR[i].gsTR0 + " $" + fee;
+                }
+                else
+                {
+                    std::ostringstream formattedFeeStream;
+                    formattedFeeStream << std::fixed << std::setprecision(2) << tExit.sFee;
+                    fee = formattedFeeStream.str();
+                    gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + fee;
+                }
+            }
+            else
+            {
+                float sumFee = tExit.sFee + tExit.sPrePaid;
+                std::ostringstream formattedSumFeeStream;
+                formattedSumFeeStream << std::fixed << std::setprecision(2) << sumFee;
+                fee = formattedSumFeeStream.str();
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + fee;
+            }
         }
         else if (gsTR_lowercase == "pm")
         {
+            // Temp: will do in futue - pm = tSeason.sPaidMth
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + pm;
         }
         else if (gsTR_lowercase == "admin")
         {
+            // Temp: will do in futue - admin = Format(tSeason.sAdminFee, "0.00")
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + admin;
         }
         else if (gsTR_lowercase == "app")
         {
+            // Temp: will do in futue - app = Format(tSeason.sAppFee, "0.00")
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + app;
         }
         else if (gsTR_lowercase == "tamt")
         {
+            // Temp: will do in futue - tamt = Format(tSeason.sPaidAmt + tSeason.sAdminFee + tSeason.sAdminFee, "0.00")
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + tamt;
         }
         else if (gsTR_lowercase == "rdmamt")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rdmamt;
+            if (tExit.sRebateAmt > 0)
+            {
+                std::ostringstream formattedRdmamtStream;
+                formattedRdmamtStream << std::fixed << std::setprecision(2) << tExit.sRedeemAmt;
+                rdmamt = formattedRdmamtStream.str();
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + rdmamt;
+            }
+            else
+            {
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+            }
         }
         else if (gsTR_lowercase == "rebateamt")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rebateamt;
+            if (tExit.sRebateAmt > 0)
+            {
+                std::ostringstream formattedRebateAmtStream;
+                formattedRebateAmtStream << std::fixed << std::setprecision(2) << tExit.sRebateAmt;
+                rebateamt = formattedRebateAmtStream.str();
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + rebateamt;
+            }
+            else
+            {
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+            }
         }
         else if (gsTR_lowercase == "rebatebal")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rebatebal;
+            if (tExit.sRebateAmt > 0)
+            {
+                std::ostringstream formattedRebateBalStream;
+                formattedRebateBalStream << std::fixed << std::setprecision(2) << tExit.sRebateAmt;
+                rebatebal = formattedRebateBalStream.str();
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + rebatebal;
+            }
+            else
+            {
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+            }
         }
         else if (gsTR_lowercase == "rebatedate")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + rebatedate;
+            if (tExit.sRebateAmt > 0)
+            {
+                // Temp: will do in futue - gsTR(i) = gsTR0(i) & Format(tExit.sRebateDate, "dd/mm/yyyy")
+            }
+            else
+            {
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+            }
         }
         else if (gsTR_lowercase == "gstamt")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gstamt;
+            if (tExit.sGSTAmt == 0)
+            {
+                if ((gtStation.iType == tientry) && (tProcess.giEntryDebit == 2))
+                {
+                    std::ostringstream formattedGstAmtStream;
+                    formattedGstAmtStream << std::fixed << std::setprecision(2) << tEntry.sGSTAmt;
+                    gstamt = formattedGstAmtStream.str();
+                }
+                else
+                {
+                    if (tExit.sPaidAmt > 0)
+                    {
+                        std::ostringstream formattedGstAmtStream;
+                        formattedGstAmtStream << std::fixed << std::setprecision(2) << tExit.sGSTAmt;
+                        gstamt = formattedGstAmtStream.str();
+                    }
+                    else
+                    {
+                        float sumGst = tExit.sPrePaid * tParas.gfGSTRate / (1 + tParas.gfGSTRate);
+                        std::ostringstream formattedSumGstAmtStream;
+                        formattedSumGstAmtStream << std::fixed << std::setprecision(2) << sumGst;
+                        gstamt = formattedSumGstAmtStream.str();
+                    }
+                }
+            }
+            else
+            {
+                std::ostringstream formattedGstAmtStream;
+                formattedGstAmtStream << std::fixed << std::setprecision(2) << tExit.sGSTAmt;
+                gstamt = formattedGstAmtStream.str();
+            }
+            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + std::to_string(tParas.gfGSTRate * 100) + "% GST $" + gstamt;
         }
         else
         {
@@ -3680,4 +4022,32 @@ void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo,
                 int iGWStatus, const std::string& sTransTime)
 {
 
+}
+
+std::string operation::GetVTypeStr(int iVType)
+{
+    std::string sVType = "";
+
+    if ((iVType < 3) || (iVType == 20))
+    {
+        sVType = "Car";
+    }
+    else if ((iVType < 6) || (iVType == 21))
+    {
+        sVType = "Lorry";
+    }
+    else if ((iVType < 9) || (iVType == 22))
+    {
+        sVType = "M/Cycle";
+    }
+    else if (iVType == 33)
+    {
+        sVType = "Container";
+    }
+    else
+    {
+        sVType = "Undefined Vehicle Type";
+    }
+
+    return sVType;
 }

@@ -26,6 +26,7 @@ public:
     std::string FnGetDateTimeFormat_yyyymmddhhmm();
     std::string FnGetDateTimeFormat_yymmddhhmmss();
     std::string FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+    std::string FnFormatDateTime(const std::string& timeString, const std::string& inputFormat, const std::string& outputFormat);
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::string FnFormatEpochTime(std::time_t epochSeconds);
     std::time_t FnGetEpochSeconds();

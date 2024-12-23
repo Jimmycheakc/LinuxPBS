@@ -179,6 +179,24 @@ std::string Common::FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss()
     return oss.str();
 }
 
+std::string Common::FnFormatDateTime(const std::string& timeString, const std::string& inputFormat, const std::string& outputFormat)
+{
+    std::tm tm = {};
+    std::istringstream ss(timeString);
+
+    // Parse the input string using the provided input format
+    ss >> std::get_time(&tm, inputFormat.c_str());
+    if (ss.fail())
+    {
+        throw std::invalid_argument("Failed to parse time: " + timeString + " with format: " + inputFormat);
+    }
+
+    // Format the std::tm into desired output format
+    std::ostringstream oss;
+    oss << std::put_time(&tm, outputFormat.c_str());
+    return oss.str();
+}
+
 std::time_t Common::FnGetEpochSeconds()
 {
     auto currentTime = std::chrono::system_clock::now();

@@ -99,6 +99,7 @@ public:
                 const std::string& sPaidAmt = "", const std::string& sBal = "",
                 int iCardType = 0, const std::string& sTopupAmt = "",
                 int iGWStatus = 0, const std::string& sTransTime = "");
+    std::string GetVTypeStr(int iVType);
 
     void Openbarrier();
 

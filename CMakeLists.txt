@@ -89,5 +89,4 @@ target_link_libraries(linuxpbs
     OpenSSL::Crypto
     ${ODBC_LIBRARIES}
     ${LIBEVDEV_LIBRARIES}
-    udev
 )

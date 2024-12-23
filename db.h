@@ -95,7 +95,7 @@ public:
 	DBError loadstationsetup();
     DBError loadcentralDBinfo();
     DBError loadvehicletype();
-    DBError loadTR();
+    DBError loadTR(int iType = 0);
     DBError LoadTariff();
     DBError LoadHoliday();
     DBError ClearHoliday();

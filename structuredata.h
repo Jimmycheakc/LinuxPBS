@@ -74,6 +74,7 @@ typedef enum {
 typedef enum {
 	tientry = 1,
 	tiExit = 2,
+	tiAPS = 6
 }tStationType;
 
 typedef enum {
@@ -352,6 +353,8 @@ struct  tExitTrans_Struct
 	string sRPLPN;
 
 	std::atomic<bool> gbUposDoingDeduction;
+	std::atomic<bool> bPayByEZPay;
+	std::atomic<bool> bPayByVCC;
 };
 
 
@@ -387,6 +390,8 @@ struct  tProcess_Struct
 	int gbInitParamFail;
 	int giCardIsIn;
 	int giLastHousekeepingDate;
+	int giEntryDebit;
+	long glLastSerialNo;
 //	bool gbwaitLoopA;
 	std::atomic<bool> fbReadIUfromAnt;
 	int fiLastCHUCmd;
@@ -613,7 +618,9 @@ struct  tParas_Struct
 	int giMCControlAction;
 
 	//----- Others
-	float gfGSTRate;					// *DB Loaded: GSTRate, but not use
+	float gfGSTRate;					// DB Loaded: GSTRate
+	std::string gsHdRec;				// DB Loaded: HdRec
+	std::string gsHdTk;					// DB Loaded: HdTk
 };
 
 struct  tMsg_Struct

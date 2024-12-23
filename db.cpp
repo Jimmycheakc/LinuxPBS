@@ -294,8 +294,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 	//TK_Serialno is an integer type in DB
 	//make sure the value must be the integer
 	//to avoid exception
-	CE_Time dt;
-	tEntry.sEntryTime = dt.DateString()+" "+dt.TimeString();
+	tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
 	
 	if (tEntry.sSerialNo=="") tEntry.sSerialNo="0";
 	else{
@@ -3665,6 +3664,16 @@ DBError db::loadParam()
 					{
 						operation::getInstance()->tParas.giCHUCnTO = std::stof(readerItem.GetDataItem(1));
 					}
+
+					if (readerItem.GetDataItem(0) == "HdRec")
+					{
+						operation::getInstance()->tParas.gsHdRec = std::stof(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "HdTk")
+					{
+						operation::getInstance()->tParas.gsHdTk = std::stof(readerItem.GetDataItem(1));
+					}
 				}
 				catch (const std::invalid_argument &e)
 				{
@@ -4608,15 +4617,24 @@ DBError db::loadmessage()
 	return retErr;
 }
 
-DBError db::loadTR()
+DBError db::loadTR(int iType)
 {
 	int r = -1;
 	DBError retErr;
 	vector<ReaderItem> trSelResult;
 	std::string sqlStmt;
 
+	if (iType == 0)
+	{
+		iType = operation::getInstance()->gtStation.iType;
+		if ((operation::getInstance()->gtStation.iType == tientry) && (operation::getInstance()->tProcess.giEntryDebit == 2))
+		{
+			iType = 2;
+		}
+	}
+
 	sqlStmt = "SELECT LineText, LineVar, LineFont, LineAlign from TR_mst";
-	sqlStmt = sqlStmt + " WHERE TRType=2" + " AND Enabled = 1 ORDER BY Line_no";
+	sqlStmt = sqlStmt + " WHERE TRType=" + std::to_string(iType) + " AND Enabled = 1 ORDER BY Line_no";
 
 	r = localdb->SQLSelect(sqlStmt, &trSelResult, true);
 	if (r != 0)
