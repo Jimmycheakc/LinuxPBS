@@ -2,8 +2,18 @@
 
 #include <iostream>
 #include <mutex>
+#include <thread>
+#include <queue>
+#include <deque>
+#include <vector>
+#include <array>
+#include <atomic>
+#include <memory>
+#include <string>
+#include <cstdint>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
+#include "boost/asio/deadline_timer.hpp"
 
 class KSM_Reader
 {
@@ -48,6 +58,47 @@ public:
         KSMReaderRecv_CRCErr      = 2
     };
 
+    enum class STATE
+    {
+        IDLE,
+        SENDING_REQUEST_ASYNC,
+        WAITING_FOR_ACK,
+        WAITING_FOR_RESPONSE,
+        STATE_COUNT
+    };
+
+    enum class EVENT
+    {
+        COMMAND_ENQUEUED,
+        WRITE_COMPLETED,
+        WRITE_FAILED,
+        ACK_TIMEOUT,
+        ACK_TIMER_CANCELLED_ACK_RECEIVED,
+        RESPONSE_TIMEOUT,
+        RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
+        EVENT_COUNT
+    };
+
+    struct EventTransition
+    {
+        EVENT event;
+        void (KSM_Reader::*eventHandler)(EVENT);
+        STATE nextState;
+    };
+
+    struct StateTransition
+    {
+        STATE stateName;
+        std::vector<EventTransition> transitions;
+    };
+
+    struct CommandWithData
+    {
+        KSMReaderCmdID cmd;
+
+        explicit CommandWithData(KSMReaderCmdID c) : cmd(c) {}
+    };
+
     static const char STX = 0x02;
     static const char ETX = 0x03;
     static const char DLE = 0x10;
@@ -60,15 +111,15 @@ public:
     static const int RX_BUF_SIZE = 128;
 
     static KSM_Reader* getInstance();
-    int FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
-    bool FnGetIsCmdExecuting() const;
-    int FnKSMReaderEnable(bool enable);
-    int FnKSMReaderReadCardInfo();
+    int FnKSMReaderInit(unsigned int baudRate, const std::string& comPortName);
+    void FnKSMReaderClose();
+    void FnKSMReaderEnable(bool enable);
+    void FnKSMReaderReadCardInfo();
 
-    int FnKSMReaderSendInit();
-    int FnKSMReaderSendGetStatus();
+    void FnKSMReaderSendInit();
+    void FnKSMReaderSendGetStatus();
     void FnKSMReaderStartGetStatus();
-    int FnKSMReaderSendEjectToFront();
+    void FnKSMReaderSendEjectToFront();
 
     std::string FnKSMReaderGetCardNum();
     bool FnKSMReaderGetCardExpired();
@@ -86,27 +137,44 @@ public:
     void operator=(const KSM_Reader &) = delete;
 
 private:
+
     static KSM_Reader* ksm_reader_;
     static std::mutex mutex_;
-    boost::asio::io_context* pMainIOContext_;
-    boost::asio::io_context io_serial_context;
-    std::unique_ptr<boost::asio::io_context::strand> pStrand_;
+    boost::asio::io_context ioContext_;
+    boost::asio::io_context::work work_;
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    std::thread ioContextThread_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
-    std::atomic<bool> continueReadFlag_;
-    std::atomic<bool> isCmdExecuting_;
     std::string logFileName_;
     unsigned char txBuff[TX_BUF_SIZE];
     unsigned char rxBuff[RX_BUF_SIZE];
     int TxNum_;
     int RxNum_;
-    char recvbcc_;
+    unsigned char recvbcc_;
     RX_STATE rxState_;
+    std::array<uint8_t, 1024> readBuffer_;
+    bool write_in_progress_;
+    std::queue<std::vector<uint8_t>> writeQueue_;
     bool cardPresented_;
     std::string cardNum_;
     int cardExpiryYearMonth_;
     bool cardExpired_;
     long cardBalance_;
+    static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
+    STATE currentState_;
+    std::mutex cmdQueueMutex_;
+    std::deque<CommandWithData> commandQueue_;
+    static std::mutex currentCmdMutex_;
+    KSMReaderCmdID currentCmd;
+    std::atomic<bool> ackRecv_;
+    std::atomic<bool> rspRecv_;
+    boost::asio::deadline_timer ackTimer_;
+    boost::asio::deadline_timer rspTimer_;
+    std::atomic<bool> continueReadCardFlag_;
+    std::atomic<bool> blockGetStatusCmdLogFlag_;
     KSM_Reader();
+    void startIoContextThread();
+    void sendEnq();
     void resetRxState();
     unsigned char* getTxBuff();
     unsigned char* getRxBuff();
@@ -127,12 +195,31 @@ private:
     std::vector<unsigned char> loadEjectToFront();
     std::vector<unsigned char> loadGetStatus();
     std::string KSMReaderCmdIDToString(KSMReaderCmdID cmdID);
-    int ksmReaderCmd(KSMReaderCmdID cmdID);
-    ReadResult ksmReaderReadWithTimeout(int milliseconds);
+    void ksmReaderCmd(KSMReaderCmdID cmdID);
+    KSMReaderCmdRetCode ksmReaderHandleCmdResponse(KSMReaderCmdID cmd, const std::vector<char>& dataBuff);
     bool responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred);
     int receiveRxDataByte(char c);
-    void sendEnq();
-    KSMReaderCmdRetCode ksmReaderHandleCmdResponse(KSMReaderCmdID cmd, const std::vector<char>& dataBuff);
-    void handleReadCardStatusTimerExpiration();
-    void startReadCardStatusTimer(int milliseconds);
+    void enqueueWrite(const std::vector<uint8_t>& data);
+    void startWrite();
+    void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
+    void startRead();
+    void readEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
+    std::string stateToString(STATE state);
+    std::string eventToString(EVENT event);
+    void processEvent(EVENT event);
+    void checkCommandQueue();
+    void enqueueCommand(KSMReaderCmdID cmd);
+    void popFromCommandQueueAndEnqueueWrite();
+    void handleIdleState(EVENT event);
+    void handleSendingRequestAsyncState(EVENT event);
+    void handleWaitingForAckState(EVENT event);
+    void handleWaitingForResponseState(EVENT event);
+    void handleAckTimeout(const boost::system::error_code& error);
+    void handleCmdResponseTimeout(const boost::system::error_code& error);
+    void handleCmdErrorOrTimeout(KSMReaderCmdID cmd, KSMReaderCmdRetCode retCode);
+    void setCurrentCmd(KSMReaderCmdID cmd);
+    KSMReaderCmdID getCurrentCmd();
+    void startAckTimer();
+    void startResponseTimer();
+    void ksmLogger(const std::string& logMsg);
 };

@@ -14,24 +14,32 @@
 
 KSM_Reader* KSM_Reader::ksm_reader_ = nullptr;
 std::mutex KSM_Reader::mutex_;
+std::mutex KSM_Reader::currentCmdMutex_;
 
 KSM_Reader::KSM_Reader()
-    : io_serial_context(),
+    : ioContext_(),
+    strand_(boost::asio::make_strand(ioContext_)),
+    work_(ioContext_),
+    write_in_progress_(false),
+    currentState_(KSM_Reader::STATE::IDLE),
+    currentCmd(KSM_Reader::KSMReaderCmdID::INIT_CMD),
+    ackRecv_(false),
+    rspRecv_(false),
+    ackTimer_(ioContext_),
+    rspTimer_(ioContext_),
     TxNum_(0),
     RxNum_(0),
-    continueReadFlag_(false),
-    isCmdExecuting_(false),
-    recvbcc_(0),
-    rxState_(KSM_Reader::RX_STATE::IDLE),
     cardPresented_(false),
     cardNum_(""),
     cardExpiryYearMonth_(0),
     cardExpired_(false),
-    cardBalance_(0)
+    cardBalance_(0),
+    continueReadCardFlag_(false),
+    blockGetStatusCmdLogFlag_(false)
 {
-    memset(txBuff, 0, sizeof(txBuff));
-    memset(rxBuff, 0, sizeof(rxBuff));
     logFileName_ = "ksmReader";
+    resetRxState();
+    memset(txBuff, 0, sizeof(txBuff));
 }
 
 KSM_Reader* KSM_Reader::getInstance()
@@ -44,130 +52,85 @@ KSM_Reader* KSM_Reader::getInstance()
     return ksm_reader_;
 }
 
-int KSM_Reader::FnKSMReaderInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName)
+int KSM_Reader::FnKSMReaderInit(unsigned int baudRate, const std::string& comPortName)
 {
     int ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
 
-    try 
-    {
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
+    pSerialPort_ = std::make_unique<boost::asio::serial_port>(ioContext_, comPortName);
 
-        pMainIOContext_ = &mainIOContext;
-        pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
-        pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
-
+    try
+    {   
         pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
         pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
 
-        std::stringstream ss;
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
+
         if (pSerialPort_->is_open())
         {
+            std::stringstream ss;
             ss << "Successfully open serial port for KSM Reader Communication: " << comPortName;
+            Logger::getInstance()->FnLog(ss.str());
+            ksmLogger(__func__);
+            startIoContextThread();
+            startRead();
+            enqueueCommand(KSMReaderCmdID::INIT_CMD);
             ret = 1;
         }
         else
         {
+            std::stringstream ss;
             ss << "Failed to open serial port for KSM Reader Communication: " << comPortName;
             Logger::getInstance()->FnLog(ss.str());
-        }
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-
-        if (pSerialPort_->is_open())
-        {
-            std::stringstream initSS;
-            int cmdRet = ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
-            if (cmdRet == 1)
-            {
-                initSS << "KSM Reader initialization completed.";
-                ret = cmdRet;
-            }
-            else
-            {
-                initSS << "KSM Reader initialization failed.";
-                ret = cmdRet;
-            }
-            Logger::getInstance()->FnLog(initSS.str());
-            Logger::getInstance()->FnLog(initSS.str(), logFileName_, "KSM");
+            ksmLogger(__func__);
         }
     }
     catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
-        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
         std::stringstream ss;
         ss << "Boost.Asio Exception during KSM Reader Initialization: " << e.what();
         Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
+        ksmLogger(__func__);
     }
     catch (const std::exception& e)
     {
-        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
         std::stringstream ss;
         ss << "Exception during KSM Reader Initialization: " << e.what();
         Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
+        ksmLogger(__func__);
     }
     catch (...)
     {
-        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderComm_Error);
         std::stringstream ss;
         ss << "Unknown Exception during KSM Reader Initialization.";
         Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"KSM");
+        ksmLogger(__func__);
     }
+
     return ret;
 }
 
-bool KSM_Reader::FnGetIsCmdExecuting() const
+void KSM_Reader::startIoContextThread()
 {
-    return isCmdExecuting_.load();
-}
-
-
-void KSM_Reader::sendEnq()
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-
-    unsigned char data[1] = { KSM_Reader::ENQ };
-    boost::asio::write(*pSerialPort_, boost::asio::buffer(data, 1));
-}
-
-int KSM_Reader::FnKSMReaderSendInit()
-{
-    if (pSerialPort_ == nullptr)
+    if (!ioContextThread_.joinable())
     {
-        return -1;
+        ioContextThread_ = std::thread([this]() { 
+            ioContext_.run(); 
+        });
     }
-
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-
-    return ksmReaderCmd(KSMReaderCmdID::INIT_CMD);
 }
 
-int KSM_Reader::FnKSMReaderSendGetStatus()
+void KSM_Reader::FnKSMReaderClose()
 {
-    if (pSerialPort_ == nullptr)
+    ksmLogger(__func__);
+
+    ioContext_.stop();
+    if (ioContextThread_.joinable())
     {
-        return -1;
+        ioContextThread_.join();
     }
-
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-
-    return ksmReaderCmd(KSMReaderCmdID::GET_STATUS_CMD);
-}
-
-int KSM_Reader::FnKSMReaderSendEjectToFront()
-{
-    if (pSerialPort_ == nullptr)
-    {
-        return -1;
-    }
-
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-
-    return ksmReaderCmd(KSMReaderCmdID::EJECT_TO_FRONT_CMD);
 }
 
 std::string KSM_Reader::KSMReaderCmdIDToString(KSM_Reader::KSMReaderCmdID cmdID)
@@ -216,557 +179,6 @@ std::string KSM_Reader::KSMReaderCmdIDToString(KSM_Reader::KSMReaderCmdID cmdID)
         default:
             return "UNKNOWN_CMD";
     }
-}
-
-int KSM_Reader::ksmReaderCmd(KSM_Reader::KSMReaderCmdID cmdID)
-{
-    int ret;
-
-    if (!isCmdExecuting_.exchange(true))
-    {
-        std::stringstream ss;
-        ss << __func__ << " Command ID : " << KSMReaderCmdIDToString(cmdID);
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-
-        if (!pSerialPort_->is_open())
-        {
-            return -1;
-        }
-
-        std::vector<unsigned char> dataBuffer;
-
-        switch (cmdID)
-        {
-            case KSMReaderCmdID::INIT_CMD:
-            {
-                dataBuffer = loadInitReader();
-                break;
-            }
-            case KSMReaderCmdID::CARD_PROHIBITED_CMD:
-            {
-                dataBuffer = loadCardProhibited();
-                break;
-            }
-            case KSMReaderCmdID::CARD_ALLOWED_CMD:
-            {
-                dataBuffer = loadCardAllowed();
-                break;
-            }
-            case KSMReaderCmdID::CARD_ON_IC_CMD:
-            {
-                dataBuffer = loadCardOnIc();
-                break;
-            }
-            case KSMReaderCmdID::IC_POWER_ON_CMD:
-            {
-                dataBuffer = loadICPowerOn();
-                break;
-            }
-            case KSMReaderCmdID::WARM_RESET_CMD:
-            {
-                dataBuffer = loadWarmReset();
-                break;
-            }
-            case KSMReaderCmdID::SELECT_FILE1_CMD:
-            {
-                dataBuffer = loadSelectFile1();
-                break;
-            }
-            case KSMReaderCmdID::SELECT_FILE2_CMD:
-            {
-                dataBuffer = loadSelectFile2();
-                break;
-            }
-            case KSMReaderCmdID::READ_CARD_INFO_CMD:
-            {
-                dataBuffer = loadReadCardInfo();
-                break;
-            }
-            case KSMReaderCmdID::READ_CARD_BALANCE_CMD:
-            {
-                dataBuffer = loadReadCardBalance();
-                break;
-            }
-            case KSMReaderCmdID::IC_POWER_OFF_CMD:
-            {
-                dataBuffer = loadICPowerOff();
-                break;
-            }
-            case KSMReaderCmdID::EJECT_TO_FRONT_CMD:
-            {
-                dataBuffer = loadEjectToFront();
-                break;
-            }
-            case KSMReaderCmdID::GET_STATUS_CMD:
-            {
-                dataBuffer = loadGetStatus();
-                break;
-            }
-            default:
-            {
-                std::stringstream ss;
-                ss << __func__ << " : Command not found.";
-                Logger::getInstance()->FnLog(ss.str());
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-
-                return static_cast<int>(KSMReaderCmdRetCode::KSMReaderRecv_CmdNotFound);
-                break;
-            }
-        }
-
-        // Command to send and read back
-        KSM_Reader::ReadResult result;
-        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderRecv_NoResp);
-
-        result.data = {};
-        result.success = false;
-        
-        readerCmdSend(dataBuffer);
-        result = ksmReaderReadWithTimeout(2000);
-
-        resetRxState();
-
-        isCmdExecuting_.store(false);
-
-        if (result.success)
-        {
-            // Discard last element BCC from received data buffer
-            if (!result.data.empty())
-            {
-                result.data.pop_back();
-            }
-            ret = static_cast<int>(ksmReaderHandleCmdResponse(cmdID, result.data));
-        }
-    }
-    else
-    {
-        Logger::getInstance()->FnLog("Cmd cannot send, there is already one Cmd executing.", logFileName_, "KSM");
-        ret = static_cast<int>(KSMReaderCmdRetCode::KSMReaderSend_Failed);
-    }
-
-    return ret;
-}
-
-KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reader::KSMReaderCmdID cmd, const std::vector<char>& dataBuff)
-{
-    KSMReaderCmdRetCode retCode = KSMReaderCmdRetCode::KSMReaderRecv_NoResp;
-
-    std::stringstream receivedRespStream;
-    receivedRespStream << "Received Buffer Data : " << Common::getInstance()->FnGetVectorCharToHexString(dataBuff);
-    Logger::getInstance()->FnLog(receivedRespStream.str(), logFileName_, "KSM");
-    std::stringstream receivedRespNumBytesStream;
-    receivedRespNumBytesStream << "Received Buffer size : " << dataBuff.size();
-    Logger::getInstance()->FnLog(receivedRespNumBytesStream.str(), logFileName_, "KSM");
-
-    if (dataBuff.size() > 3)
-    {
-        if (dataBuff[0] != KSM_Reader::STX)
-        {
-            Logger::getInstance()->FnLog("Rx Frame : STX error.", logFileName_, "KSM");
-            return retCode;
-        }
-
-        if (dataBuff[dataBuff.size() - 1] != KSM_Reader::ETX)
-        {
-            Logger::getInstance()->FnLog("Rx Frame : ETX error.", logFileName_, "KSM");
-            return retCode;
-        }
-
-        std::size_t startIdx = 1;
-        std::size_t endIdx = dataBuff.size() - 1;
-        std::size_t len = endIdx - startIdx;
-
-        std::vector<char> recvCmd(len);
-        std::copy(dataBuff.begin() + startIdx, dataBuff.begin() + endIdx, recvCmd.begin());
-
-        std::stringstream rxCmdSS;
-        rxCmdSS << "Rx command : " << Common::getInstance()->FnGetVectorCharToHexString(recvCmd);
-        Logger::getInstance()->FnLog(rxCmdSS.str(), logFileName_, "KSM");
-        char cmdCodeMSB = recvCmd[2];
-        char cmdCodeLSB = recvCmd[3];
-
-        if (cmdCodeMSB == 0x2F)
-        {
-            std::stringstream logMsg;
-            if (cmdCodeLSB == 0x31)
-            {
-                logMsg << "Rx Response : Card prohibited.";
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-            }
-            else if (cmdCodeLSB == 0x33)
-            {
-                logMsg << "Rx Response : Card Allowed.";
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-            }
-            Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
-        }
-        else if (cmdCodeMSB == 0x30)
-        {
-            std::stringstream logMsg;
-            if (cmdCodeLSB == 0x31)
-            {
-                logMsg << "Rx Response : Init.";
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-            }
-            Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
-        }
-        else if (cmdCodeMSB == 0x31)
-        {
-            if (cmdCodeLSB == 0x30)
-            {
-                std::stringstream logMsg;
-                char status = recvCmd[4];
-
-                if (status == 0x4A || status == 0x4B)
-                {
-                    if (cardPresented_ == false)
-                    {
-                        cardPresented_ = true;
-                        // Temp: raise event Card In
-                        EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardIn", true);
-                        logMsg << "Rx Response : Get Status : Card In";
-                    }
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                }
-                else if (status == 0x4E)
-                {
-                    if (cardPresented_ == true)
-                    {
-                        cardPresented_ = false;
-                        // Temp: raise event Card Take Away
-                        EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardTakeAway", true);
-                        logMsg << "Rx Response : Get Status : Card Out";
-                    }
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                }
-                else
-                {
-                    logMsg << "Rx Response : Card Occupied.";
-                }
-
-                Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
-            }
-        }
-        else if (cmdCodeMSB == 0x32)
-        {
-            std::stringstream logMsg;
-
-            if (cmdCodeLSB == 0x2F)
-            {
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : Card On.";
-            }
-            else if (cmdCodeLSB == 0x31)
-            {
-                // Temp: Raise event card out
-                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardOut", true);
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : Eject to front.";
-            }
-
-            Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
-        }
-        else if (cmdCodeMSB == 0x33)
-        {
-            std::stringstream logMsg;
-
-            if (cmdCodeLSB == 0x30)
-            {
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : IC Power On.";
-            }
-            else if (cmdCodeLSB == 0x31)
-            {
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : IC Power Off.";
-            }
-
-            Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
-        }
-        else if (cmdCodeMSB == 0x37)
-        {
-            std::stringstream logMsg;
-
-            if (cmdCodeLSB == 0x2F)
-            {
-                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                logMsg << "Rx Response : Warm Reset.";
-            }
-            else if (cmdCodeLSB == 0x31)
-            {
-                char status = recvCmd[4];
-                if (status == 0x4E)
-                {
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_NoResp;
-                    logMsg << "Rx Response : Card Read Error.";
-                }
-                else if (cmd == KSMReaderCmdID::SELECT_FILE1_CMD)
-                {
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Select File 1.";
-                }
-                else if (cmd == KSMReaderCmdID::SELECT_FILE2_CMD)
-                {
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Select File 2.";
-                }
-                else if (cmd == KSMReaderCmdID::READ_CARD_INFO_CMD)
-                {
-                    std::vector<char>::const_iterator startPos;
-                    std::vector<char>::const_iterator endPos;
-                    
-                    // Get Card Number
-                    startPos = recvCmd.begin() + 8;
-                    endPos = startPos + 8;
-                    std::vector<char> cardNumber(startPos, endPos);
-                    cardNum_ = Common::getInstance()->FnGetVectorCharToHexString(cardNumber);
-
-                    // Get Expiry Date
-                    startPos = recvCmd.begin() + 19;
-                    endPos = startPos + 3;
-                    std::vector<char> expireDate(startPos, endPos);
-                    std::string expireDateStr = Common::getInstance()->FnGetVectorCharToHexString(expireDate);
-                    std::string year = expireDateStr.substr(0, 2);
-                    std::string month = expireDateStr.substr(2, 2);
-                    std::string expmonth = expireDateStr.substr(4, 2);
-
-                    int intYear = std::atoi(year.c_str());
-                    if (intYear > 90)
-                    {
-                        intYear = 1900 + intYear;
-                    }
-                    else
-                    {
-                        intYear = 2000 + intYear;
-                    }
-
-                    // Calculate the expiry year and month provided by expmonth from card info
-                    int intMonth = std::atoi(month.c_str());
-                    int intExpMonth = std::atoi(expmonth.c_str());
-
-                    intExpMonth = intExpMonth + intMonth;
-                    int intExpYear = intYear + static_cast<int>(intExpMonth / 12);
-                    intExpMonth = intExpMonth % 12;
-
-                    // Concatenate year and month ,eg (2024 * 100) + 3 = 202400 + 3 = 202403
-                    cardExpiryYearMonth_ = (intExpYear * 100) + intExpMonth;
-
-                    if (std::to_string(cardExpiryYearMonth_) > Common::getInstance()->FnGetDateTimeFormat_yyyymm())
-                    {
-                        cardExpired_ = false;
-                    }
-                    else
-                    {
-                        cardExpired_ = true;
-                    }
-
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Card Read Info status.";
-                }
-                else if (cmd == KSMReaderCmdID::READ_CARD_BALANCE_CMD)
-                {
-                    std::vector<char>::const_iterator startPos = recvCmd.begin() + 8;
-                    std::vector<char>::const_iterator endPos = startPos + 3;
-                    
-                    std::vector<char> cardBalance(startPos, endPos);
-                    std::string cardBalanceStr = Common::getInstance()->FnGetVectorCharToHexString(cardBalance);
-
-                    cardBalance_ = std::atoi(cardBalanceStr.c_str());
-                    if (cardBalance_ < 0)
-                    {
-                        cardBalance_ = 65536 + cardBalance_;
-                    }
-
-                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
-                    logMsg << "Rx Response : Card Read Balance status.";
-                    // Temp: raise event card info
-                    EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardInfo", true);
-                }
-            }
-            Logger::getInstance()->FnLog(logMsg.str(), logFileName_, "KSM");
-        }
-        // Unknown Command Response
-        else
-        {
-            Logger::getInstance()->FnLog("Rx Response : Unknown Command.", logFileName_, "KSM");
-        }
-        
-    }
-    else
-    {
-        Logger::getInstance()->FnLog("Error : Received data buffer size LESS than 3.", logFileName_, "KSM");
-    }
-
-    return retCode;
-}
-
-KSM_Reader::ReadResult KSM_Reader::ksmReaderReadWithTimeout(int milliseconds)
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-
-    std::vector<char> buffer(1024);
-    //std::size_t bytes_transferred = 0;
-    std::size_t total_bytes_transferred = 0;
-    bool success = false;
-
-    io_serial_context.reset();
-    boost::asio::deadline_timer timer(io_serial_context, boost::posix_time::milliseconds(milliseconds));
-
-    std::function<void()> initiateRead = [&]() {
-        pSerialPort_->async_read_some(boost::asio::buffer(buffer),
-            [&](const boost::system::error_code& error, std::size_t transferred){
-                if (!error)
-                {
-                    total_bytes_transferred += transferred;
-
-                    if (responseIsComplete(buffer, transferred))
-                    {
-                        success = true;
-                        timer.cancel();
-                    }
-                    else
-                    {
-                        initiateRead();
-                        success = false;
-                    }
-                }
-                else
-                {
-                    std::stringstream ss;
-                    ss << __func__ << "Async Read error : " << error.message();
-                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-                    success = false;
-                    timer.cancel();
-                }
-            });
-    };
-
-    initiateRead();
-    timer.async_wait([&](const boost::system::error_code& error){
-        if (!total_bytes_transferred && !error)
-        {
-            std::stringstream ss;
-            ss << __func__ << "Async Read Timeout Occurred.";
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-            pSerialPort_->cancel();
-            resetRxState();
-            success = false;
-        }
-        else
-        {
-            std::vector<char> charBuffer(getRxBuff(), getRxBuff() + getRxNum());
-
-            if (responseIsComplete(charBuffer, getRxNum()))
-            {
-                std::stringstream ss;
-                ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-                pSerialPort_->cancel();
-                success = true;
-            }
-            else
-            {
-                std::stringstream ss;
-                ss << __func__ << "Async Read Timeout Occurred - Rx Not Completed.";
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
-                pSerialPort_->cancel();
-                resetRxState();
-                success = false;
-            }
-        }
-
-        io_serial_context.post([this]() {
-            io_serial_context.stop();
-        });
-    });
-
-    io_serial_context.run();
-
-    io_serial_context.reset();
-
-    std::vector<char> retBuff(getRxBuff(), getRxBuff() + getRxNum());
-
-    return {retBuff, success};
-}
-
-bool KSM_Reader::responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred)
-{
-    bool ret;
-    int ret_bytes;
-
-    for (int i = 0; i < bytesTransferred; i++)
-    {
-        ret_bytes = receiveRxDataByte(buffer[i]);
-
-        if (ret_bytes != 0)
-        {
-            ret = true;
-            break;
-        }
-        else
-        {
-            ret = false;
-        }
-    }
-
-    return ret;
-
-}
-
-int KSM_Reader::receiveRxDataByte(char c)
-{
-    int ret = 0;
-
-    switch (rxState_)
-    {
-        case KSM_Reader::RX_STATE::IDLE:
-        {
-            if (c == KSM_Reader::ACK)
-            {
-                sendEnq();
-                rxState_ = KSM_Reader::RX_STATE::RECEIVING;
-            }
-            break;
-        }
-        case KSM_Reader::RX_STATE::RECEIVING:
-        {
-            if ((rxBuff[RxNum_ - 1] == KSM_Reader::ETX) && (c == recvbcc_))
-            {
-                rxBuff[RxNum_++] = c;
-                ret = RxNum_;
-                recvbcc_ = 0;
-                KSM_Reader::RX_STATE::IDLE;
-            }
-            else
-            {
-                RxNum_ %= KSM_Reader::RX_BUF_SIZE;
-                rxBuff[RxNum_++] = c;
-                recvbcc_ ^= c;
-            }
-            break;
-        }
-    }
-
-    /*
-    if (c == KSM_Reader::ACK)
-    {
-        sendEnq();
-    }
-    else if ((rxBuff[RxNum_ - 1] == KSM_Reader::ETX) && (c == recvbcc_))
-    {
-        rxBuff[RxNum_++] = c;
-        ret = RxNum_;
-        recvbcc_ = 0;
-    }
-    else
-    {
-        RxNum_ %= KSM_Reader::RX_BUF_SIZE;
-        rxBuff[RxNum_++] = c;
-        recvbcc_ ^= c;
-    }
-    */
-
-    return ret;
 }
 
 std::vector<unsigned char> KSM_Reader::loadInitReader()
@@ -963,9 +375,100 @@ std::vector<unsigned char> KSM_Reader::loadGetStatus()
     return dataBuff;
 }
 
+void KSM_Reader::ksmReaderCmd(KSMReaderCmdID cmdID)
+{
+    std::stringstream ss;
+    ss << __func__ << " Command ID : ( " << KSMReaderCmdIDToString(cmdID) << " )";
+    ksmLogger(ss.str());
+
+    std::vector<unsigned char> dataBuffer;
+
+    switch (cmdID)
+    {
+        case KSMReaderCmdID::INIT_CMD:
+        {
+            dataBuffer = loadInitReader();
+            break;
+        }
+        case KSMReaderCmdID::CARD_PROHIBITED_CMD:
+        {
+            dataBuffer = loadCardProhibited();
+            break;
+        }
+        case KSMReaderCmdID::CARD_ALLOWED_CMD:
+        {
+            dataBuffer = loadCardAllowed();
+            break;
+        }
+        case KSMReaderCmdID::CARD_ON_IC_CMD:
+        {
+            dataBuffer = loadCardOnIc();
+            break;
+        }
+        case KSMReaderCmdID::IC_POWER_ON_CMD:
+        {
+            dataBuffer = loadICPowerOn();
+            break;
+        }
+        case KSMReaderCmdID::WARM_RESET_CMD:
+        {
+            dataBuffer = loadWarmReset();
+            break;
+        }
+        case KSMReaderCmdID::SELECT_FILE1_CMD:
+        {
+            dataBuffer = loadSelectFile1();
+            break;
+        }
+        case KSMReaderCmdID::SELECT_FILE2_CMD:
+        {
+            dataBuffer = loadSelectFile2();
+            break;
+        }
+        case KSMReaderCmdID::READ_CARD_INFO_CMD:
+        {
+            dataBuffer = loadReadCardInfo();
+            break;
+        }
+        case KSMReaderCmdID::READ_CARD_BALANCE_CMD:
+        {
+            dataBuffer = loadReadCardBalance();
+            break;
+        }
+        case KSMReaderCmdID::IC_POWER_OFF_CMD:
+        {
+            dataBuffer = loadICPowerOff();
+            break;
+        }
+        case KSMReaderCmdID::EJECT_TO_FRONT_CMD:
+        {
+            dataBuffer = loadEjectToFront();
+            break;
+        }
+        case KSMReaderCmdID::GET_STATUS_CMD:
+        {
+            dataBuffer = loadGetStatus();
+            break;
+        }
+        default:
+        {
+            std::stringstream ss;
+            ss << __func__ << " : Command not found.";
+            Logger::getInstance()->FnLog(ss.str());
+            ksmLogger(ss.str());
+            break;
+        }
+    }
+
+    if (!dataBuffer.empty())
+    {
+        readerCmdSend(dataBuffer);
+    }
+}
+
 void KSM_Reader::readerCmdSend(const std::vector<unsigned char>& dataBuff)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+    ksmLogger(__func__);
 
     if (!pSerialPort_->is_open())
     {
@@ -993,15 +496,100 @@ void KSM_Reader::readerCmdSend(const std::vector<unsigned char>& dataBuff)
 
     txBuff[i++] = txBCC;
     TxNum_ = i;
+    
+    // Send the txBuff data to the enqueueWrite function
+    std::vector<uint8_t> txData(getTxBuff(), getTxBuff() + getTxNum());
+    enqueueWrite(txData);
+}
 
-    std::stringstream txStream;
-    txStream << "TX Buffer Data : " << Common::getInstance()->FnGetUCharArrayToHexString(getTxBuff(), getTxNum());
-    Logger::getInstance()->FnLog(txStream.str(), logFileName_, "KSM");
-    std::stringstream txStreamBytes;
-    txStreamBytes << "TX Buffer size : " << getTxNum();
-    Logger::getInstance()->FnLog(txStreamBytes.str(), logFileName_, "KSM");
-    /* Send Tx Data buffer via serial */
-    boost::asio::write(*pSerialPort_, boost::asio::buffer(getTxBuff(), getTxNum()));
+void KSM_Reader::enqueueWrite(const std::vector<uint8_t>& data)
+{
+    boost::asio::post(strand_, [this, data]() {
+        bool write_in_progress_ = !writeQueue_.empty();
+        writeQueue_.push(data);
+        if (!write_in_progress_)
+        {
+            startWrite();
+        }
+    });
+}
+
+void KSM_Reader::startWrite()
+{
+    if (writeQueue_.empty())
+    {
+        return;
+    }
+
+    write_in_progress_ = true;
+    const auto& data = writeQueue_.front();
+    std::ostringstream oss;
+    oss << "Data sent (" << data.size() << " bytes): " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);
+    ksmLogger(oss.str());
+    boost::asio::async_write(*pSerialPort_,
+                            boost::asio::buffer(data),
+                            boost::asio::bind_executor(strand_,
+                                                        std::bind(&KSM_Reader::writeEnd, this,
+                                                                    std::placeholders::_1,
+                                                                    std::placeholders::_2)));
+}
+
+void KSM_Reader::writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
+{
+    if (!error)
+    {
+        writeQueue_.pop();
+        processEvent(EVENT::WRITE_COMPLETED);
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Serial Write error: " << error.message();
+        ksmLogger(oss.str());
+        processEvent(EVENT::WRITE_FAILED);
+    }
+    write_in_progress_ = false;
+}
+
+void KSM_Reader::startRead()
+{
+    boost::asio::post(strand_, [this]() {
+        pSerialPort_->async_read_some(
+            boost::asio::buffer(readBuffer_, readBuffer_.size()),
+            boost::asio::bind_executor(strand_,
+                                        std::bind(&KSM_Reader::readEnd, this,
+                                        std::placeholders::_1,
+                                        std::placeholders::_2)));
+    });
+}
+
+void KSM_Reader::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
+{
+    if (!error)
+    {
+        std::vector<char> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);
+
+        if (responseIsComplete(data, bytesTransferred))
+        {
+            rspRecv_.store(true);
+            rspTimer_.cancel();
+            // Discard last element BCC from received data buffer
+            if (!data.empty())
+            {
+                data.pop_back();
+            }
+            ksmReaderHandleCmdResponse(getCurrentCmd(), data);
+            resetRxState();
+        }
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Serial Read error: " << error.message();
+        ksmLogger(oss.str());
+    }
+
+    startRead();
 }
 
 void KSM_Reader::resetRxState()
@@ -1009,6 +597,7 @@ void KSM_Reader::resetRxState()
     rxState_ = RX_STATE::IDLE;
     memset(rxBuff, 0, sizeof(rxBuff));
     RxNum_ = 0;
+    recvbcc_ = 0;
 }
 
 unsigned char* KSM_Reader::getTxBuff()
@@ -1031,135 +620,367 @@ int KSM_Reader::getRxNum()
     return RxNum_;
 }
 
-void KSM_Reader::handleReadCardStatusTimerExpiration()
+KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reader::KSMReaderCmdID cmd, const std::vector<char>& dataBuff)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+    KSMReaderCmdRetCode retCode = KSMReaderCmdRetCode::KSMReaderRecv_NoResp;
 
-    if (continueReadFlag_.load())
+    if (dataBuff.size() > 3)
     {
-        int iRet = FnKSMReaderSendGetStatus();
+        if (dataBuff[0] != KSM_Reader::STX)
+        {
+            ksmLogger("Rx Frame : STX error.");
+            return retCode;
+        }
 
-        startReadCardStatusTimer(2000);
-    }
-}
+        if (dataBuff[dataBuff.size() - 1] != KSM_Reader::ETX)
+        {
+            ksmLogger("Rx Frame : ETX error.");
+            return retCode;
+        }
 
-void KSM_Reader::startReadCardStatusTimer(int milliseconds)
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
-    
-    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
-    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
-        std::unique_ptr<boost::asio::deadline_timer> periodicSendReadCardCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
-        periodicSendReadCardCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
-        periodicSendReadCardCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-                if (!error) {
-                    handleReadCardStatusTimerExpiration();
+        std::size_t startIdx = 1;
+        std::size_t endIdx = dataBuff.size() - 1;
+        std::size_t len = endIdx - startIdx;
+
+        std::vector<char> recvCmd(len);
+        std::copy(dataBuff.begin() + startIdx, dataBuff.begin() + endIdx, recvCmd.begin());
+
+        std::stringstream rxCmdSS;
+        rxCmdSS << "Rx command (" << recvCmd.size() << " bytes) :" << Common::getInstance()->FnGetVectorCharToHexString(recvCmd);
+        ksmLogger(rxCmdSS.str());
+        char cmdCodeMSB = recvCmd[2];
+        char cmdCodeLSB = recvCmd[3];
+
+        if (cmdCodeMSB == 0x2F)
+        {
+            std::stringstream logMsg;
+            if (cmdCodeLSB == 0x31)
+            {
+                logMsg << "Rx Response : Card prohibited.";
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardProhibited", true);
+            }
+            else if (cmdCodeLSB == 0x33)
+            {
+                logMsg << "Rx Response : Card Allowed.";
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardAllowed", true);
+            }
+            ksmLogger(logMsg.str());
+        }
+        else if (cmdCodeMSB == 0x30)
+        {
+            std::stringstream logMsg;
+            if (cmdCodeLSB == 0x31)
+            {
+                logMsg << "Rx Response : Init.";
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderInit", true);
+            }
+            else
+            {
+                logMsg << "Rx Response : Init Error.";
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderInit", false);
+            }
+            ksmLogger(logMsg.str());
+        }
+        else if (cmdCodeMSB == 0x31)
+        {
+            if (cmdCodeLSB == 0x30)
+            {
+                std::stringstream logMsg;
+                char status = recvCmd[4];
+
+                if (status == 0x4A || status == 0x4B)
+                {
+                    if (cardPresented_ == false)
+                    {
+                        cardPresented_ = true;
+                        continueReadCardFlag_.store(false);
+                        EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardIn", true);
+                        logMsg << "Rx Response : Get Status : Card In";
+                    }
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
                 }
-        });
+                else if (status == 0x4E)
+                {
+                    if (cardPresented_ == true)
+                    {
+                        cardPresented_ = false;
+                        EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardTakeAway", true);
+                        logMsg << "Rx Response : Get Status : Card Out";
+                    }
+                    else
+                    {
+                        logMsg << "Rx Response : Get Status : No Card In.";
+                        if (continueReadCardFlag_.load() == true)
+                        {
+                            enqueueCommand(KSMReaderCmdID::GET_STATUS_CMD);
+                            logMsg << " Continue detect card.";
+                        }
+                        else
+                        {
+                            logMsg << " Stop detect card.";
+                        }
+                    }
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                }
+                else
+                {
+                    logMsg << "Rx Response : Card Occupied.";
+                }
 
-        timerIOContext_->run();
-    });
-    timerThread.detach();
-}
+                ksmLogger(logMsg.str());
+            }
+        }
+        else if (cmdCodeMSB == 0x32)
+        {
+            std::stringstream logMsg;
 
-int KSM_Reader::FnKSMReaderReadCardInfo()
-{
-    if (pSerialPort_ == nullptr)
-    {
-        return -1;
-    }
+            if (cmdCodeLSB == 0x2F)
+            {
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardOnIc", true);
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                logMsg << "Rx Response : Card On.";
 
-    Logger::getInstance()->FnLog(__func__, logFileName_, "KSM");
+                enqueueCommand(KSMReaderCmdID::IC_POWER_ON_CMD);
+            }
+            else if (cmdCodeLSB == 0x31)
+            {
+                // Temp: Raise event card out
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderEjectToFront", true);
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardOut", true);
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                logMsg << "Rx Response : Eject to front.";
+            }
 
-    int retCode = 1;
-    continueReadFlag_.store(false);
+            ksmLogger(logMsg.str());
+        }
+        else if (cmdCodeMSB == 0x33)
+        {
+            std::stringstream logMsg;
 
-    if (ksmReaderCmd(KSMReaderCmdID::CARD_ON_IC_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+            if (cmdCodeLSB == 0x30)
+            {
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderIcPowerOn", true);
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                logMsg << "Rx Response : IC Power On.";
 
-    if (ksmReaderCmd(KSMReaderCmdID::IC_POWER_ON_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+                enqueueCommand(KSMReaderCmdID::WARM_RESET_CMD);
+            }
+            else if (cmdCodeLSB == 0x31)
+            {
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderIcPowerOff", true);
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                logMsg << "Rx Response : IC Power Off.";
 
-    if (ksmReaderCmd(KSMReaderCmdID::WARM_RESET_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+                enqueueCommand(KSMReaderCmdID::EJECT_TO_FRONT_CMD);
+            }
 
-    if (ksmReaderCmd(KSMReaderCmdID::SELECT_FILE1_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+            ksmLogger(logMsg.str());
+        }
+        else if (cmdCodeMSB == 0x37)
+        {
+            std::stringstream logMsg;
 
-    if (ksmReaderCmd(KSMReaderCmdID::SELECT_FILE2_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+            if (cmdCodeLSB == 0x2F)
+            {
+                EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderWarmReset", true);
+                retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                logMsg << "Rx Response : Warm Reset.";
 
-    if (ksmReaderCmd(KSMReaderCmdID::READ_CARD_INFO_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+                enqueueCommand(KSMReaderCmdID::SELECT_FILE1_CMD);
+            }
+            else if (cmdCodeLSB == 0x31)
+            {
+                char status = recvCmd[4];
+                if (status == 0x4E)
+                {
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_NoResp;
+                    logMsg << "Rx Response : Card Read Error.";
 
-    if (ksmReaderCmd(KSMReaderCmdID::READ_CARD_BALANCE_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+                    handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderRecv_NoResp);
+                }
+                else if (cmd == KSMReaderCmdID::SELECT_FILE1_CMD)
+                {
+                    EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderSelectFile1", true);
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                    logMsg << "Rx Response : Select File 1.";
 
-    if (ksmReaderCmd(KSMReaderCmdID::IC_POWER_OFF_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+                    enqueueCommand(KSMReaderCmdID::SELECT_FILE2_CMD);
+                }
+                else if (cmd == KSMReaderCmdID::SELECT_FILE2_CMD)
+                {
+                    EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderSelectFile2", true);
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                    logMsg << "Rx Response : Select File 2.";
 
-    if (ksmReaderCmd(KSMReaderCmdID::EJECT_TO_FRONT_CMD) != 1)
-    {
-        retCode = -1;
-        goto cleanup;
-    }
+                    enqueueCommand(KSMReaderCmdID::READ_CARD_INFO_CMD);
+                }
+                else if (cmd == KSMReaderCmdID::READ_CARD_INFO_CMD)
+                {
+                    std::vector<char>::const_iterator startPos;
+                    std::vector<char>::const_iterator endPos;
+                    
+                    // Get Card Number
+                    startPos = recvCmd.begin() + 8;
+                    endPos = startPos + 8;
+                    std::vector<char> cardNumber(startPos, endPos);
+                    cardNum_ = Common::getInstance()->FnGetVectorCharToHexString(cardNumber);
 
-cleanup:
-    return retCode;
-}
+                    // Get Expiry Date
+                    startPos = recvCmd.begin() + 19;
+                    endPos = startPos + 3;
+                    std::vector<char> expireDate(startPos, endPos);
+                    std::string expireDateStr = Common::getInstance()->FnGetVectorCharToHexString(expireDate);
+                    std::string year = expireDateStr.substr(0, 2);
+                    std::string month = expireDateStr.substr(2, 2);
+                    std::string expmonth = expireDateStr.substr(4, 2);
 
-int KSM_Reader::FnKSMReaderEnable(bool enable)
-{
-    if (pSerialPort_ == nullptr)
-    {
-        return -1;
-    }
+                    int intYear = std::atoi(year.c_str());
+                    if (intYear > 90)
+                    {
+                        intYear = 1900 + intYear;
+                    }
+                    else
+                    {
+                        intYear = 2000 + intYear;
+                    }
 
-    std::stringstream ss;
-    ss << __func__ << " : " << enable;
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "KSM");
+                    // Calculate the expiry year and month provided by expmonth from card info
+                    int intMonth = std::atoi(month.c_str());
+                    int intExpMonth = std::atoi(expmonth.c_str());
 
-    int iRet = -1;
+                    intExpMonth = intExpMonth + intMonth;
+                    int intExpYear = intYear + static_cast<int>(intExpMonth / 12);
+                    intExpMonth = intExpMonth % 12;
 
-    if (enable)
-    {
-        continueReadFlag_.store(true);
-        iRet = ksmReaderCmd(KSMReaderCmdID::CARD_ALLOWED_CMD);
+                    // Concatenate year and month ,eg (2024 * 100) + 3 = 202400 + 3 = 202403
+                    cardExpiryYearMonth_ = (intExpYear * 100) + intExpMonth;
+
+                    if (std::to_string(cardExpiryYearMonth_) > Common::getInstance()->FnGetDateTimeFormat_yyyymm())
+                    {
+                        cardExpired_ = false;
+                    }
+                    else
+                    {
+                        cardExpired_ = true;
+                    }
+
+                    EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderReadCardInfo", true);
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                    logMsg << "Rx Response : Card Read Info status.";
+
+                    enqueueCommand(KSMReaderCmdID::READ_CARD_BALANCE_CMD);
+                }
+                else if (cmd == KSMReaderCmdID::READ_CARD_BALANCE_CMD)
+                {
+                    std::vector<char>::const_iterator startPos = recvCmd.begin() + 8;
+                    std::vector<char>::const_iterator endPos = startPos + 3;
+                    
+                    std::vector<char> cardBalance(startPos, endPos);
+                    std::string cardBalanceStr = Common::getInstance()->FnGetVectorCharToHexString(cardBalance);
+
+                    cardBalance_ = std::atoi(cardBalanceStr.c_str());
+                    if (cardBalance_ < 0)
+                    {
+                        cardBalance_ = 65536 + cardBalance_;
+                    }
+
+                    EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderReadCardBalance", true);
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
+                    logMsg << "Rx Response : Card Read Balance status.";
+                    EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardInfo", true);
+
+                    enqueueCommand(KSMReaderCmdID::IC_POWER_OFF_CMD);
+                }
+            }
+            ksmLogger(logMsg.str());
+        }
+        // Unknown Command Response
+        else
+        {
+            ksmLogger("Rx Response : Unknown Command.");
+        }
         
-        // Start timer to check card status
-        startReadCardStatusTimer(100);
     }
     else
     {
-        continueReadFlag_.store(false);
-        iRet = ksmReaderCmd(KSMReaderCmdID::CARD_PROHIBITED_CMD);
+        ksmLogger("Error : Received data buffer size LESS than 3.");
     }
 
-    return iRet;
+    return retCode;
+}
+
+bool KSM_Reader::responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred)
+{
+    bool ret;
+    int ret_bytes;
+
+    for (int i = 0; i < bytesTransferred; i++)
+    {
+        ret_bytes = receiveRxDataByte(buffer[i]);
+
+        if (ret_bytes != 0)
+        {
+            ret = true;
+            break;
+        }
+        else
+        {
+            ret = false;
+        }
+    }
+
+    return ret;
+
+}
+
+int KSM_Reader::receiveRxDataByte(char c)
+{
+    int ret = 0;
+
+    switch (rxState_)
+    {
+        case KSM_Reader::RX_STATE::IDLE:
+        {
+            if (c == KSM_Reader::ACK)
+            {
+                ackRecv_.store(true);
+                ackTimer_.cancel();
+                sendEnq();
+                rxState_ = KSM_Reader::RX_STATE::RECEIVING;
+            }
+            break;
+        }
+        case KSM_Reader::RX_STATE::RECEIVING:
+        {
+            if ((RxNum_ > 0 && rxBuff[RxNum_ - 1] == KSM_Reader::ETX) && (c == static_cast<unsigned char>(recvbcc_)))
+            {
+                rxBuff[RxNum_++] = static_cast<unsigned char>(c);
+                ret = RxNum_;
+                recvbcc_ = 0;
+                KSM_Reader::RX_STATE::IDLE;
+            }
+            else
+            {
+                RxNum_ %= KSM_Reader::RX_BUF_SIZE;
+                rxBuff[RxNum_++] = static_cast<unsigned char>(c);
+                recvbcc_ ^= static_cast<unsigned char>(c);
+            }
+            break;
+        }
+    }
+
+    return ret;
+}
+
+void KSM_Reader::sendEnq()
+{
+    ksmLogger(__func__);
+
+    std::vector<uint8_t> data = { static_cast<uint8_t>(KSM_Reader::ENQ) };
+    enqueueWrite(data);
 }
 
 std::string KSM_Reader::FnKSMReaderGetCardNum()
@@ -1182,13 +1003,557 @@ bool KSM_Reader::FnKSMReaderGetCardExpired()
     return cardExpired_;
 }
 
-void KSM_Reader::FnKSMReaderStartGetStatus()
+std::string KSM_Reader::eventToString(EVENT event)
 {
-    if (pSerialPort_ == nullptr)
+    std::string eventStr = "Unknown Event";
+
+    switch (event)
     {
+        case EVENT::COMMAND_ENQUEUED:
+        {
+            eventStr = "COMMAND_ENQUEUED";
+            break;
+        }
+        case EVENT::WRITE_COMPLETED:
+        {
+            eventStr = "WRITE_COMPLETED";
+            break;
+        }
+        case EVENT::WRITE_FAILED:
+        {
+            eventStr = "WRITE_FAILED";
+            break;
+        }
+        case EVENT::ACK_TIMEOUT:
+        {
+            eventStr = "ACK_TIMEOUT";
+            break;
+        }
+        case EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED:
+        {
+            eventStr = "ACK_TIMER_CANCELLED_ACK_RECEIVED";
+            break;
+        }
+        case EVENT::RESPONSE_TIMEOUT:
+        {
+            eventStr = "RESPONSE_TIMEOUT";
+            break;
+        }
+        case EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED:
+        {
+            eventStr = "RESPONSE_TIMER_CANCELLED_RSP_RECEIVED";
+            break;
+        }
+    }
+
+    return eventStr;
+}
+
+std::string KSM_Reader::stateToString(STATE state)
+{
+    std::string stateStr = "Unknow State";
+
+    switch (state)
+    {
+        case STATE::IDLE:
+        {
+            stateStr = "IDLE";
+            break;
+        }
+        case STATE::SENDING_REQUEST_ASYNC:
+        {
+            stateStr = "SENDING_REQUEST_ASYNC";
+            break;
+        }
+        case STATE::WAITING_FOR_ACK:
+        {
+            stateStr = "WAITING_FOR_ACK";
+            break;
+        }
+        case STATE::WAITING_FOR_RESPONSE:
+        {
+            stateStr = "WAITING_FOR_RESPONSE";
+            break;
+        }
+    }
+
+    return stateStr;
+}
+
+const KSM_Reader::StateTransition KSM_Reader::stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)] = 
+{
+    {STATE::IDLE,
+    {
+        {EVENT::COMMAND_ENQUEUED                                , &KSM_Reader::handleIdleState                         , STATE::SENDING_REQUEST_ASYNC              }
+    }},
+    {STATE::SENDING_REQUEST_ASYNC,
+    {
+        {EVENT::WRITE_COMPLETED                                 , &KSM_Reader::handleSendingRequestAsyncState          , STATE::WAITING_FOR_ACK                    },
+        {EVENT::WRITE_FAILED                                    , &KSM_Reader::handleSendingRequestAsyncState          , STATE::IDLE                               }
+    }},
+    {STATE::WAITING_FOR_ACK,
+    {
+        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &KSM_Reader::handleWaitingForAckState                , STATE::WAITING_FOR_ACK                    },
+        {EVENT::ACK_TIMEOUT                                     , &KSM_Reader::handleWaitingForAckState                , STATE::IDLE                               },
+        {EVENT::WRITE_COMPLETED                                 , &KSM_Reader::handleWaitingForAckState                , STATE::WAITING_FOR_RESPONSE               },
+        {EVENT::WRITE_FAILED                                    , &KSM_Reader::handleWaitingForAckState                , STATE::IDLE                               }
+    }},
+    {STATE::WAITING_FOR_RESPONSE,
+    {
+        {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &KSM_Reader::handleWaitingForResponseState           , STATE::IDLE                               },
+        {EVENT::RESPONSE_TIMEOUT                                , &KSM_Reader::handleWaitingForResponseState           , STATE::IDLE                               }
+    }}
+};
+
+void KSM_Reader::processEvent(EVENT event)
+{
+    boost::asio::post(strand_, [this, event]() {
+        int currentStateIndex_ = static_cast<int>(currentState_);
+        const auto& stateTransitions = stateTransitionTable[currentStateIndex_].transitions;
+
+        bool eventHandled = false;
+        for (const auto& transition : stateTransitions)
+        {
+            if (transition.event == event)
+            {
+                eventHandled = true;
+
+                std::ostringstream oss;
+                oss << "Current State : " << stateToString(currentState_);
+                oss << " , Event : " << eventToString(event);
+                oss << " , Event Handler : " << (transition.eventHandler ? "YES" : "NO");
+                oss << " , Next State : " << stateToString(transition.nextState);
+                ksmLogger(oss.str());
+
+                if (transition.eventHandler != nullptr)
+                {
+                    (this->*transition.eventHandler)(event);
+                }
+                currentState_ = transition.nextState;
+
+                if (currentState_ == STATE::IDLE)
+                {
+                    boost::asio::post(strand_, [this]() {
+                        checkCommandQueue();
+                    });
+                }
+                return;
+            }
+        }
+
+        if (!eventHandled)
+        {
+            std::ostringstream oss;
+            oss << "Event '" << eventToString(event) << "' not handled in state '" << stateToString(currentState_) << "'";
+            ksmLogger(oss.str());
+        }
+    });
+}
+
+void KSM_Reader::checkCommandQueue()
+{
+    bool hasCommand = false;
+
+    {
+        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+        if (!commandQueue_.empty())
+        {
+            hasCommand = true;
+        }
+    }
+
+    if (hasCommand)
+    {
+        processEvent(EVENT::COMMAND_ENQUEUED);
+    }
+}
+
+void KSM_Reader::enqueueCommand(KSM_Reader::KSMReaderCmdID cmd)
+{
+    if (!pSerialPort_ && (!pSerialPort_->is_open()))
+    {
+        ksmLogger("Serial Port not open, unable to enqueue command.");
         return;
     }
 
-    continueReadFlag_.store(true);
-    startReadCardStatusTimer(100);
+    {
+        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+        commandQueue_.emplace_back(cmd);
+    }
+
+    std::stringstream ss;
+    ss << "Sending KSM Command to queue: " << KSMReaderCmdIDToString(cmd) << "(" << commandQueue_.size() << ")";
+    ksmLogger(ss.str());
+
+
+    boost::asio::post(strand_, [this]() {
+        checkCommandQueue();
+    });
+}
+
+void KSM_Reader::setCurrentCmd(KSM_Reader::KSMReaderCmdID cmd)
+{
+    std::unique_lock<std::mutex> lock(currentCmdMutex_);
+
+    currentCmd = cmd;
+}
+
+KSM_Reader::KSMReaderCmdID KSM_Reader::getCurrentCmd()
+{
+    std::unique_lock<std::mutex> lock(currentCmdMutex_);
+
+    return currentCmd;
+}
+
+void KSM_Reader::popFromCommandQueueAndEnqueueWrite()
+{
+    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    if (!commandQueue_.empty())
+    {
+        ackRecv_.store(false);
+        rspRecv_.store(false);
+        CommandWithData cmdData = commandQueue_.front();
+        commandQueue_.pop_front();
+        setCurrentCmd(cmdData.cmd);
+        ksmReaderCmd(cmdData.cmd);
+    }
+}
+
+void KSM_Reader::handleIdleState(EVENT event)
+{
+    ksmLogger(__func__);
+
+    if (event == EVENT::COMMAND_ENQUEUED)
+    {
+        ksmLogger("Pop from command queue and write.");
+        popFromCommandQueueAndEnqueueWrite();
+    }
+}
+
+void KSM_Reader::handleSendingRequestAsyncState(EVENT event)
+{
+    ksmLogger(__func__);
+
+    if (event == EVENT::WRITE_COMPLETED)
+    {
+        ksmLogger("Write completed. Start receiving ack.");
+        startAckTimer();
+    }
+    else if (event == EVENT::WRITE_FAILED)
+    {
+        ksmLogger("Write failed.");
+        handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderSend_Failed);
+    }
+}
+
+void KSM_Reader::handleWaitingForAckState(EVENT event)
+{
+    ksmLogger(__func__);
+
+    if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
+    {
+        ksmLogger("ACK Received. Start sending sendEnq.");
+    }
+    else if (event == EVENT::ACK_TIMEOUT)
+    {
+        ksmLogger("ACK Timeout.");
+        handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderRecv_NAK);
+    }
+    else if (event == EVENT::WRITE_COMPLETED)
+    {
+        ksmLogger("SendEnq - Write completed. Start receiving response.");
+        startResponseTimer();
+    }
+    else if (event == EVENT::WRITE_FAILED)
+    {
+        ksmLogger("SendEnq - Write failed.");
+        handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderSend_Failed);
+    }
+}
+
+void KSM_Reader::handleWaitingForResponseState(EVENT event)
+{
+    ksmLogger(__func__);
+
+    if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
+    {
+        ksmLogger("Response Received.");
+    }
+    else if (event == EVENT::RESPONSE_TIMEOUT)
+    {
+        ksmLogger("Response Timer Timeout.");
+        handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderRecv_NoResp);
+    }
+}
+
+void KSM_Reader::handleAckTimeout(const boost::system::error_code& error)
+{
+    ksmLogger(__func__);
+
+    if (!error || (error == boost::asio::error::operation_aborted))
+    {
+        if (ackRecv_.load())
+        {
+            ackRecv_.store(false);
+            processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
+        }
+        else
+        {
+            processEvent(EVENT::ACK_TIMEOUT);
+        }
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Ack Timer error: " << error.message();
+        ksmLogger(oss.str());
+        processEvent(EVENT::ACK_TIMEOUT);
+    }
+}
+
+void KSM_Reader::startAckTimer()
+{
+    ackTimer_.expires_from_now(boost::posix_time::seconds(1));
+    ackTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&KSM_Reader::handleAckTimeout, this, std::placeholders::_1)));
+}
+
+
+void KSM_Reader::handleCmdErrorOrTimeout(KSM_Reader::KSMReaderCmdID cmd, KSM_Reader::KSMReaderCmdRetCode retCode)
+{
+    ksmLogger(__func__);
+
+    switch (cmd)
+    {
+        case KSMReaderCmdID::INIT_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderInit", false);
+            break;
+        }
+        case KSMReaderCmdID::CARD_PROHIBITED_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardProhibited", false);
+            break;
+        }
+        case KSMReaderCmdID::CARD_ALLOWED_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardAllowed", false);
+            break;
+        }
+        case KSMReaderCmdID::CARD_ON_IC_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderCardOnIc", false);
+            break;
+        }
+        case KSMReaderCmdID::IC_POWER_ON_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderIcPowerOn", false);
+            break;
+        }
+        case KSMReaderCmdID::WARM_RESET_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderWarmReset", false);
+            break;
+        }
+        case KSMReaderCmdID::SELECT_FILE1_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderSelectFile1", false);
+            break;
+        }
+        case KSMReaderCmdID::SELECT_FILE2_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderSelectFile2", false);
+            break;
+        }
+        case KSMReaderCmdID::READ_CARD_INFO_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderReadCardInfo", false);
+            break;
+        }
+        case KSMReaderCmdID::READ_CARD_BALANCE_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderReadCardBalance", false);
+            break;
+        }
+        case KSMReaderCmdID::IC_POWER_OFF_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderIcPowerOff", false);
+            break;
+        }
+        case KSMReaderCmdID::EJECT_TO_FRONT_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderEjectToFront", false);
+            break;
+        }
+        case KSMReaderCmdID::GET_STATUS_CMD:
+        {
+            std::ostringstream oss;
+            oss << "msgStatus=" << static_cast<int>(retCode);
+            ksmLogger(oss.str());
+
+            EventManager::getInstance()->FnEnqueueEvent<bool>("Evt_handleKSMReaderGetStatus", false);
+
+            if (continueReadCardFlag_.load() == true)
+            {
+                enqueueCommand(KSMReaderCmdID::GET_STATUS_CMD);
+            }
+            break;
+        }
+    }
+}
+
+void KSM_Reader::startResponseTimer()
+{
+    rspTimer_.expires_from_now(boost::posix_time::seconds(2));
+    rspTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&KSM_Reader::handleCmdResponseTimeout, this, std::placeholders::_1)));
+}
+
+void KSM_Reader::handleCmdResponseTimeout(const boost::system::error_code& error)
+{
+    ksmLogger(__func__);
+
+    if (!error || (error == boost::asio::error::operation_aborted))
+    {
+        if (rspRecv_.load())
+        {
+            rspRecv_.store(false);
+            processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
+        }
+        else
+        {
+            processEvent(EVENT::RESPONSE_TIMEOUT);
+        }
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Response Timer error: " << error.message();
+        ksmLogger(oss.str());
+        processEvent(EVENT::RESPONSE_TIMEOUT);
+    }
+}
+
+void KSM_Reader::FnKSMReaderEnable(bool enable)
+{
+    ksmLogger(__func__);
+
+    if (enable)
+    {
+        continueReadCardFlag_.store(true);
+        enqueueCommand(KSMReaderCmdID::CARD_ALLOWED_CMD);
+        enqueueCommand(KSMReaderCmdID::GET_STATUS_CMD);
+    }
+    else
+    {
+        continueReadCardFlag_.store(false);
+        enqueueCommand(KSMReaderCmdID::CARD_PROHIBITED_CMD);
+    }
+}
+
+void KSM_Reader::FnKSMReaderReadCardInfo()
+{
+    ksmLogger(__func__);
+
+    enqueueCommand(KSMReaderCmdID::CARD_ON_IC_CMD);
+}
+
+void KSM_Reader::FnKSMReaderSendInit()
+{
+    ksmLogger(__func__);
+
+    enqueueCommand(KSMReaderCmdID::INIT_CMD);
+}
+
+void KSM_Reader::FnKSMReaderSendGetStatus()
+{
+    ksmLogger(__func__);
+
+    enqueueCommand(KSMReaderCmdID::GET_STATUS_CMD);
+}
+
+void KSM_Reader::FnKSMReaderStartGetStatus()
+{
+    ksmLogger(__func__);
+
+    continueReadCardFlag_.store(true);
+    FnKSMReaderSendGetStatus();
+}
+
+void KSM_Reader::FnKSMReaderSendEjectToFront()
+{
+    ksmLogger(__func__);
+
+    enqueueCommand(KSMReaderCmdID::EJECT_TO_FRONT_CMD);
+}
+
+void KSM_Reader::ksmLogger(const std::string& logMsg)
+{
+    if (continueReadCardFlag_.load() == true && getCurrentCmd() == KSMReaderCmdID::GET_STATUS_CMD && blockGetStatusCmdLogFlag_.load() == false)
+    {
+        if (blockGetStatusCmdLogFlag_.load() == false)
+        {
+            blockGetStatusCmdLogFlag_.store(true);
+            Logger::getInstance()->FnLog("### Running consecutive Get Status Command... [\u23F0 Time]: " + Common::getInstance()->FnGetDateTime(), logFileName_, "KSM");
+        }
+        return;
+    }
+    else if (continueReadCardFlag_.load() == true && getCurrentCmd() == KSMReaderCmdID::GET_STATUS_CMD && blockGetStatusCmdLogFlag_.load() == true)
+    {
+        return;
+    }
+    else if (continueReadCardFlag_.load() == false && getCurrentCmd() == KSMReaderCmdID::GET_STATUS_CMD && blockGetStatusCmdLogFlag_.load() == true)
+    {
+        blockGetStatusCmdLogFlag_.store(false);
+    }
+
+    Logger::getInstance()->FnLog(logMsg, logFileName_, "KSM");
 }

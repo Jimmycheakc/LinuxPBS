@@ -15,26 +15,27 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -march=armv8-a")
 
 # Set the root directory for the target environment
-set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux)
+set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux)
 
 # Specify the sysroot directory
-set(CMAKE_SYSROOT ../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux)
+set(CMAKE_SYSROOT ../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux)
 
 add_definitions(-DFMT_HEADER_ONLY)
+add_definitions(-DSPDLOG_FMT_EXTERNAL)
 
 # Add include directories
-include_directories(../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
-include_directories(../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/spdlog)
-include_directories(../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/boost)
+include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
+include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/spdlog)
+include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/boost)
 include_directories(${LIBEVDEV_INCLUDE_DIRS})
 
 # Add link directories
-link_directories(../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/lib)
-link_directories(../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux/usr/lib)
-link_directories(../../../../SDK_2/sysroots/cortexa72-cortexa53-xilinx-linux/lib)
+link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/lib)
+link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/lib)
+link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/lib)
 
 # Lisy your source files
 set(SOURCE_FILES

@@ -56,6 +56,19 @@ private:
     bool handleDIOEvent(const BaseEvent* event);
 
     // KSM Reader Event Handler
+    bool handleKSMReaderInit(const BaseEvent* event);
+    bool handleKSMReaderGetStatus(const BaseEvent* event);
+    bool handleKSMReaderEjectToFront(const BaseEvent* event);
+    bool handleKSMReaderCardAllowed(const BaseEvent* event);
+    bool handleKSMReaderCardProhibited(const BaseEvent* event);
+    bool handleKSMReaderCardOnIc(const BaseEvent* event);
+    bool handleKSMReaderIcPowerOn(const BaseEvent* event);
+    bool handleKSMReaderWarmReset(const BaseEvent* event);
+    bool handleKSMReaderSelectFile1(const BaseEvent* event);
+    bool handleKSMReaderSelectFile2(const BaseEvent* event);
+    bool handleKSMReaderReadCardInfo(const BaseEvent* event);
+    bool handleKSMReaderReadCardBalance(const BaseEvent* event);
+    bool handleKSMReaderIcPowerOff(const BaseEvent* event);
     bool handleKSMReaderCardIn(const BaseEvent* event);
     bool handleKSMReaderCardOut(const BaseEvent* event);
     bool handleKSMReaderCardTakeAway(const BaseEvent* event);

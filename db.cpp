@@ -3667,12 +3667,12 @@ DBError db::loadParam()
 
 					if (readerItem.GetDataItem(0) == "HdRec")
 					{
-						operation::getInstance()->tParas.gsHdRec = std::stof(readerItem.GetDataItem(1));
+						operation::getInstance()->tParas.gsHdRec = readerItem.GetDataItem(1);
 					}
 
 					if (readerItem.GetDataItem(0) == "HdTk")
 					{
-						operation::getInstance()->tParas.gsHdTk = std::stof(readerItem.GetDataItem(1));
+						operation::getInstance()->tParas.gsHdTk = readerItem.GetDataItem(1);
 					}
 				}
 				catch (const std::invalid_argument &e)

@@ -2,8 +2,10 @@
 #include <boost/filesystem.hpp>
 #include <iomanip>
 #include <iostream>
+#include <fstream>
 #include <openssl/aes.h>
 #include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <string>
 #include <sstream>
 #include "boost/asio/serial_port.hpp"
@@ -1143,11 +1145,48 @@ uint16_t LCSCReader::CRC16_CCITT(const uint8_t* inStr, size_t length)
 
 void LCSCReader::encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge)
 {
-    AES_KEY aesKey;
-    AES_set_encrypt_key(key.data(), 256, &aesKey);
-    // Assuming that the challenge length is a multiple of AES_BLOCK_SIZE (16 bytes)
-    for (size_t i = 0; i < challenge.size(); i += AES_BLOCK_SIZE) {
-        AES_encrypt(challenge.data() + i, encryptedChallenge.data() + i, &aesKey);
+    try
+    {
+        EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+        if (!ctx)
+        {
+            throw std::runtime_error("Failed to create EVP_CIPHER_CTX.");
+        }
+
+        if (!EVP_EncryptInit_ex(ctx, EVP_aes_256_ecb(), nullptr, key.data(), nullptr))
+        {
+            EVP_CIPHER_CTX_free(ctx);
+            throw std::runtime_error("AES encryption initialization failed.");
+        }
+
+        encryptedChallenge.resize(challenge.size() + AES_BLOCK_SIZE);
+        int outLen = 0;
+
+        if (!EVP_EncryptUpdate(ctx, encryptedChallenge.data(), &outLen, challenge.data(), challenge.size()))
+        {
+            EVP_CIPHER_CTX_free(ctx);
+            throw std::runtime_error("AES encryption failed during update.");
+        }
+
+        int finalLen = 0;
+        if (!EVP_EncryptFinal_ex(ctx, encryptedChallenge.data() + outLen, &finalLen))
+        {
+            EVP_CIPHER_CTX_free(ctx);
+            throw std::runtime_error("AES encryption failed during finalization.");
+        }
+
+        // Resize to the actual encrypted size
+        encryptedChallenge.resize(outLen + finalLen);
+
+        EVP_CIPHER_CTX_free(ctx);
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLog("AES encryption error: " + std::string(e.what()), logFileName_, "LCSC");
+    }
+    catch (...)
+    {
+        Logger::getInstance()->FnLog("Unknown error during AES encryption.", logFileName_, "LCSC");
     }
 }
 
@@ -1191,13 +1230,24 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             msg.setLength(0x0016);
 
             // Payload
-            std::vector<uint8_t> payload;
-            auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
-            // Payload field - TS Response
-            std::vector<uint8_t> encryptedChallenge(16);
-            encryptAES256(aes_key, *cmdFieldData, encryptedChallenge);
-            payload = encryptedChallenge;
-            msg.setPayload(payload);
+            try
+            {
+                std::vector<uint8_t> payload;
+                auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
+                if (!cmdFieldData)
+                {
+                    throw std::runtime_error("Failed to cast payloadData to std::vector<uint8_t>");
+                }
+                // Payload field - TS Response
+                std::vector<uint8_t> encryptedChallenge(16);
+                encryptAES256(aes_key, *cmdFieldData, encryptedChallenge);
+                payload = encryptedChallenge;
+                msg.setPayload(payload);
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+            }
             break;
         }
         case LCSC_CMD::LOGOUT:
@@ -1236,28 +1286,39 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             msg.setLength(0x0012);
 
             // Payload
-            std::vector<uint8_t> payload;
-            // Payload field - Timeout (4s)
-            payload.push_back(0x04);
-            // Payload field - Deduction Amount
-            auto cmdFieldData = std::static_pointer_cast<uint32_t>(payloadData);
-            uint32_t amount = *cmdFieldData;
-            payload.push_back(((amount >> 24) & 0xFF));
-            payload.push_back(((amount >> 16) & 0xFF));
-            payload.push_back(((amount >> 8) & 0xFF));
-            payload.push_back((amount & 0xFF));
-            // Payload field - Transaction Time
-            std::time_t epochSeconds = Common::getInstance()->FnGetEpochSeconds();
-            payload.push_back(((epochSeconds >> 24) & 0xFF));
-            payload.push_back(((epochSeconds >> 16) & 0xFF));
-            payload.push_back(((epochSeconds >> 8) & 0xFF));
-            payload.push_back((epochSeconds & 0xFF));
-            lastDebitTime_ = Common::getInstance()->FnFormatEpochTime(epochSeconds);
-            // Payload field - Carpark ID
-            payload.push_back(0x00);
-            payload.push_back(0x00);
-            payload.push_back(0x02);
-            msg.setPayload(payload);
+            try
+            {
+                std::vector<uint8_t> payload;
+                // Payload field - Timeout (4s)
+                payload.push_back(0x04);
+                // Payload field - Deduction Amount
+                auto cmdFieldData = std::static_pointer_cast<uint32_t>(payloadData);
+                if (!cmdFieldData)
+                {
+                    throw std::runtime_error("Failed to cast payloadData to std::vector<uint32_t>");
+                }
+                uint32_t amount = *cmdFieldData;
+                payload.push_back(((amount >> 24) & 0xFF));
+                payload.push_back(((amount >> 16) & 0xFF));
+                payload.push_back(((amount >> 8) & 0xFF));
+                payload.push_back((amount & 0xFF));
+                // Payload field - Transaction Time
+                std::time_t epochSeconds = Common::getInstance()->FnGetEpochSeconds();
+                payload.push_back(((epochSeconds >> 24) & 0xFF));
+                payload.push_back(((epochSeconds >> 16) & 0xFF));
+                payload.push_back(((epochSeconds >> 8) & 0xFF));
+                payload.push_back((epochSeconds & 0xFF));
+                lastDebitTime_ = Common::getInstance()->FnFormatEpochTime(epochSeconds);
+                // Payload field - Carpark ID
+                payload.push_back(0x00);
+                payload.push_back(0x00);
+                payload.push_back(0x02);
+                msg.setPayload(payload);
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+            }
             break;
         }
         case LCSC_CMD::CARD_RECORD:
@@ -1272,15 +1333,26 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             msg.setLength(0x000A);
 
             // Payload
-            std::vector<uint8_t> payload;
-            // Payload field - Seed
-            auto cmdFieldData = std::static_pointer_cast<uint32_t>(payloadData);
-            uint32_t seed = *cmdFieldData;
-            payload.push_back(((seed >> 24) & 0xFF));
-            payload.push_back(((seed >> 16) & 0xFF));
-            payload.push_back(((seed >> 8) & 0xFF));
-            payload.push_back((seed & 0xFF));
-            msg.setPayload(payload);
+            try
+            {
+                std::vector<uint8_t> payload;
+                // Payload field - Seed
+                auto cmdFieldData = std::static_pointer_cast<uint32_t>(payloadData);
+                if (!cmdFieldData)
+                {
+                    throw std::runtime_error("Failed to cast payloadData to std::vector<uint32_t>");
+                }
+                uint32_t seed = *cmdFieldData;
+                payload.push_back(((seed >> 24) & 0xFF));
+                payload.push_back(((seed >> 16) & 0xFF));
+                payload.push_back(((seed >> 8) & 0xFF));
+                payload.push_back((seed & 0xFF));
+                msg.setPayload(payload);
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+            }
             break;
         }
         case LCSC_CMD::GET_TIME:
@@ -1310,14 +1382,25 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             msg.setType(static_cast<uint8_t>(LCSC_CMD_TYPE::CFG_UPLOAD));
 
             // Payload
-            std::vector<uint8_t> payload;
-            // Payload field - size and configuration file block
-            auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
-            payload = *cmdFieldData;
-            msg.setPayload(payload);
+            try
+            {
+                std::vector<uint8_t> payload;
+                // Payload field - size and configuration file block
+                auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
+                if (!cmdFieldData)
+                {
+                    throw std::runtime_error("Failed to cast payloadData to std::vector<uint8_t>");
+                }
+                payload = *cmdFieldData;
+                msg.setPayload(payload);
 
-            std::size_t msgLength = payload.size() + 6;
-            msg.setLength(static_cast<uint16_t>(msgLength));
+                std::size_t msgLength = payload.size() + 6;
+                msg.setLength(static_cast<uint16_t>(msgLength));
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+            }
             break;
         }
         case LCSC_CMD::UPLOAD_CIL_FILE:
@@ -1325,14 +1408,25 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             msg.setType(static_cast<uint8_t>(LCSC_CMD_TYPE::CIL_UPLOAD));
 
             // Payload
-            std::vector<uint8_t> payload;
-            // Payload field - Blacklist index, size and blacklist block
-            auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
-            payload = *cmdFieldData;
-            msg.setPayload(payload);
+            try
+            {
+                std::vector<uint8_t> payload;
+                // Payload field - Blacklist index, size and blacklist block
+                auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
+                if (!cmdFieldData)
+                {
+                    throw std::runtime_error("Failed to cast payloadData to std::vector<uint8_t>");
+                }
+                payload = *cmdFieldData;
+                msg.setPayload(payload);
 
-            std::size_t msgLength = payload.size() + 6;
-            msg.setLength(static_cast<uint16_t>(msgLength));
+                std::size_t msgLength = payload.size() + 6;
+                msg.setLength(static_cast<uint16_t>(msgLength));
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+            }
             break;
         }
         case LCSC_CMD::UPLOAD_BL_FILE:
@@ -1340,14 +1434,25 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             msg.setType(static_cast<uint8_t>(LCSC_CMD_TYPE::BL_UPLOAD));
 
             // Payload
-            std::vector<uint8_t> payload;
-            // Payload field - Blacklist index, size and blacklist block
-            auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
-            payload = *cmdFieldData;
-            msg.setPayload(payload);
+            try
+            {
+                std::vector<uint8_t> payload;
+                // Payload field - Blacklist index, size and blacklist block
+                auto cmdFieldData = std::static_pointer_cast<std::vector<uint8_t>>(payloadData);
+                if (!cmdFieldData)
+                {
+                    throw std::runtime_error("Failed to cast payloadData to std::vector<uint8_t>");
+                }
+                payload = *cmdFieldData;
+                msg.setPayload(payload);
 
-            std::size_t msgLength = payload.size() + 6;
-            msg.setLength(static_cast<uint16_t>(msgLength));
+                std::size_t msgLength = payload.size() + 6;
+                msg.setLength(static_cast<uint16_t>(msgLength));
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+            }
             break;
         }
         default:
@@ -3084,18 +3189,42 @@ bool LCSCReader::FnMoveCDAckFile()
 
 std::string LCSCReader::calculateSHA256(const std::string& data)
 {
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, data.c_str(), data.length());
-    SHA256_Final(hash, &sha256);
-
-    std::stringstream ss;
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
+    try
     {
-        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+        unsigned char hash[SHA256_DIGEST_LENGTH];
+        EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+
+        if (!ctx ||
+            !EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) ||
+            !EVP_DigestUpdate(ctx, data.c_str(), data.length()) ||
+            !EVP_DigestFinal_ex(ctx, hash, nullptr))
+        {
+            if (ctx)
+            {
+                EVP_MD_CTX_free(ctx);
+            }
+            throw std::runtime_error("SHA-256 calculation failed.");
+        }
+
+        EVP_MD_CTX_free(ctx);
+
+        std::stringstream ss;
+        for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i)
+        {
+            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+        }
+        return ss.str();
     }
-    return ss.str();
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLog("SHA256 calculation error: " + std::string(e.what()), logFileName_, "LCSC");
+        return {};
+    }
+    catch (...)
+    {
+        Logger::getInstance()->FnLog("SHA256 calculation unknown error occurred.", logFileName_, "LCSC");
+        return {};
+    }
 }
 
 bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::string& fwVer, const std::string& bl1Ver,
@@ -3220,6 +3349,11 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
     sData = sData + "T" + Common::getInstance()->FnPadLeft0(6, count);
 
     std::string hash = calculateSHA256(sDataO);
+    if (hash.empty())
+    {
+        Logger::getInstance()->FnLog("Failed to calculate SHA256 hash.", logFileName_, "LCSC");
+    }
+
     sData = sData + hash + '\n';
 
     if (!(outFile << sData))

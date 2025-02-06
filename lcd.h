@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <mutex>
+#include <thread>
+#include "boost/asio.hpp"
+#include "boost/asio/serial_port.hpp"
 
 class LCD
 {
@@ -50,7 +53,13 @@ private:
     static std::mutex mutex_;
     int lcdFd_;
     bool lcdInitialized_;
+    boost::asio::io_context ioContext_;
+    boost::asio::io_context::work work_;
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    std::thread ioContextThread_;
     LCD();
     void FnLCDInitDriver();
     void FnLCDDeinitDriver();
+    void startIoContextThread();
+    void sendCommandDataToDriver(int fd, char* data, bool value);
 };

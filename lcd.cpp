@@ -10,7 +10,10 @@ std::mutex LCD::mutex_;
 
 LCD::LCD()
     : lcdFd_(0),
-    lcdInitialized_(false)
+    lcdInitialized_(false),
+    ioContext_(),
+    strand_(boost::asio::make_strand(ioContext_)),
+    work_(ioContext_)
 {
 
 }
@@ -58,15 +61,34 @@ void LCD::FnLCDInitDriver()
         }
         else
         {
+            lcdInitialized_ = true;
+            startIoContextThread();
+
             char cmd1[] = "0x38";
-            ps_par(lcdFd_, cmd1, 0);
+            sendCommandDataToDriver(lcdFd_, cmd1, 0);
             char cmd2[] = "0x06";
-            ps_par(lcdFd_, cmd2, 0);
+            sendCommandDataToDriver(lcdFd_, cmd2, 0);
             char cmd3[] = "0x0C";
-            ps_par(lcdFd_, cmd3, 0);
+            sendCommandDataToDriver(lcdFd_, cmd3, 0);
         }
-        lcdInitialized_ = true;
     }
+}
+
+void LCD::startIoContextThread()
+{
+    if (!ioContextThread_.joinable())
+    {
+        ioContextThread_ = std::thread([this]() { ioContext_.run(); });
+    }
+}
+
+void LCD::sendCommandDataToDriver(int fd, char* data, bool value)
+{
+    std::vector<char> safeData(data, data + strlen(data) + 1);
+
+    boost::asio::post(strand_, [this, fd, safeData, value] () mutable {
+        ps_par(fd, safeData.data(), value);
+    });
 }
 
 void LCD::FnLCDClear()
@@ -75,7 +97,7 @@ void LCD::FnLCDClear()
         return;
 
     char cmd[] = "0x01";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDHome()
@@ -97,7 +119,7 @@ void LCD::FnLCDDisplayCharacter(char aChar)
     memset(&str_buf, 0, sizeof(str_buf));
 
     snprintf(str_buf, str_size, "0x%x", aChar);
-    ps_par(lcdFd_, str_buf, 1);
+    sendCommandDataToDriver(lcdFd_, str_buf, 1);
 }
 
 void LCD::FnLCDDisplayString(std::uint8_t row, std::uint8_t col, char* str)
@@ -324,7 +346,7 @@ void LCD::FnLCDCursorLeft()
         return;
 
     char cmd[] = "0x10";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDCursorRight()
@@ -333,7 +355,7 @@ void LCD::FnLCDCursorRight()
         return;
 
     char cmd[] = "0x14";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDCursorOn()
@@ -342,7 +364,7 @@ void LCD::FnLCDCursorOn()
         return;
 
     char cmd[] = "0x0D";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDCursorOff()
@@ -351,7 +373,7 @@ void LCD::FnLCDCursorOff()
         return;
 
     char cmd[] = "0x0C";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDDisplayOff()
@@ -360,7 +382,7 @@ void LCD::FnLCDDisplayOff()
         return;
 
     char cmd[] = "0x08";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDDisplayOn()
@@ -369,7 +391,7 @@ void LCD::FnLCDDisplayOn()
         return;
 
     char cmd[] = "0x0C";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDCursorReset()
@@ -378,7 +400,7 @@ void LCD::FnLCDCursorReset()
         return;
 
     char cmd[] = "0x02";
-    ps_par(lcdFd_, cmd, 0);
+    sendCommandDataToDriver(lcdFd_, cmd, 0);
 }
 
 void LCD::FnLCDCursor(std::uint8_t row, std::uint8_t col)
@@ -417,7 +439,7 @@ void LCD::FnLCDCursor(std::uint8_t row, std::uint8_t col)
     }
 
     snprintf(str, str_size, "0x%x", val);
-    ps_par(lcdFd_, str, 0);
+    sendCommandDataToDriver(lcdFd_, str, 0);
 }
 
 void LCD::FnLCDDeinitDriver()
@@ -437,6 +459,12 @@ void LCD::FnLCDClose()
 {
     if (lcdInitialized_ == false)
         return;
+
+    ioContext_.stop();
+    if (ioContextThread_.joinable())
+    {
+        ioContextThread_.join();
+    }
 
     FnLCDDeinitDriver();
     lcdInitialized_ = false;

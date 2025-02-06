@@ -26,6 +26,7 @@
 #include "printer.h"
 #include "udp.h"
 #include "chu_client.h"
+#include "ksm_reader.h"
 
 
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
@@ -250,6 +251,7 @@ void signalHandler(const boost::system::error_code& ec, int signal, boost::asio:
         char* sLCDMsg = const_cast<char*>(LCDMsg.data());
         LCD::getInstance()->FnLCDClearDisplayRow(1);
         LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
+        usleep(500000);
 
         // Release the work guard to allow io_context to exit
         workGuard.reset();
@@ -275,7 +277,7 @@ int main (int agrc, char* argv[])
     });
 
     // Start heartbeat
-    HeartbeatUdpServer heartbeatUdpServer_(ioContext, "127.0.0.1", 9000);
+    HeartbeatUdpServer heartbeatUdpServer_(ioContext, "127.0.0.1", 6000);
     heartbeatUdpServer_.start();
 
     IniParser::getInstance()->FnReadIniFile();
@@ -308,12 +310,16 @@ int main (int agrc, char* argv[])
     // Join all threads
     for (auto& thread: threadPool)
     {
-        thread.join();
+        if (thread.joinable())
+        {
+            thread.join();
+        }
     }
 
     // Perform cleanup actions after all threads have joined
     EventManager::getInstance()->FnStopEventThread();
     Upt::getInstance()->FnUptClose();
+    KSM_Reader::getInstance()->FnKSMReaderClose();
     LCSCReader::getInstance()->FnLCSCReaderClose();
     Printer::getInstance()->FnPrinterClose();
     Lpr::getInstance()->FnLprClose();

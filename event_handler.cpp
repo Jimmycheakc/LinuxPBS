@@ -42,6 +42,19 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent                   ,eventHandler_, std::placeholders::_1) },
 
     // KSM Reader Event
+    {   "Evt_handleKSMReaderInit"               ,std::bind(&EventHandler::handleKSMReaderInit              ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderGetStatus"          ,std::bind(&EventHandler::handleKSMReaderGetStatus         ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderEjectToFront"       ,std::bind(&EventHandler::handleKSMReaderEjectToFront      ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardAllowed"        ,std::bind(&EventHandler::handleKSMReaderCardAllowed       ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardProhibited"     ,std::bind(&EventHandler::handleKSMReaderCardProhibited    ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderCardOnIc"           ,std::bind(&EventHandler::handleKSMReaderCardOnIc          ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderIcPowerOn"          ,std::bind(&EventHandler::handleKSMReaderIcPowerOn         ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderWarmReset"          ,std::bind(&EventHandler::handleKSMReaderWarmReset         ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderSelectFile1"        ,std::bind(&EventHandler::handleKSMReaderSelectFile1       ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderSelectFile2"        ,std::bind(&EventHandler::handleKSMReaderSelectFile2       ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderReadCardInfo"       ,std::bind(&EventHandler::handleKSMReaderReadCardInfo      ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderReadCardBalance"    ,std::bind(&EventHandler::handleKSMReaderReadCardBalance   ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderIcPowerOff"         ,std::bind(&EventHandler::handleKSMReaderIcPowerOff        ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleKSMReaderCardIn"             ,std::bind(&EventHandler::handleKSMReaderCardIn            ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleKSMReaderCardOut"            ,std::bind(&EventHandler::handleKSMReaderCardOut           ,eventHandler_, std::placeholders::_1) },
     {   "Evt_handleKSMReaderCardTakeAway"       ,std::bind(&EventHandler::handleKSMReaderCardTakeAway      ,eventHandler_, std::placeholders::_1) },
@@ -702,6 +715,483 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << static_cast<int>(dioEvent);
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderInit(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Init : Error.", eventLogFileName, "EVT");
+            operation::getInstance()->handleKSM_EnableError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Init : Ok.", eventLogFileName, "EVT");
+            operation::getInstance()->HandlePBSError(ReaderNoError);
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderGetStatus(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Get Status : Error.", eventLogFileName, "EVT");
+            operation::getInstance()->handleKSM_EnableError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Get Status : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderEjectToFront(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Eject To Front : Error.", eventLogFileName, "EVT");
+            operation::getInstance()->handleKSM_EnableError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Eject To Front : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardAllowed(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Card Allowed : Error.", eventLogFileName, "EVT");
+            operation::getInstance()->handleKSM_EnableError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Card Allowed : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardProhibited(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Card Prohibited : Error.", eventLogFileName, "EVT");
+            operation::getInstance()->handleKSM_EnableError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Card Prohibited : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderCardOnIc(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Card On Ic : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Card On Ic : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderIcPowerOn(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Ic Power On : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Ic Power On : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderWarmReset(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Warm Reset : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Warm Reset : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderSelectFile1(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Select File 1 : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Select File 1 : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderSelectFile2(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Select File 2 : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Select File 2 : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderReadCardInfo(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Read Card Info : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Read Card Info : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderReadCardBalance(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Read Card Balance : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Read Card Balance : Ok.", eventLogFileName, "EVT");
+        }
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleKSMReaderIcPowerOff(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        if (value == false)
+        {
+            Logger::getInstance()->FnLog("KSM Reader Ic Power Off : Error.", eventLogFileName, "EVT");
+
+            operation::getInstance()->handleKSM_CardReadError();
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("KSM Reader Ic Power Off : Ok.", eventLogFileName, "EVT");
+        }
     }
     else
     {

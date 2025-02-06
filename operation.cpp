@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <cstdio>
+#include <map>
 #include "common.h"
 #include "gpio.h"
 #include "operation.h"
@@ -445,16 +446,15 @@ void operation::Initdevice(io_context& ioContext)
     
     if (tParas.giCommPortKDEReader > 0)
     {
-        int iRet = KSM_Reader::getInstance()->FnKSMReaderInit(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
-        if (iRet != 1)
-        {  
-            HandlePBSError(ReaderError);
-        }
+        int iRet = KSM_Reader::getInstance()->FnKSMReaderInit(9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
         //  -4 KDE comm port error
-        if (iRet == -4) { tPBSError[iReader].ErrNo = -4;}
+        if (iRet == -4)
+        {
+            tPBSError[iReader].ErrNo = -4;
+        }
     }
 
-    if (tParas.giCommPortUPOS > 0)
+    if (tParas.giCommPortUPOS > 0 && gtStation.iType == tiExit)
     {
         Upt::getInstance()->FnUptInit(115200, getSerialPort(std::to_string(tParas.giCommPortUPOS)));
     }
@@ -1759,15 +1759,12 @@ void operation:: EnableCashcard(bool bEnable)
 
 void operation:: CheckReader()
 {
-    if (tPBSError[iReader].ErrNo == -1) {
+    if (tPBSError[iReader].ErrNo == -1)
+    {
         writelog("Check KDE Status ...", "OPR");
-        if (KSM_Reader::getInstance()->FnKSMReaderSendInit() == 1)
-        {
-            HandlePBSError(ReaderNoError);
-        }else{
-            writelog ("KDE Reader Error","OPR");
-        }
+        KSM_Reader::getInstance()->FnKSMReaderSendInit();
     }
+
     if (tParas.giCommPortLCSC > 0 && tPBSError[iLCSC].ErrNo != -4)
     {
         writelog("Check LCSC Status...", "OPR");
@@ -1822,13 +1819,7 @@ void operation::EnableKDE(bool bEnable)
     else
     {
         writelog ("Enable KDE Reader", "OPR");
-        if (KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable) == -1)
-        {
-            if (tPBSError[iReader].ErrNo != -1)
-            {
-                HandlePBSError(ReaderError);
-            }
-        }
+        KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
     }
 }
 
@@ -2059,15 +2050,29 @@ void operation:: KSM_CardIn()
     if (tPBSError[iReader].ErrNo != 0) {HandlePBSError(ReaderNoError);}
     //---------
     tProcess.giCardIsIn = 1;
-    iRet =  KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
-    if (iRet != 1) {
-        ShowLEDMsg (tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
-        SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
-        KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+    KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
+}
+
+void operation::handleKSM_EnableError()
+{
+    writelog (__func__, "OPR");
+
+    if (tPBSError[iReader].ErrNo != -1)
+    {
+        HandlePBSError(ReaderError);
     }
 }
 
-void operation:: KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired)
+void operation::handleKSM_CardReadError()
+{
+    writelog (__func__, "OPR");
+
+    ShowLEDMsg (tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
+    SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
+    KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+}
+
+void operation::KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired)
  {  
     
     writelog ("Cashcard: " + sKSMCardNo, "OPR");
