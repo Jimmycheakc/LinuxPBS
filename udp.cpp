@@ -271,6 +271,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 				operation::getInstance()->SendMsg2Server("99", ss.str());
 			}
 			operation::getInstance()->m_db->loadmessage();
+			operation::getInstance()->m_db->loadExitmessage();
 			if (operation::getInstance()->tProcess.gbcarparkfull.load() == false){
 				operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
 				operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);

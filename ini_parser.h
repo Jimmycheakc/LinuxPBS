@@ -45,6 +45,7 @@ public:
     int FnGetManualOpenBarrier() const;
     int FnGetLorrysensor() const;
     int FnGetArmbroken() const;
+    int FnGetPrintReceipt() const;
 
     // Confirm [DO]
     int FnGetOpenbarrier() const;
@@ -97,6 +98,7 @@ private:
     int ManualOpenBarrier_;
     int Lorrysensor_;
     int Armbroken_;
+    int PrintReceipt_;
 
     // Confirm [DO]
     int Openbarrier_;

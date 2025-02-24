@@ -174,6 +174,17 @@ bool operation::LoadParameter()
         }
         gbLoadParameter = false; 
     }
+
+    iReturn = m_db->loadExitmessage();
+    if (iReturn != 0) {
+        if (iReturn ==1) {
+            writelog ("No data for LED Exit message table", "OPR");
+        }else{
+            writelog ("Error for loading LED Exit message", "OPR");
+        }
+        gbLoadParameter = false; 
+    }
+
     iReturn = m_db->loadParam();
     if (iReturn != 0) {
         if (iReturn ==1) {
@@ -214,7 +225,7 @@ bool operation::LoadParameter()
 
 bool operation:: LoadedparameterOK()
 {
-    if (tProcess.gbloadedLEDMsg == true and tProcess.gbloadedParam==true and tProcess.gbloadedStnSetup==true and tProcess.gbloadedVehtype ==true) return true;
+    if (tProcess.gbloadedLEDMsg == true and tProcess.gbloadedLEDExitMsg == true and tProcess.gbloadedParam==true and tProcess.gbloadedStnSetup==true and tProcess.gbloadedVehtype ==true) return true;
     else return false;
 }
 
@@ -701,6 +712,7 @@ void operation:: Setdefaultparameter()
     tProcess.gbloadedParam = false;
 	tProcess.gbloadedVehtype = false;
 	tProcess.gbloadedLEDMsg = false;
+    tProcess.gbloadedLEDExitMsg = false;
 	tProcess.gbloadedStnSetup = false;
     //-------
     tProcess.gbInitParamFail = 0;
@@ -3132,7 +3144,7 @@ void operation::PrintTR(bool bForSeason)
 
     for (std::size_t i = 0; i < gsTR.size(); i++)
     {
-        std::cout << gsTR[i] << std::endl;
+        //std::cout << gsTR[i] << std::endl;
         char F = gsTR[i][0];
 
         if (F == '@')

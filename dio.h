@@ -33,7 +33,9 @@ public:
         LORRY_SENSOR_ON_EVENT = 16,
         LORRY_SENSOR_OFF_EVENT = 17,
         ARM_BROKEN_ON_EVENT = 18,
-        ARM_BROKEN_OFF_EVENT = 19
+        ARM_BROKEN_OFF_EVENT = 19,
+        PRINT_RECEIPT_ON_EVENT = 20,
+        PRINT_RECEIPT_OFF_EVENT = 21
     };
 
     static DIO* getInstance();
@@ -85,6 +87,7 @@ private:
     int manual_open_barrier_di_;
     int lorry_sensor_di_;
     int arm_broken_di_;
+    int print_receipt_di_;
     int loop_a_di_last_val_;
     int loop_b_di_last_val_;
     int loop_c_di_last_val_;
@@ -95,6 +98,7 @@ private:
     int manual_open_barrier_di_last_val_;
     int lorry_sensor_di_last_val_;
     int arm_broken_di_last_val_;
+    int print_receipt_di_last_val_;
     int open_barrier_do_;
     int lcd_backlight_do_;
     int close_barrier_do_;

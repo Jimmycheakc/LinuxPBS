@@ -90,6 +90,7 @@ public:
 	DBError insertexittrans(tExitTrans_Struct& tExit);
 	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
 	DBError loadmessage();
+    DBError loadExitmessage();
 	DBError loadParam();
     DBError loadparamfromCentral();
 	DBError loadstationsetup();
@@ -141,6 +142,7 @@ private:
         string ToString(T a);
 
     DBError loadEntrymessage(std::vector<ReaderItem>& selResult);
+    DBError loadExitLcdAndLedMessage(std::vector<ReaderItem>& selResult);
 
     
     int season_update_flag;

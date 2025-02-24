@@ -638,25 +638,25 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT");
-                operation:: getInstance()->HandlePBSError(SDoorError);
+                operation::getInstance()->HandlePBSError(SDoorError);
                 break;
             }
             case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT");
-                operation:: getInstance()->HandlePBSError(SDoorNoError);
+                operation::getInstance()->HandlePBSError(SDoorNoError);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT");
-                operation:: getInstance()->HandlePBSError(BDoorError);
+                operation::getInstance()->HandlePBSError(BDoorError);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT");
-                operation:: getInstance()->HandlePBSError(BDoorNoError);
+                operation::getInstance()->HandlePBSError(BDoorNoError);
                 break;
             }
             case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
@@ -704,6 +704,17 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT");
+                operation::getInstance()->PrintTR();
+                break;
+            }
+            case DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT");
                 break;
             }
             default:

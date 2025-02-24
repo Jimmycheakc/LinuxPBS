@@ -22,6 +22,7 @@ DIO::DIO()
     manual_open_barrier_di_(0),
     lorry_sensor_di_(0),
     arm_broken_di_(0),
+    print_receipt_di_(0),
     open_barrier_do_(0),
     lcd_backlight_do_(0),
     close_barrier_do_(0),
@@ -35,6 +36,7 @@ DIO::DIO()
     manual_open_barrier_di_last_val_(0),
     lorry_sensor_di_last_val_(0),
     arm_broken_di_last_val_(0),
+    print_receipt_di_last_val_(0),
     isDIOMonitoringThreadRunning_(false)
 {
     logFileName_ = "dio";
@@ -63,6 +65,7 @@ void DIO::FnDIOInit()
     manual_open_barrier_di_ = getInputPinNum(IniParser::getInstance()->FnGetManualOpenBarrier());
     lorry_sensor_di_ = getInputPinNum(IniParser::getInstance()->FnGetLorrysensor());
     arm_broken_di_ = getInputPinNum(IniParser::getInstance()->FnGetArmbroken());
+    print_receipt_di_ = getInputPinNum(IniParser::getInstance()->FnGetPrintReceipt());
     open_barrier_do_ = getOutputPinNum(IniParser::getInstance()->FnGetOpenbarrier());
     lcd_backlight_do_ = getOutputPinNum(IniParser::getInstance()->FnGetLCDbacklight());
     close_barrier_do_ = getOutputPinNum(IniParser::getInstance()->FnGetclosebarrier());
@@ -108,6 +111,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         int manual_open_barrier_status_curr_value = (GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(manual_open_barrier_di_)->FnGetValue() : 0;
         int lorry_sensor_curr_val = (GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(lorry_sensor_di_)->FnGetValue() : 0;
         int arm_broken_curr_val = (GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(arm_broken_di_)->FnGetValue() : 0;
+        int print_receipt_curr_val = (GPIOManager::getInstance()->FnGetGPIO(print_receipt_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(print_receipt_di_)->FnGetValue() : 0;
         
         // Case : Loop A on, Loop B no change 
         if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
@@ -300,6 +304,21 @@ void DIO::monitoringDIOChangeThreadFunction()
             operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetArmbroken(), 0);
         }
 
+        if (print_receipt_curr_val == GPIOManager::GPIO_HIGH && print_receipt_di_last_val_ == GPIOManager::GPIO_LOW)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::PRINT_RECEIPT_ON_EVENT));
+
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetPrintReceipt(), 1);
+        }
+        else if (print_receipt_curr_val == GPIOManager::GPIO_LOW && print_receipt_di_last_val_ == GPIOManager::GPIO_HIGH)
+        {
+            EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::PRINT_RECEIPT_OFF_EVENT));
+
+            // Send to Input Pin Status to Monitor
+            operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetPrintReceipt(), 0);
+        }
+
         loop_a_di_last_val_ = loop_a_curr_val;
         loop_b_di_last_val_ = loop_b_curr_val;
         loop_c_di_last_val_ = loop_c_curr_val;
@@ -310,6 +329,7 @@ void DIO::monitoringDIOChangeThreadFunction()
         manual_open_barrier_di_last_val_ = manual_open_barrier_status_curr_value;
         lorry_sensor_di_last_val_ = lorry_sensor_curr_val;
         arm_broken_di_last_val_ = arm_broken_curr_val;
+        print_receipt_di_last_val_ = print_receipt_curr_val;
 
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }

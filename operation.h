@@ -28,6 +28,7 @@ public:
     struct  tProcess_Struct tProcess;
     struct  tParas_Struct tParas;
 	struct  tMsg_Struct tMsg;
+    struct tExitMsg_struct tExitMsg;
     static const int Errsize = 17;
     struct  tPBSError_struct tPBSError[20];
     struct  tseason_struct tSeason;

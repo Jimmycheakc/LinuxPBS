@@ -85,6 +85,7 @@ void IniParser::FnReadIniFile()
     ManualOpenBarrier_              = pt.get<int>("DI.ManualOpenBarrier");
     Lorrysensor_                    = pt.get<int>("DI.Lorrysensor");
     Armbroken_                      = pt.get<int>("DI.Armbroken");
+    PrintReceipt_                   = pt.get<int>("DI.PrintReceipt");
 
     // Confirm [DO]
     Openbarrier_                    = pt.get<int>("DO.Openbarrier");
@@ -258,6 +259,11 @@ int IniParser::FnGetLorrysensor() const
 int IniParser::FnGetArmbroken() const
 {
     return Armbroken_;
+}
+
+int IniParser::FnGetPrintReceipt() const
+{
+    return PrintReceipt_;
 }
 
 // Confirm [DO]

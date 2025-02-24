@@ -386,6 +386,7 @@ struct  tProcess_Struct
 	bool gbloadedParam;
 	bool gbloadedVehtype;
 	bool gbloadedLEDMsg;
+	bool gbloadedLEDExitMsg;
 	bool gbloadedStnSetup;
 	int gbInitParamFail;
 	int giCardIsIn;
@@ -687,6 +688,63 @@ struct  tMsg_Struct
 	std::string Msg_WithIU[2];
 	std::string Msg_E1enhancedMCParking[2];
 	std::string MsgBlackList[2];
+};
+
+struct tExitMsg_struct
+{
+	// Message Exit - index 0 : LED, index 1 : LCD
+	std::string MsgExit_BlackList[2];
+	std::string MsgExit_CardError[2];
+	std::string MsgExit_CardIn[2];
+	std::string MsgExit_Comp2Val[2];
+	std::string MsgExit_CompExpired[2];
+	std::string MsgExit_Complimentary[2];
+	std::string MsgExit_DebitFail[2];
+	std::string MsgExit_DebitNak[2];
+	std::string MsgExit_EntryDebit[2];
+	std::string MsgExit_ExpCard[2];
+	std::string MsgExit_FleetCard[2];
+	std::string MsgExit_FreeParking[2];
+	std::string MsgExit_GracePeriod[2];
+	std::string MsgExit_IUProblem[2];
+	std::string MsgExit_MasterSeason[2];
+	std::string MsgExit_NoEntry[2];
+	std::string MsgExit_PrinterError[2];
+	std::string MsgExit_RedemptionTicket[2];
+	std::string MsgExit_SeasonBlocked[2];
+	std::string MsgExit_SeasonExpired[2];
+	std::string MsgExit_SeasonInvalid[2];
+	std::string MsgExit_SeasonNotStart[2];
+	std::string MsgExit_SeasonOnly[2];
+	std::string MsgExit_SeasonPassback[2];
+	std::string MsgExit_SeasonRegNoIU[2];
+	std::string MsgExit_SeasonRegOK[2];
+	std::string MsgExit_SeasonTerminated[2];
+	std::string MsgExit_SystemError[2];
+	std::string MsgExit_TakeCard[2];
+	std::string MsgExit_TicketExpired[2];
+	std::string MsgExit_TicketNotFound[2];
+	std::string MsgExit_UsedTicket[2];
+	std::string MsgExit_WrongCard[2];
+	std::string MsgExit_XCardAgain[2];
+	std::string MsgExit_XCardTaken[2];
+	std::string MsgExit_XDefaultIU[2];
+	std::string MsgExit_XDefaultLED[2];
+	std::string MsgExit_XDefaultLED2[2];
+	std::string MsgExit_XExpiringSeason[2];
+	std::string MsgExit_XIdle[2];
+	std::string MsgExit_XLoopA[2];
+	std::string MsgExit_XLowBal[2];
+	std::string MsgExit_XNoCard[2];
+	std::string MsgExit_XNoCHU[2];
+	std::string MsgExit_XNoIU[2];
+	std::string MsgExit_XSameLastIU[2];
+	std::string MsgExit_XSeasonWithinAllowance[2];
+	std::string MsgExit_XValidSeason[2];
+	std::string MsgExit_X1enhancedMCParking[2];
+	std::string MsgExit_XenhancedMCParking[2];
+	std::string MsgExit_XSPT3Parking[2];
+	std::string MsgExit_XVIPHolderParking[2];
 };
 
 struct tseason_struct {

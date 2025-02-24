@@ -4617,6 +4617,850 @@ DBError db::loadmessage()
 	return retErr;
 }
 
+DBError db::loadExitLcdAndLedMessage(std::vector<ReaderItem>& selResult)
+{
+	if (selResult.size() > 0)
+	{
+		for (auto &readerItem : selResult)
+		{
+			if (readerItem.getDataSize() == 2)
+			{
+				if (readerItem.GetDataItem(0) == "BlackList")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_BlackList[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_BlackList[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CBlackList")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_BlackList[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_BlackList[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "CardError")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_CardError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_CardError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardError")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_CardError[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_CardError[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "CardIn")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_CardIn[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_CardIn[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCardIn")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_CardIn[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_CardIn[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "Comp2Val")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_Comp2Val[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_Comp2Val[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CComp2Val")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_Comp2Val[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_Comp2Val[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "CompExpired")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_CompExpired[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_CompExpired[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CCompExpired")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_CompExpired[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_CompExpired[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "Complimentary")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_Complimentary[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_Complimentary[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CComplimentary")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_Complimentary[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_Complimentary[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "DebitFail")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_DebitFail[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_DebitFail[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDebitFail")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_DebitFail[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_DebitFail[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "DebitNak")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_DebitNak[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_DebitNak[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CDebitNak")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_DebitNak[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_DebitNak[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "EntryDebit")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_EntryDebit[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_EntryDebit[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CEntryDebit")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_EntryDebit[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_EntryDebit[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "ExpCard")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_ExpCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_ExpCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CExpCard")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_ExpCard[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_ExpCard[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "FleetCard")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_FleetCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_FleetCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CFleetCard")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_FleetCard[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_FleetCard[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "FreeParking")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_FreeParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_FreeParking[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CFreeParking")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_FreeParking[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_FreeParking[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "GracePeriod")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_GracePeriod[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CGracePeriod")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "IUProblem")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_IUProblem[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_IUProblem[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CIUProblem")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_IUProblem[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_IUProblem[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "MasterSeason")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_MasterSeason[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_MasterSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CMasterSeason")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_MasterSeason[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_MasterSeason[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "NoEntry")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_NoEntry[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_NoEntry[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CNoEntry")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_NoEntry[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_NoEntry[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "PrinterError")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_PrinterError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_PrinterError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CPrinterError")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_PrinterError[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_PrinterError[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "RedemptionTicket")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CRedemptionTicket")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonBlocked")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonBlocked")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonExpired")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonExpired")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonInvalid")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonInvalid")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonNotStart")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonNotStart")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonOnly")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonOnly")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonPassback")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonPassback")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonRegNoIU")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonRegNoIU")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonRegOK")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonRegOK")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SeasonTerminated")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSeasonTerminated")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "SystemError")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_SystemError[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_SystemError[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CSystemErrord")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_SystemError[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_SystemError[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "TakeCard")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_TakeCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_TakeCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTakeCard")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_TakeCard[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_TakeCard[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "TicketExpired")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_TicketExpired[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_TicketExpired[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTicketExpired")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_TicketExpired[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_TicketExpired[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "TicketNotFound")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CTicketNotFound")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "UsedTicket")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_UsedTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_UsedTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CUsedTicket")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_UsedTicket[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_UsedTicket[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "WrongCard")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_WrongCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_WrongCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CWrongCard")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_WrongCard[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_WrongCard[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XCardAgain")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XCardAgain[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XCardAgain[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXCardAgain")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XCardAgain[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XCardAgain[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XCardTaken")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XCardTaken[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XCardTaken[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXCardTaken")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XCardTaken[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XCardTaken[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XDefaultIU")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXDefaultIU")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XDefaultLED")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXDefaultLED")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XDefaultLED2")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXDefaultLED2")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XExpiringSeason")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXExpiringSeason")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XIdle")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XIdle[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XIdle[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXIdle")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XIdle[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XIdle[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XLoopA")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XLoopA[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XLoopA[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXLoopA")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XLoopA[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XLoopA[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XLowBal")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XLowBal[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XLowBal[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXLowBal")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XLowBal[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XLowBal[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XNoCard")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XNoCard[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XNoCard[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXNoCard")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XNoCard[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XNoCard[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XNoCHU")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XNoCHU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XNoCHU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXNoCHU")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XNoCHU[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XNoCHU[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XNoIU")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XNoIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XNoIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXNoIU")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XNoIU[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XNoIU[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XSameLastIU")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXSameLastIU")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XSeasonWithinAllowance")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXSeasonWithinAllowance")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "XValidSeason")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XValidSeason[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XValidSeason[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CXValidSeason")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_XValidSeason[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_XValidSeason[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "X1enhancedMCParking")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_X1enhancedMCParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_X1enhancedMCParking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "XenhancedMCParking")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XenhancedMCParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XenhancedMCParking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "XSPT3Parking")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XSPT3Parking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XSPT3Parking[1] = readerItem.GetDataItem(1);
+				}
+
+				if (readerItem.GetDataItem(0) == "XVIPHolderParking")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_XVIPHolderParking[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_XVIPHolderParking[1] = readerItem.GetDataItem(1);
+				}
+			}
+		}
+		operation::getInstance()->tProcess.gbloadedLEDExitMsg = true;
+		return iDBSuccess;
+	}
+
+	return iNoData;
+}
+
+DBError db::loadExitmessage()
+{
+	int r = -1;
+	DBError retErr;
+	vector<ReaderItem> exitLedSelResult;
+	vector<ReaderItem> exitLcdSelResult;
+
+	r = localdb->SQLSelect("select msg_id, msg_body from message_mst", &exitLedSelResult, true);
+	if (r != 0)
+	{
+		operation::getInstance()->writelog("load Exit LED message failed.", "DB");
+		return iLocalFail;
+	}
+
+	retErr = loadExitLcdAndLedMessage(exitLedSelResult);
+	if (retErr == DBError::iNoData)
+	{
+		return retErr;
+	}
+
+	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status >= 10", &exitLcdSelResult, true);
+	if (r != 0)
+	{
+		operation::getInstance()->writelog("load Exit LCD message failed.", "DB");
+		return iLocalFail;
+	}
+
+	retErr = loadExitLcdAndLedMessage(exitLcdSelResult);
+	if (retErr == DBError::iNoData)
+	{
+		return retErr;
+	}
+
+	return retErr;
+}
+
 DBError db::loadTR(int iType)
 {
 	int r = -1;
