@@ -82,7 +82,8 @@ public:
     std::string FnConvertHexStringToString(const std::string& data);
     std::string FnConvertVectorUint8ToString(const std::vector<uint8_t>& data);
     std::vector<uint8_t> FnConvertStringToVector(const std::string& str);
-    std::string SetFeeFormat(double fee);
+    std::string SetFeeFormat(float fee);
+    std::string FnFormatToFloatString(const std::string& str);
 
     /**
      * Singleton Common should not be cloneable.

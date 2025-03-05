@@ -801,7 +801,7 @@ std::string Common::FnConvertHexStringToString(const std::string& data)
     return result;
 }
 
-std::string Common::SetFeeFormat(double fee)
+std::string Common::SetFeeFormat(float fee)
 {
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << fee;
@@ -817,4 +817,20 @@ std::string Common::FnConvertVectorUint8ToString(const std::vector<uint8_t>& dat
 std::vector<uint8_t> Common::FnConvertStringToVector(const std::string& str)
 {
     return std::vector<uint8_t>(str.begin(), str.end());
+}
+
+std::string Common::FnFormatToFloatString(const std::string& str)
+{
+    try
+    {
+        float value = std::stof(str) / 100.0;
+
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << value;
+        return oss.str();
+    }
+    catch (const std::exception& e)
+    {
+        return "Invalid Input";
+    }
 }

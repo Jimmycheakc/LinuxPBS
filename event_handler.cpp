@@ -133,15 +133,16 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
-        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent.load() && operation::getInstance()->tEntry.sIUTKNo == "") 
+        if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent.load()) 
         { 
             operation :: getInstance()->writelog("No IU detected!", "OPR");
-            if (operation::getInstance()->tEntry.sEnableReader == false) 
-            {
+           // if (operation::getInstance()->tEntry.sEnableReader == false) 
+           // {
                 operation::getInstance()->ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
                 operation::getInstance()->EnableCashcard(true);
+                Antenna::getInstance()->FnAntennaStopRead();
 
-            }
+           // }
         }
         else  
         {
@@ -328,8 +329,6 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
-
-        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
@@ -356,6 +355,7 @@ bool EventHandler::handleLcscReaderGetCardBalance(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
@@ -382,6 +382,8 @@ bool EventHandler::handleLcscReaderGetCardDeduct(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        
+        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
@@ -709,7 +711,8 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT");
-                operation::getInstance()->PrintTR();
+                if (operation::getInstance()->tExit.iflag4Receipt == 0 ) operation::getInstance()->tExit.iflag4Receipt = 1;
+                operation::getInstance()->PrintReceipt();
                 break;
             }
             case DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT:
@@ -1672,6 +1675,9 @@ bool EventHandler::handleBarcodeReceived(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        // process barcode data
+        operation::getInstance()->ProcessBarcodeData(strEvent->data);
+
     }
     else
     {

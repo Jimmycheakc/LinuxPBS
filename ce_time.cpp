@@ -321,6 +321,19 @@ string CE_Time::TimeString()
 	return str;
 }
 
+string CE_Time::HMTimeString()
+{
+	long year,month,day,hour,minute;
+	double second;
+	j2g(t,year,month,day,hour,minute,second);
+	string str="";
+    string ts=to_string(hour);
+    str+=string(2-ts.length(),'0')+ts+":";
+    ts=to_string(minute);
+     str+=string(2-ts.length(),'0')+ts;
+	return str;
+}
+
 string CE_Time::TimeWithMsString()
 {
 	long year,month,day,hour,minute;
@@ -495,9 +508,12 @@ int CE_Time::getweekday()
 	j2g(t,year,month,day,hour,minute,second);
 	int mon;
 	if(month > 2) //zellersAlgorithm
-	mon = month; //for march to december month code is same as month
+    {
+	    mon = month; //for march to december month code is same as month
+    }
 	else{
-		mon = (12+month); //for Jan and Feb, month code will be 13 and 14 year--; //decrease year for month Jan and Feb
+		mon = (12+month); //for Jan and Feb, month code will be 13 and 14
+        year--; //decrease year for month Jan and Feb
 	}
 	int y = year % 100; //last two digit
 	int c = year / 100; //first two digit

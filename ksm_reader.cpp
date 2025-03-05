@@ -728,6 +728,16 @@ KSM_Reader::KSMReaderCmdRetCode KSM_Reader::ksmReaderHandleCmdResponse(KSM_Reade
                 else
                 {
                     logMsg << "Rx Response : Card Occupied.";
+                    if (continueReadCardFlag_.load() == true)
+                    {
+                        enqueueCommand(KSMReaderCmdID::GET_STATUS_CMD);
+                        logMsg << " Continue detect card.";
+                    }
+                    else
+                    {
+                        logMsg << " Stop detect card.";
+                    }
+                    retCode = KSMReaderCmdRetCode::KSMReaderRecv_ACK;
                 }
 
                 ksmLogger(logMsg.str());

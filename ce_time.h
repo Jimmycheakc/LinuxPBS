@@ -61,6 +61,7 @@ public:
     double getMs();//2019.07.22 QC
 
 	string TimeString();
+    string HMTimeString();
 	string TimeWithMsString();
 	string DateString();
 	string Datestr();

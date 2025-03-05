@@ -289,72 +289,74 @@ struct  tEntryTrans_Struct
 //	string sRPLPN;
 //	string sPaidtime;
 	bool gbEntryOK;
-	int giShowType;
 	string gsTransID;
 	string sTag;
 	string sCHUDebitCode;
 };
 
-
-
 struct  tExitTrans_Struct
 {
 	string xsid;
-	string sExitTime;
 	string sIUNo;
 	string sCardNo;
+	//------
 	int iTransType;
+	int iCardType;
+	int iVehcielType;
+	//----
+	int iEntryID;
+	string sEntryTime;
+	//-----
+	string sExitNo;
+	string sExitTime;
+	//-----
+	string sCalFeeTime;
+	short  iRateType;
 	long lParkedTime;
 	float sFee;
 	float sPaidAmt=0;
+	float sOweAmt;
+	float sGSTAmt;
+	float sPrePaid;
 	string sReceiptNo;
+	int    iflag4Receipt;
+	//------
 	int iStatus;
 	float sRedeemAmt;
 	short iRedeemTime;
 	string sRedeemNo;
-	float sGSTAmt;
-	string sCHUDebitCode;
-	int iCardType;
-	float sTopupAmt;
-	string uposbatchno;
-	string feedrom;
-	string lpn;
-	
-	short  iRateType;
-	string sEntryTime;
-	string sPwd;
-	string sTag;
-	float sPrePaid;
-	int iWholeDay;
-	string sWDFrom;
-	string sWDTo;
-	CE_Time dtValidTo;
-	CE_Time dtValidFrom;
-	float sOweAmt;
-	int iEntryID;
-	string sExitNo;
-	int iUseMultiCard;
-	int iNeedSendIUtoEntry;
-	int iPartialseason;
-	string sRegisterCard;
-	int iAttachedTransType;
-
-	string sCalFeeTime;
 	float sRebateAmt;
 	float sRebateBalance;
-	CE_Time sRebateDate;
+	string sRebateDate;
+	//------
+	string sCHUDebitCode;
+	float sTopupAmt;
+	string uposbatchno;
+	string feefrom;
+	string lpn;
+	//--------
+	int iPartialseason;
+	string dtValidTo;
+	string dtValidFrom;
+	//-----
+	int iWholeDay;
+	int iUseMultiCard;
+	int iNeedSendIUtoEntry;
+	string sRegisterCard;
+	int iAttachedTransType;
+	int bNoEntryRecord;
+	//-------
 	string sLPN[2];
-	int iVehcielType;
-	string sIUNo1;
-
 	string entry_lpn;
 	string video_location;
 	string video1_location;
 	string sRPLPN;
-
-	std::atomic<bool> gbUposDoingDeduction;
+	//-----
+	std::atomic<bool> gbDoingDeduction;
+	std::atomic<bool> gbWaitingCardDeduction;
+	std::atomic<bool> gbPaid;
 	std::atomic<bool> bPayByEZPay;
-	std::atomic<bool> bPayByVCC;
+
 };
 
 
@@ -364,17 +366,18 @@ struct  tProcess_Struct
 	bool gbsavedtrans;
 	std::atomic<bool> gbcarparkfull;
 	long glNoofOfflineData;
-	string fsLastCardNo;
-	int is_season;
+	int giIsSeason;            //0: none season, 1: wholedayseason, 2: partialseason 
 	int online_status;
 	int offline_status;
 	int giSystemOnline;
-	string fsLastPaidIU;
-	string fsLastReadCard;
-	float fsCardBal;
-	std::string fsLastDebitFailTime;
-	int fiShowType;
-	std::string fsPossibleTopUPTime;
+	//------ for fee calculation 
+	string gsLastPaidIU;
+	string gsLastCardNo;
+	float gfLastCardBal;
+	std::atomic<bool> gbLastPaidStatus;
+	//------
+	std::string gsLastDebitFailTime;
+	int giShowType;
 	string gsDefaultIU; 
 	string gsBroadCastIP;
 	std::atomic<bool> gbLoopApresent;
@@ -397,15 +400,15 @@ struct  tProcess_Struct
 	std::atomic<bool> fbReadIUfromAnt;
 	int fiLastCHUCmd;
 	std::atomic<bool> fbConnectingCHU;
-	int fiCardType;
-	std::atomic<bool> fbPaid;
+	int giCardType;
 	std::chrono::time_point<std::chrono::steady_clock> lastTransTime;
 	std::mutex lastTransTimeMutex;
 
 	std::string IdleMsg[2];
 	std::mutex idleMsgMutex;
-	std::string fsLastIUNo;
-	std::mutex fsLastIUNoMutex;
+	std::string gsLastIUNo;
+	std::mutex gsLastIUNoMutex;
+	std::mutex gsLastPaidIUMutex;
 	std::chrono::time_point<std::chrono::steady_clock> lastIUEntryTime;
 	std::mutex lastIUEntryTimeMutex;
 
@@ -430,14 +433,20 @@ struct  tProcess_Struct
 
 	void setLastIUNo(const std::string& msg)
 	{
-		std::lock_guard<std::mutex> lock(fsLastIUNoMutex);
-		fsLastIUNo = msg;
+		std::lock_guard<std::mutex> lock(gsLastIUNoMutex);
+		gsLastIUNo = msg;
+	}
+
+	void setLastPaidIU(const std::string& msg)
+	{
+		std::lock_guard<std::mutex> lock(gsLastPaidIUMutex);
+		gsLastPaidIU = msg;
 	}
 
 	std::string getLastIUNo()
 	{
-		std::lock_guard<std::mutex> lock(fsLastIUNoMutex);
-		return fsLastIUNo;
+		std::lock_guard<std::mutex> lock(gsLastIUNoMutex);
+		return gsLastIUNo;
 	}
 
 	void setLastIUEntryTime(const std::chrono::time_point<std::chrono::steady_clock>& time)
@@ -557,7 +566,6 @@ struct  tParas_Struct
 	int giMCAllowMultiEntry; 
 	bool gbAutoDebitNoEntry;			// *DB Loaded: AutoDebitNoEntry, but not use
 	int giIsHDBSite;					// *DB Loaded: IsHDBSite, but not use
-	bool gbseasonOnly;
 	int giHasHolidayEve;				// DB Loaded: HasHolidayEve
 	int giProcessReversedCMD;			// *DB Loaded: processreversedcmd, but not use
 	bool gbHasRedemption;				// *DB Loaded: HasRedemption, but not use
@@ -595,24 +603,25 @@ struct  tParas_Struct
 	int giV5TransType;					// *DB Loaded: V5TransType, but not use
 
 	//---- car park with carpark 
-	int hasinternal_link;
-	int has_internal;
-	string attached_dbname;
-	string attached_dbserver;
-	int attachedexit_udpport;
-	int attachedexit_id;
+	int gihasinternal_link;
+	int gihas_internal;
+	string gsattached_dbname;
+	string gsattached_dbserver;
+	int giattachedexit_udpport;
+	int giattachedexit_id;
 
 	//----season 
 	string gsAllowedHolderType;
-	int giSeasonCharge;					// *DB Loaded: SeasonCharge, but not use
+	int giSeasonCharge;					
 	bool gbSeasonAsNormal;
 	int giSeasonPayStart;
 	int giSeasonAllowance;
 	int giShowSeasonExpireDays;			// *DB Loaded: ShowSeasonExpireDays, but not use
 	int giShowExpiredTime;				// *DB Loaded: ShowExpiredTime, but not use
+	bool gbseasonOnly;
 
 	//----- M/C 
-	float gsMotorRate;
+	float gfMotorRate;
 	int giMCEntryGraceTime;
 	int giMCyclePerDay;					// DB Loaded: MCyclePerDay
 	int giHasThreeWheelMC;				// *DB Loaded: hasthreewheelmc, but not use
@@ -780,4 +789,13 @@ struct tTR_struc {
 	int giTRF;
 	int giTRA;
 };
+
+struct XTariff_Struct
+{
+	std::string day_index;
+	std::string autocharge[5];
+	std::string fee[5];
+	std::string time[5];
+};
+
 

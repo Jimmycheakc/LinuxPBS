@@ -1159,6 +1159,9 @@ void LCSCReader::encryptAES256(const std::vector<uint8_t>& key, const std::vecto
             throw std::runtime_error("AES encryption initialization failed.");
         }
 
+        // Disable padding to match AES_encrypt()
+        EVP_CIPHER_CTX_set_padding(ctx, 0);
+
         encryptedChallenge.resize(challenge.size() + AES_BLOCK_SIZE);
         int outLen = 0;
 
@@ -1993,6 +1996,7 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     oss << ",CAN=" << card_application_num;
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                     continueReadFlag_.store(false);
+                    FnSendGetCardBalance();
                     break;
                 }
                 case 0x01:  // Result corrupted cmd
@@ -2163,10 +2167,22 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     std::string seed = "";
                     std::string card_application_num = "";
                     std::string card_serial_num = "";
+                    std::vector<uint8_t> transRecordVec1;
+                    std::string transRecord1 = "";
+                    std::string balanceBeforeTrans = "";
+                    std::vector<uint8_t> transRecordVec2;
+                    std::string transRecord2 = "";
+                    std::string balanceAfterTrans = "";
 
                     seed = Common::getInstance()->FnGetVectorCharToHexString(payload, 1, 4);
                     card_application_num = Common::getInstance()->FnGetVectorCharToHexString(payload, 5, 8);
                     card_serial_num.assign(payload.begin() + 13, payload.begin() + 13 + 32);
+                    transRecordVec1.assign(payload.begin() + 45, payload.begin() + 45 + 30);
+                    transRecord1 = Common::getInstance()->FnVectorUint8ToBinaryString(transRecordVec1);
+                    balanceBeforeTrans = std::to_string(Common::getInstance()->FnConvertStringToDecimal(Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(171, 24))));
+                    transRecordVec2.assign(payload.begin() + 77, payload.begin() + 77 + 30);
+                    transRecord2 = Common::getInstance()->FnVectorUint8ToBinaryString(transRecordVec2);
+                    balanceAfterTrans = std::to_string(Common::getInstance()->FnConvertStringToDecimal(Common::getInstance()->FnConvertBinaryStringToString(transRecord2.substr(168, 24))));
 
                     // Process Trans
                     processTrans(payload);
@@ -2175,6 +2191,8 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     oss << ",seed=" << seed;
                     oss << ",CAN=" << card_application_num;
                     oss << ",CSN=" << card_serial_num;
+                    oss << ",BalanceBeforeTrans=" << balanceBeforeTrans;
+                    oss << ",BalanceAfterTrans=" << balanceAfterTrans;
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
                     // Deduct successfully, need to flush card

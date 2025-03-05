@@ -4215,6 +4215,43 @@ void Upt::handleCmdResponse(const Message& msg)
 
                 // Need to reverse the card type as the field encoding not matched
                 cardTypeStr = Common::getInstance()->FnReverseByPair(cardTypeStr);
+
+                // Cash Card Type
+                if (cardTypeStr == "1001")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "0";
+                }
+                // NETS Flashpay Card Type
+                else if (cardTypeStr == "1002")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "1";
+                }
+                // NETS EFT Card Type (ATM Card)
+                else if (cardTypeStr == "1003")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "2";
+                }
+                // EzLink Card Type
+                else if (cardTypeStr == "7000")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "3";
+                }
+                // Scheme Credit
+                else if (cardTypeStr == "8000")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "4";
+                }
+                // Scheme Debit
+                else if (cardTypeStr == "9000")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "5";
+                }
             }
             catch(const std::exception& ex)
             {
@@ -4245,6 +4282,7 @@ void Upt::handleCmdResponse(const Message& msg)
             std::string cardBalanceStr = "";
             std::string cardReferenceNumberStr = "";
             std::string batchNoStr = "";
+            std::string cardTypeStr = "";
 
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
             cardCanStr = findReceivedPayloadData(msg.getPayloads(), static_cast<uint16_t>(FIELD_ID::ID_CARD_CAN));
@@ -4252,12 +4290,51 @@ void Upt::handleCmdResponse(const Message& msg)
             cardBalanceStr = findReceivedPayloadData(msg.getPayloads(), static_cast<uint16_t>(FIELD_ID::ID_CARD_BALANCE));
             cardReferenceNumberStr = findReceivedPayloadData(msg.getPayloads(), static_cast<uint16_t>(FIELD_ID::ID_TXN_MER_REF_NUM));
             batchNoStr = findReceivedPayloadData(msg.getPayloads(), static_cast<uint16_t>(FIELD_ID::ID_TXN_BATCH));
+            cardTypeStr = findReceivedPayloadData(msg.getPayloads(), static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE));
 
             try
             {
                 // Need to change to decimal from hex string
                 cardBalanceStr = std::to_string(std::stoi(cardBalanceStr, nullptr, 16));
                 cardDeductFeeStr = std::to_string(std::stoi(cardDeductFeeStr, nullptr, 16));
+
+                // Cash Card Type
+                if (cardTypeStr == "1100")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "0";
+                }
+                // NETS Flashpay Card Type
+                else if (cardTypeStr == "1200")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "1";
+                }
+                // NETS EFT Card Type (ATM Card)
+                else if (cardTypeStr == "1000")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "2";
+                }
+                // EzLink Card Type
+                else if (cardTypeStr == "1700")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "3";
+                }
+                // Scheme Credit
+                else if (cardTypeStr == "2000")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "4";
+                }
+                // Scheme Debit
+                else if (cardTypeStr == "3000")
+                {
+                    cardTypeStr.clear();
+                    cardTypeStr = "5";
+                }
+                
             }
             catch (const std::exception& ex)
             {
@@ -4273,6 +4350,7 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << ",cardBalance=" << cardBalanceStr;
             oss << ",cardReferenceNo=" << cardReferenceNumberStr;
             oss << ",cardBatchNo=" << batchNoStr;
+            oss << ",cardType=" << cardTypeStr;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTPaymentAuto", oss.str());

@@ -624,6 +624,17 @@ public:
         SCHEME_CREDIT,
     };
 
+    enum class CardType
+    {
+        CASH_CARD = 0,
+        NETS_FLASH_PAY_CARD = 1,
+        ATM_CARD = 2,
+        EZLINK_CARD = 3,
+        CREDIT_CARD = 4,
+        DEBIT_CARD = 5,
+        OTHERS = 6
+    };
+
     struct CommandTopUpRequestData
     {
         uint32_t amount;

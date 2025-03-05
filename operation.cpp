@@ -140,6 +140,7 @@ void operation::OperationInit(io_context& ioContext)
         //-----
         m_db->downloadseason();
         m_db->moveOfflineTransToCentral();
+        //-----
     }else {
         tProcess.gbInitParamFail = 1;
         writelog("Unable to load parameter, Please download or check!", "OPR");
@@ -203,7 +204,7 @@ bool operation::LoadParameter()
         }
        gbLoadParameter = false; 
     }
-    iReturn = m_db->loadTR();
+    iReturn = m_db->loadTR(2);
     if (iReturn != 0)
     {
         if (iReturn == 1)
@@ -216,10 +217,64 @@ bool operation::LoadParameter()
         }
         gbLoadParameter = false;
     }
+     iReturn = m_db->LoadTariffTypeInfo();
+     if (iReturn != 0)
+    {
+        if (iReturn == 1)
+        {
+            writelog("No data for Tariff Type Info table", "OPR");
+        }
+        else
+        {
+            writelog("Error for loading Tariff Type Info", "OPR");
+        }
+        gbLoadParameter = false;
+    }
+
+    iReturn = m_db->LoadHoliday();
+    
+    if (iReturn != 0)
+    {
+        if (iReturn == 1)
+        {
+            writelog("No data for holiday table", "OPR");
+        }
+        else
+        {
+            writelog("Error for loading holiday", "OPR");
+        }
+        gbLoadParameter = false;
+    }
+
     iReturn = m_db->LoadTariff();
-   // double parkingfee = m_db->CalFeeRAM2GR("2024-11-26 08:00:00","2024-11-26 10:00:00",0);
-   // writelog("parkingfee = " + std::to_string(parkingfee), "OPR");
-    //
+
+     if (iReturn != 0)
+    {
+        if (iReturn == 1)
+        {
+            writelog("No data for Tariff table", "OPR");
+        }
+        else
+        {
+            writelog("Error for loading Tariff", "OPR");
+        }
+        gbLoadParameter = false;
+    }
+
+    iReturn = m_db->LoadXTariff();
+
+     if (iReturn != 0)
+    {
+        if (iReturn == 1)
+        {
+            writelog("No data for XTariff table", "OPR");
+        }
+        else
+        {
+            writelog("Error for loading XTariff", "OPR");
+        }
+        gbLoadParameter = false;
+    }
     return gbLoadParameter;
 }
 
@@ -310,6 +365,8 @@ void operation::LoopCGone()
 void operation::VehicleCome(string sNo)
 {
 
+    if (sNo == "") return;
+    //--------------------
     if (sNo.length() == 10) {
         writelog ("Received IU: "+sNo,"OPR");
     }
@@ -332,7 +389,8 @@ void operation::VehicleCome(string sNo)
         if(tEntry.gbEntryOK == false) PBSEntry (sNo);
     } 
     else{
-        PBSExit(sNo);
+        //check IU or card status
+        CheckIUorCardStatus(sNo, 1);
     }
     return;
 }
@@ -356,7 +414,11 @@ void operation::Openbarrier()
 
 void operation::Clearme()
 {
-    
+    tProcess.giShowType = 1;
+    tProcess.giIsSeason = 0;
+    tProcess.giCardIsIn = 0;
+    tProcess.gbsavedtrans = false;
+    //---
     if (gtStation.iType == tientry)
     {
         tEntry.esid = to_string(gtStation.iSID);
@@ -380,14 +442,65 @@ void operation::Clearme()
         tEntry.iVehcileType = 0;
         tEntry.gbEntryOK = false;
         tEntry.sEnableReader = false;
-        tEntry.giShowType = 1;
-        tEntry.gsTransID = "";
-        tProcess.giCardIsIn = 0;
-        tProcess.gbsavedtrans = false;
-       
+        tEntry.gsTransID = ""; 
     }
     else
     {
+        tExit.xsid = to_string(gtStation.iSID);
+	    tExit.sExitTime = "";
+	    tExit.sIUNo = "";
+	    tExit.sCardNo = "";
+	    tExit.iTransType = 0;
+	    tExit.lParkedTime = 0;
+	    tExit.sFee = 0.00 ;
+	    tExit.sPaidAmt = 0.00;
+	    tExit.sReceiptNo = "";
+        tExit.iflag4Receipt= 0;
+	    tExit.iStatus = 0;
+        tExit.sOweAmt = 0.00;
+        tExit.sPrePaid = 0.00;
+	    tExit.sRedeemAmt = 0.00;
+	    tExit.iRedeemTime = 0;
+	    tExit.sRedeemNo = "";
+	    tExit.sGSTAmt = 0.00;
+	    tExit.sCHUDebitCode = "";
+	    tExit.iCardType = 0;
+	    tExit.sTopupAmt = 0;
+	    tExit.uposbatchno = "";
+	    tExit.feefrom = "EPS";
+	    tExit.lpn = "";
+	
+	    tExit.iRateType = 0;
+	    tExit.sEntryTime = "";
+	
+        tExit.dtValidTo = "";
+	    tExit.dtValidFrom = "";
+
+	    tExit.iEntryID =0;
+	    tExit.sExitNo = "";
+	    tExit.iUseMultiCard = 0;
+	    tExit.iNeedSendIUtoEntry = 0;
+	    tExit.iPartialseason = 0;
+	    tExit.sRegisterCard = "";
+	    tExit.iAttachedTransType = 0;
+
+	    tExit.sCalFeeTime = "";
+	    tExit.sRebateAmt = 0.00;
+	    tExit.sRebateBalance = 0.00;
+	    tExit.sRebateDate = "";
+	    tExit.sLPN[0] = "";
+        tExit.sLPN[1] = "";
+	    tExit.iVehcielType = 0;
+
+	    tExit.entry_lpn = "";
+	    tExit.video_location = "";
+	    tExit.video1_location = "";
+
+	    tExit.gbDoingDeduction.store(false);
+        tExit.gbWaitingCardDeduction.store(false);
+        tExit.gbPaid.store(false);
+        tExit.bNoEntryRecord = -1;
+        tExit.bPayByEZPay.store(false);
 
     }
 
@@ -468,6 +581,7 @@ void operation::Initdevice(io_context& ioContext)
     if (tParas.giCommPortUPOS > 0 && gtStation.iType == tiExit)
     {
         Upt::getInstance()->FnUptInit(115200, getSerialPort(std::to_string(tParas.giCommPortUPOS)));
+        Upt::getInstance()->FnUptSendDeviceTimeSyncRequest();
     }
 
     if (LCD::getInstance()->FnLCDInit())
@@ -512,13 +626,15 @@ void operation::Initdevice(io_context& ioContext)
     BARCODE_READER::getInstance()->FnBarcodeReaderInit();
     
     // Initialize CHU Gateway and connect
-    CHU_CLIENT::getInstance()->FnChuClientInit(ioContext, tParas.gsCHUIP, gtStation.iCHUPort);
-    CHU_CLIENT::getInstance()->FnSetCHUConnectHandler(std::bind(&operation::CHUConnectHandler, operation::getInstance()));
-    CHU_CLIENT::getInstance()->FnSetCHUCloseHandler(std::bind(&operation::CHUCloseHandler, operation::getInstance()));
-    CHU_CLIENT::getInstance()->FnSetCHUReceiveHandler(std::bind(&operation::CHUDataArrivalHandler, operation::getInstance(), std::placeholders::_1, std::placeholders::_2));
-    CHU_CLIENT::getInstance()->FnSetCHUErrorHandler(std::bind(&operation::CHUErrorHandler, operation::getInstance(), std::placeholders::_1));
+    tParas.giEPS = 1;     //for testing
     if ((tParas.giEPS == 2) && (gtStation.iType == tiExit))
     {
+        CHU_CLIENT::getInstance()->FnChuClientInit(ioContext, tParas.gsCHUIP, gtStation.iCHUPort);
+        CHU_CLIENT::getInstance()->FnSetCHUConnectHandler(std::bind(&operation::CHUConnectHandler, operation::getInstance()));
+        CHU_CLIENT::getInstance()->FnSetCHUCloseHandler(std::bind(&operation::CHUCloseHandler, operation::getInstance()));
+        CHU_CLIENT::getInstance()->FnSetCHUReceiveHandler(std::bind(&operation::CHUDataArrivalHandler, operation::getInstance(), std::placeholders::_1, std::placeholders::_2));
+        CHU_CLIENT::getInstance()->FnSetCHUErrorHandler(std::bind(&operation::CHUErrorHandler, operation::getInstance(), std::placeholders::_1));
+        //-----
         if (tProcess.fbConnectingCHU.load() == false)
         {
             ConnectCHU();            
@@ -666,28 +782,22 @@ void operation::PBSEntry(string sIU)
     }
     if (iRet ==1 or iRet == 4 or iRet == 6) {
         tEntry.iTransType = GetSeasonTransType(tEntry.iVehcileType,std::stoi(tSeason.rate_type), tEntry.iTransType);
-        tEntry.giShowType = 0;
+        tProcess.giShowType = 0;
     }
 
     if (iRet == 10) {
         ShowLEDMsg(tMsg.Msg_SeasonAsHourly[0],tMsg.Msg_SeasonAsHourly[1]);
-        tEntry.giShowType = 2;
+        tProcess.giShowType = 2;
     }
     if (iRet != 1) {
         ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
     }
         //---------
-        SaveEntry();
-        tEntry.gbEntryOK = true;
-        Openbarrier();
+    SaveEntry();
+    tEntry.gbEntryOK = true;
+    Openbarrier();
 }
 
-void operation::PBSExit(string sIU)
-{
-    int iRet;
-    iRet = CheckSeason(sIU,2);
-
-}
 
 void operation:: Setdefaultparameter()
 
@@ -720,24 +830,18 @@ void operation:: Setdefaultparameter()
     //-------
     tProcess.giLastHousekeepingDate = 0;
     tProcess.setLastIUNo("");
+
     tProcess.setLastIUEntryTime(std::chrono::steady_clock::now());
     tProcess.setLastTransTime(std::chrono::steady_clock::now());
     //---
-
     tProcess.fbReadIUfromAnt.store(false);
     tProcess.fbConnectingCHU.store(false);
     tProcess.fiLastCHUCmd = 0;
-    tProcess.fbPaid.store(false);
-    tProcess.fsCardBal = 0.0f;
-    tProcess.fsLastDebitFailTime = "";
-    tProcess.fiShowType = 0;
-    tProcess.fsPossibleTopUPTime = "";
-
-
-    // tExitTrans_Struct initialization
-    tExit.gbUposDoingDeduction.store(false);
-    tExit.bPayByEZPay.store(false);
-    tExit.bPayByVCC.store(false);
+    tProcess.gsLastDebitFailTime = "";
+    tProcess.gsLastPaidIU = "";
+	tProcess.gsLastCardNo = "";
+	tProcess.gfLastCardBal = 0;
+    tProcess.gbLastPaidStatus.store(false);
 }
 
 string operation:: getIPAddress() 
@@ -1468,7 +1572,7 @@ void operation::SaveEntry()
 
     std::string sMsg2Send = (iRet == iDBSuccess) ? "Entry OK" : (iRet == iCentralFail) ? "Entry Central Failed" : "Entry Local Failed";
 
-    sMsg2Send = tEntry.sIUTKNo + ",,," + sLPRNo + "," + std::to_string(tEntry.giShowType) + "," + sMsg2Send;
+    sMsg2Send = tEntry.sIUTKNo + ",,," + sLPRNo + "," + std::to_string(tProcess.giShowType) + "," + sMsg2Send;
 
     if (tEntry.iStatus == 0) {
         SendMsg2Server("90", sMsg2Send);
@@ -1765,7 +1869,7 @@ void operation:: EnableCashcard(bool bEnable)
     if (tParas.giCommPortLCSC > 0) EnableLCSC (bEnable);
     if (tParas.giCommPortKDEReader>0) EnableKDE(bEnable);
     if (tParas.giCommPortUPOS) EnableUPOS(bEnable);
-
+    if (gtStation.iType == tiExit)  BARCODE_READER::getInstance()->FnBarcodeStartRead();
 
 }
 
@@ -1837,7 +1941,19 @@ void operation::EnableKDE(bool bEnable)
 
 void operation::EnableUPOS(bool bEnable)
 {
+    if (bEnable == true) {
+        writelog("Send Card Detect Request to UPOS", "OPR");
+        Upt::getInstance()->FnUptSendCardDetectRequest();
+    }else{
+         writelog ("Disable UPOS Reader", "OPR");
+    }
 
+}
+
+void operation::ProcessBarcodeData(string sBarcodeata)
+{
+    BARCODE_READER::getInstance()->FnBarcodeStopRead();
+    
 
 }
 
@@ -1913,6 +2029,8 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         case LCSCReader::mCSCEvents::sGetIDSuccess:
         {
+            if (gtStation.iType == tiExit)  break;
+
             writelog ("event LCSC got card ID.","OPR");
             HandlePBSError (LCSCNoError);
 
@@ -1951,17 +2069,74 @@ void operation::ProcessLCSC(const std::string& eventData)
             }
             else
             {
-                if (tEntry.sIUTKNo == "")
+                if (tEntry.sIUTKNo == "") 
                 {
                     EnableCashcard(false);
                     VehicleCome(sCardNo);
                 }
+
             }
 
             break;
         }
         case LCSCReader::mCSCEvents::sGetBlcSuccess:
         {
+            
+            if (gtStation.iType == tientry)  break;
+
+            writelog ("event LCSC got ID and balance.","OPR");
+            HandlePBSError (LCSCNoError);
+
+            std::string card_serial_num = "";
+            std::string sCardNo = "";
+            std::string sBal = "";
+            
+            try
+            {
+                std::vector<std::string> subVector = Common::getInstance()->FnParseString(eventData, ',');
+                for (unsigned int i = 0; i < subVector.size(); i++)
+                {
+                    std::string pair = subVector[i];
+                    std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                    std::string value = pair;
+
+                    if (param == "CSN")
+                    {
+                        card_serial_num = value;
+                    }
+
+                    if (param == "CAN")
+                    {
+                        sCardNo = value;
+                    }
+
+                    if (param == "cardBalance")
+                    {
+                        sBal = value;
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                std::ostringstream oss;
+                oss << "Exception : " << ex.what();
+                writelog(oss.str(), "OPR");
+            }
+
+            writelog ("LCSC card: " + sCardNo + ", Bal=$" + Common::getInstance()->FnFormatToFloatString(sBal), "OPR");
+
+            if(sCardNo.length() != 16)
+            {
+                writelog ("Wrong Card No: "+sCardNo, "OPR");
+                ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
+                SendMsg2Server ("90", sCardNo + ",,,,,Wrong Card No");
+                EnableLCSC(true);
+            }
+            else
+            {
+                 CheckIUorCardStatus(sCardNo, 2, sCardNo,3, std::stof(sBal)/100);
+            }
+
             break;
         }
         case LCSCReader::mCSCEvents::sGetTimeSuccess:
@@ -1970,6 +2145,58 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         case LCSCReader::mCSCEvents::sGetDeductSuccess:
         {
+            if (gtStation.iType == tientry)  break;
+
+            writelog ("event LCSC get deduction success.","OPR");
+            HandlePBSError (LCSCNoError);
+
+            std::string seed = "";
+            std::string card_serial_num = "";
+            std::string sCardNo = "";
+            std::string sBalanceAfterTrans = "";
+            
+            try
+            {
+                std::vector<std::string> subVector = Common::getInstance()->FnParseString(eventData, ',');
+                for (unsigned int i = 0; i < subVector.size(); i++)
+                {
+                    std::string pair = subVector[i];
+                    std::string param = Common::getInstance()->FnBiteString(pair, '=');
+                    std::string value = pair;
+
+                    if (param == "seed")
+                    {
+                        seed = value;
+                    }
+
+                    if (param == "CSN")
+                    {
+                        card_serial_num = value;
+                    }
+
+                    if (param == "CAN")
+                    {
+                        sCardNo = value;
+                    }
+
+                    if (param == "BalanceAfterTrans")
+                    {
+                        sBalanceAfterTrans = value;
+                    }
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                std::ostringstream oss;
+                oss << "Exception : " << ex.what();
+                writelog(oss.str(), "OPR");
+            }
+
+            std::ostringstream oss;
+            oss << "LCSC deduct successfully: Card No: " << sCardNo << ", Card Serial Number: " << card_serial_num << ", Balance After Deduction: $" << Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans);
+            writelog(oss.str(), "OPR");
+            //-------
+            operation::getInstance()->DebitOK("", sCardNo, "", sBalanceAfterTrans, 1, "", 2, "");
             break;
         }
         case LCSCReader::mCSCEvents::sGetCardRecord:
@@ -2157,11 +2384,17 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
 
     if (tEntry.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
     {
-       if (gtStation.iType == tientry)  tEntry.sLPN[i]=LPN;
+       if (gtStation.iType == tientry) {
+            tEntry.sLPN[i]=LPN;
+       }else {
+             tExit.sLPN[i]=LPN;
+       }
+
     }
     else
     {
         if (gtStation.iType == tientry) db::getInstance()->updateEntryTrans(LPN,sTransid);
+        else db::getInstance()->updateExitTrans(LPN,sTransid);
     }
 }
 
@@ -2468,7 +2701,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     // Handle the cmd request response succeed
                     std::string card_type = "";
                     std::string card_can = "";
-                    uint64_t card_balance = 0;
+                    float card_balance = 0;
 
                     try
                     {
@@ -2489,23 +2722,32 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                             }
                             else if (param == "cardBalance")
                             {
-                                card_balance = std::stoull(value);
+                                card_balance = std::stof(value);
                             }
                         }
 
-                        oss << " | card type : " << card_type << " | card can : " << card_can << " | card balance : " << card_balance;
+                        oss << " | card type : " << card_type << " | card can : " << card_can << " | card balance : " << std::fixed << std::setprecision(2) << (card_balance/100.0);
+                         writelog(oss.str(), "OPR");
+                        //---------
+                        CheckIUorCardStatus(card_can,3,card_can,std::stoi(card_type), std::round(card_balance)/100);
                     }
                     catch (const std::exception& ex)
                     {
                         oss << " | Exception : " << ex.what();
+                        writelog(oss.str(), "OPR");
                     }
+                }
+                else if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::TIMEOUT))
+                {
+                    //Handle the cmd = 00000002 request response timeout
+                    writelog("UPOS Reader read card timeout.", "OPR");
+
                 }
                 else
                 {
-                    // Handle the cmd request response failed
+
                 }
 
-                writelog(oss.str(), "OPR");
             }
             else
             {
@@ -2532,6 +2774,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     uint64_t card_balance = 0;
                     std::string card_reference_no = "";
                     std::string card_batch_no = "";
+                    std::string card_type = "";
 
                     try
                     {
@@ -2562,21 +2805,28 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                             {
                                 card_batch_no = value;
                             }
+                            else if (param == "cardType")
+                            {
+                                card_type = value;
+                            }
                         }
-
-                        oss << " | card can : " << card_can << " | card fee : " << card_fee << " | card balance : " << card_balance << " | card reference no : " << card_reference_no << " | card batch no : " << card_batch_no;
+                        oss << " | card type : " << card_type << " | card can : " << card_can << " | card fee : " << std::fixed << std::setprecision(2) << (card_fee / 100.0) << " | card balance : " << std::fixed << std::setprecision(2) << (card_balance / 100.0) << " | card reference no : " << card_reference_no << " | card batch no : " << card_batch_no;
+                        writelog(oss.str(), "OPR");
+                        operation::getInstance()->DebitOK("", card_can, std::to_string(card_fee/100), std::to_string(card_balance/100), std::stoi(card_type), "", 3, "");
                     }
                     catch (const std::exception& ex)
                     {
                         oss << " | Exception : " << ex.what();
+                        writelog(oss.str(), "OPR");
                     }
                 }
                 else
                 {
                     // Handle the cmd request response failed
+                  //  if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::SOF_INSUFFICIENT_FUND ))
+
                 }
 
-                writelog(oss.str(), "OPR");
             }
             else
             {
@@ -2651,40 +2901,8 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
 
 void operation::PrintTR(bool bForSeason)
 {
-    int iCurrentType;
-    static int iLastType;
+    
     std::string sSerialNo;
-
-    if (iLastType == 0)
-    {
-        iLastType = gtStation.iType;
-    }
-
-    if (gtStation.iType == tiAPS && tExit.iTransType == 11)
-    {
-        // Temp: will do in future - tExit.sIUNo = cPrinter.bEncode(Format(tExit.sExitTime, "yyyymmddHHmmss"), giStationID)
-        // Temp: will do in future - WriteLog "Barcode: " & tExit.sIUNO, "PBS"
-        iCurrentType = 11;
-    }
-    else if ((bForSeason == true) && (tParas.giSeasonCharge == 1) /* Temp: will do in future - && (tSeason.sIUNO <> "")*/)
-    {
-        iCurrentType = 12;
-    }
-    else
-    {
-        iCurrentType = gtStation.iType;
-    }
-
-    if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
-    {
-        iCurrentType = 2;
-    }
-
-    if (iLastType != iCurrentType)
-    {
-        m_db->loadTR(iCurrentType);
-        iLastType = iCurrentType;
-    }
 
     tProcess.glLastSerialNo = tProcess.glLastSerialNo + 1;
     std::string combinedString = std::to_string(tProcess.glLastSerialNo) + std::to_string(gtStation.iSID);
@@ -2710,14 +2928,9 @@ void operation::PrintTR(bool bForSeason)
     }
     else
     {
-        if (iCurrentType == 12)
-        {
-            // Temp: will do in futue - tSeason.sReceiptNo = tParas.gsHdRec & sSerialNo
-        }
-        else
-        {
-            tExit.sReceiptNo = tParas.gsHdRec + sSerialNo;
-        }
+       
+        tExit.sReceiptNo = tParas.gsHdRec + sSerialNo;
+        
     }
 
     std::string gsSite = tParas.gsSite;
@@ -2779,11 +2992,7 @@ void operation::PrintTR(bool bForSeason)
         }
         else if (gsTR_lowercase == "rno")
         {
-            if (iCurrentType == 12)
-            {
-                // Temp: will do in futue - exitReceiptNo = tSeason.sReceiptNo
-            }
-            else if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
+            if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
             {
                 exitReceiptNo = tEntry.sReceiptNo;
             }
@@ -2817,26 +3026,17 @@ void operation::PrintTR(bool bForSeason)
             }
             else
             {
-                if (iCurrentType == 12)
-                {
-                    // Temp: will do in futue - iuNo = tSeason.sIUNO;
-                }
-                else
-                {
-                    iuNo = tExit.sIUNo;
-                }
+                iuNo = tExit.sIUNo;
+                
             }
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + iuNo;
         }
         else if (gsTR_lowercase == "card")
         {
-            if ((tExit.bPayByEZPay.load() == false) && (tExit.bPayByVCC.load() == false))
+            if (tExit.bPayByEZPay.load() == false)
             {
-                if (iCurrentType == 12)
-                {
-                    // Temp: will do in futue - tSeason.sCardNo
-                }
-                else if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
+                
+                if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
                 {
                     cardNo = tEntry.sCardNo;
                 }
@@ -2880,14 +3080,7 @@ void operation::PrintTR(bool bForSeason)
         {
             try
             {
-                if (iCurrentType == 12)
-                {
-                    // Temp: will do in futue - exitTime = Format(tSeason.sExitTime, "dd/mm/yyyy HH:mm:ss")
-                }
-                else
-                {
-                    exitTime = Common::getInstance()->FnFormatDateTime(tExit.sExitTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
-                }
+                exitTime = Common::getInstance()->FnFormatDateTime(tExit.sExitTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
             }
             catch (const std::exception& ex)
             {
@@ -2897,13 +3090,14 @@ void operation::PrintTR(bool bForSeason)
         }
         else if (gsTR_lowercase == "pkt")
         {
-            parkTime = db::getInstance()->CalParkedTime(tExit.lParkedTime);
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + parkTime;
+            if (tExit.lParkedTime > 0) {
+                parkTime = db::getInstance()->CalParkedTime(tExit.lParkedTime);
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + parkTime;
+            }else  gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + "N/A";
         }
         else if (gsTR_lowercase == "amt")
         {
             std::string payType = "";
-
             try
             {
                 std::ostringstream formattedStream;
@@ -2913,27 +3107,22 @@ void operation::PrintTR(bool bForSeason)
 
                 if (formattedAmt > 0)
                 {
-                    if (iCurrentType == 12)
+                    if (tProcess.giEntryDebit == 0)
                     {
-                        // Temp: will do in futue - Format(tSeason.sPaidAmt, "0.00")
+                        //amt = std::to_string(formattedAmt);
+                        amt = Common::getInstance()->SetFeeFormat(tExit.sPaidAmt);
                     }
                     else
                     {
-                        if (tProcess.giEntryDebit == 0)
-                        {
-                            amt = std::to_string(formattedAmt);
-                        }
-                        else
-                        {
-                            float sumAmt = tExit.sPaidAmt + tExit.sPrePaid;
+                        float sumAmt = tExit.sPaidAmt + tExit.sPrePaid;
 
-                            std::ostringstream formattedSumAmtStream;
-                            formattedSumAmtStream << std::fixed << std::setprecision(2) << sumAmt;
+                        std::ostringstream formattedSumAmtStream;
+                        formattedSumAmtStream << std::fixed << std::setprecision(2) << sumAmt;
 
-                            float formattedSumAmt = std::stof(formattedSumAmtStream.str());
+                        float formattedSumAmt = std::stof(formattedSumAmtStream.str());
 
-                            amt = std::to_string(formattedSumAmt);
-                        }
+                           // amt = std::to_string(formattedSumAmt);
+                        amt = Common::getInstance()->SetFeeFormat(sumAmt);
                     }
                 }
 
@@ -2942,10 +3131,6 @@ void operation::PrintTR(bool bForSeason)
                     payType = " (by EZPay)";
                 }
                 
-                if (tExit.bPayByVCC == true)
-                {
-                    payType = " (by VCC)";
-                }
             }
             catch (const std::exception& ex)
             {
@@ -2957,23 +3142,17 @@ void operation::PrintTR(bool bForSeason)
         {
             if (tExit.sPaidAmt > 0)
             {
-                if ((tExit.bPayByEZPay == false) && (tExit.bPayByVCC == false) && (tProcess.fsCardBal > 0))
+                if ((tExit.bPayByEZPay.load() == false) && (tProcess.gfLastCardBal > 0))
                 {
-                    if (iCurrentType == 12)
-                    {
-                        // Temp: will do in futue - Format(tSeason.sBal, "0.00")
-                    }
-                    else
-                    {
-                        std::stringstream ss;
-                        ss << "card type: " << tProcess.fiCardType << ", fsCardBal: " << tProcess.fsCardBal;
-                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                    std::stringstream ss;
+                    ss << "card type: " << tProcess.giCardType << ", fsCardBal: " << tProcess.gfLastCardBal;
+                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
                         
-                        std::ostringstream formattedCardBalStream;
-                        formattedCardBalStream << std::fixed << std::setprecision(2) << tProcess.fsCardBal;
+                    std::ostringstream formattedCardBalStream;
+                    formattedCardBalStream << std::fixed << std::setprecision(2) << tProcess.gfLastCardBal;
 
-                        cardBal = formattedCardBalStream.str();
-                    }
+                    cardBal = formattedCardBalStream.str();
+                    
                 }
             }
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + cardBal;
@@ -3167,6 +3346,8 @@ void operation::PrintTR(bool bForSeason)
     }
 
     Printer::getInstance()->FnFullCut();
+    //---- update receipt No
+    m_db->updateExitReceiptNo(sSerialNo,std::to_string(gtStation.iSID)); 
 }
 
 void operation::ConnectCHU()
@@ -3192,8 +3373,6 @@ void operation::processMsgOnCHUConnect(const CHU_CLIENT::CHUCmd& cmd, const std:
         ss << "Cannot connect to CHU Gateway: " << CHU_CLIENT::getInstance()->FnGetCHUIP();
         Logger::getInstance()->FnLog(ss.str(), "", "OPR");
         SendMsg2Server("90",",,,,,Cannot connect to CHU Gateway");
-
-        ReadIUfromAnt(1);
         return;
     }
 
@@ -3216,9 +3395,9 @@ void operation::SendMsg2CHU(CHU_CLIENT::CHUCmd cmd, const std::string& data)
 {
     Logger::getInstance()->FnLog(__func__, "", "OPR");
 
-    if (tExit.gbUposDoingDeduction.load() == true)
+    if (tExit.gbDoingDeduction.load() == true)
     {
-        Logger::getInstance()->FnLog("UPOS make a deduction while SendMsg2CHU", "", "OPR");
+        Logger::getInstance()->FnLog("Reader make a deduction while SendMsg2CHU", "", "OPR");
         return;
     }
 
@@ -3429,7 +3608,6 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
     {
         tProcess.fiLastCHUCmd = 0;
         SendMsg2Server("90",",,,,,CHU Connection Down");
-        ReadIUfromAnt(0);
         return;
     }
 
@@ -3458,7 +3636,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                 {
                     Logger::getInstance()->FnLog(std::string("Invalid fiCardType value: ") + e.what(), "", "OPR");
                 }
-                tProcess.fiCardType = iCardType;
+                tProcess.giCardType = iCardType;
 
                 if (tokenData.size() == 10)
                 {
@@ -3468,7 +3646,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                     }
                 }
 
-                DebitOK(tokenData[2], tokenData[4], tokenData[3], tokenData[5], iCardType, tokenData[8], 0, sCHUDebitTime);
+                DebitOK(tokenData[2], tokenData[4], tokenData[3], tokenData[5], iCardType, tokenData[8], 4, sCHUDebitTime);
             }
             else
             {
@@ -3492,7 +3670,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
     {
         case static_cast<int>(CHU_CLIENT::CHUCmd::RES_ENTRY_INQ):
         {
-            if (tProcess.fbPaid.load() == true)
+            if (tExit.gbPaid.load() == true)
             {
                 return;
             }
@@ -3544,14 +3722,14 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                                 // End If
                             }
 
-                            Logger::getInstance()->FnLog("Last Paid IU: " + tProcess.fsLastPaidIU, "", "OPR");
-                            if ((tokenData[2] == tProcess.fsLastPaidIU) && (tProcess.fsLastPaidIU != ""))
+                            Logger::getInstance()->FnLog("Last Paid IU: " + tProcess.gsLastPaidIU, "", "OPR");
+                            if ((tokenData[2] == tProcess.gsLastPaidIU) && (tProcess.gsLastPaidIU != ""))
                             {
                                 // Consider same trans
                                 auto durationForLastTrans = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tProcess.getLastTransTime());
                                 if (durationForLastTrans.count() <= tParas.giMaxTransInterval)
                                 {
-                                    Logger::getInstance()->FnLog("Same as Last OK IU: " + tProcess.fsLastPaidIU, "", "OPR");
+                                    Logger::getInstance()->FnLog("Same as Last OK IU: " + tProcess.gsLastPaidIU, "", "OPR");
                                     // Temp: will do in future - EnableTicket False;
                                     // Temp: will do in future - ShowMsg2 gsMsgXSameLastIU, gscMsgXSameLastIU
                                     // Temp: will do in future - Send90 fsLastPaidIU, tExit.sCardNo, tExit.sPaidAmt, , "1", "Exit OK"    '18/10/2012 zhaojing for HDB car park in car park
@@ -3571,9 +3749,9 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                                 {
                                     Logger::getInstance()->FnLog(std::string("Invalid fiCardType value: ") + e.what(), "", "OPR");
                                 }
-                                tProcess.fiCardType = iCardType;
+                                tProcess.giCardType = iCardType;
                                 
-                                if ((tokenData[3] != "") && (tokenData[4] != "") && (tokenData[3] == tProcess.fsLastReadCard))
+                                if ((tokenData[3] != "") && (tokenData[4] != "") && (tokenData[3] == tProcess.gsLastCardNo))
                                 {
                                     long cardBal = 0;
                                     try
@@ -3585,12 +3763,12 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                                         Logger::getInstance()->FnLog(std::string("Invalid fsCardBal value: ") + e.what(), "", "OPR");
                                     }
 
-                                    if (tProcess.fsCardBal != static_cast<float>(cardBal) / 100.0f)
+                                    if (tProcess.gfLastCardBal != static_cast<float>(cardBal) / 100.0f)
                                     {
-                                        float different = tProcess.fsCardBal - (static_cast<float>(cardBal) / 100.0f);
+                                        float different = tProcess.gfLastCardBal - (static_cast<float>(cardBal) / 100.0f);
                                         Logger::getInstance()->FnLog("Same as Last IU and Bal Changed: $" + std::to_string(different), "", "OPR");
 
-                                        if (tProcess.fiCardType == 0)
+                                        if (tProcess.giCardType == 0)
                                         {
                                             Logger::getInstance()->FnLog("Same as Last IU and Bal Changed: $" + std::to_string(different), "", "OPR");
                                             tExit.sFee = different;
@@ -3605,7 +3783,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                                             tExit.lParkedTime = -1;
                                         }
 
-                                        DebitOK(tokenData[2], tokenData[3], "" ,tokenData[4], iCardType, "0", 3, "");
+                                        DebitOK(tokenData[2], tokenData[3], "" ,tokenData[4], iCardType, "0", 4, "");
 
                                         tExit.sIUNo = tokenData[2];
                                         tExit.sCardNo = tokenData[3];
@@ -3617,7 +3795,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                                         tExit.iStatus = 3;
 
                                         Logger::getInstance()->FnLog("Same as Last IU and Bal Changed: $" + std::to_string(tExit.sFee), "", "OPR");
-                                        tProcess.fsCardBal = static_cast<float>(cardBal) / 100.0f;
+                                        tProcess.gfLastCardBal = static_cast<float>(cardBal) / 100.0f;
                                         // Temp: will do in future - SaveTrans True
                                         return;
                                     }
@@ -3700,7 +3878,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                     // Temp: will do in future - cGWQ.UpdateQStatus tExit.sIUNO, 3
                 }
 
-                tProcess.fsLastDebitFailTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+                tProcess.gsLastDebitFailTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
 
                 sVioCode = tokenData[6].substr(0, 8);
                 tExit.sCHUDebitCode = sVioCode;
@@ -3732,7 +3910,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                     ss << tokenData[2] << "," << tokenData[4] << ",";
                     ss << std::fixed << std::setprecision(2) << tExit.sFee << ",";
                     ss << std::fixed << std::setprecision(2) << data / 100.0f << ",";
-                    ss << tProcess.fiShowType << ",Debit Fail: " << sVioCode;
+                    ss << tProcess.giShowType << ",Debit Fail: " << sVioCode;
                     SendMsg2Server("90", ss.str());
                 }
                 else
@@ -3767,9 +3945,9 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                                 Logger::getInstance()->FnLog(std::string("Invalid tExit.sTopupAmt value: ") + e.what(), "", "OPR");
                             }
 
-                            if ((tProcess.fsCardBal < (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt)) && (tExit.sTopupAmt > 0.01))
+                            if ((tProcess.gfLastCardBal < (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt)) && (tExit.sTopupAmt > 0.01))
                             {
-                                tProcess.fsCardBal = tProcess.fsCardBal + tExit.sTopupAmt;
+                                tProcess.gfLastCardBal = tProcess.gfLastCardBal + tExit.sTopupAmt;
                             }
 
                             tExit.sCHUDebitCode = sVioCode;
@@ -3787,7 +3965,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                             ss << tokenData[2] << "," << tokenData[4] << ",";
                             ss << std::fixed << std::setprecision(2) << (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt) << ",";
                             ss << std::fixed << std::setprecision(2) << data / 100.0f << ",";
-                            ss << tProcess.fiShowType << ",Debit Fail: " << sVioCode;
+                            ss << tProcess.giShowType << ",Debit Fail: " << sVioCode;
                             SendMsg2Server("90", ss.str());
                         }
                     }
@@ -3838,15 +4016,15 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                             if (gtStation.iType == tientry)
                             {
                                 tEntry.sPaidAmt = tEntry.sFee;
-                                tProcess.fsCardBal = tProcess.fsCardBal - tEntry.sFee;
+                                tProcess.gfLastCardBal = tProcess.gfLastCardBal - tEntry.sFee;
                             }
                             else
                             {
                                 tExit.sPaidAmt = tExit.sFee;
-                                tProcess.fsCardBal = tProcess.fsCardBal - tExit.sFee;
+                                tProcess.gfLastCardBal = tProcess.gfLastCardBal - tExit.sFee;
                             }
 
-                            DebitOK(tokenData[2], tokenData[4], "", "", tProcess.fiCardType , "", 3, "");
+                            DebitOK(tokenData[2], tokenData[4], "", "", tProcess.giCardType , "", 4, "");
                             return;
                         }
                     }
@@ -3857,7 +4035,6 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                     }
                     else if ((sVioCode.back() == '8') || (R4 == "0010"))
                     {
-                        tProcess.fsPossibleTopUPTime = "";
                         int data = 0;
                         try
                         {
@@ -3871,7 +4048,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                         if (data == 1)
                         {
                             iCode = 7;
-                            tProcess.fsLastReadCard = "";
+                            tProcess.gsLastCardNo = "";
                         }
                         else
                         {
@@ -3919,8 +4096,7 @@ void operation::CHUDataArrivalHandler(const char* data, std::size_t length)
                     }
                 }
 
-                tProcess.fsLastPaidIU = tokenData[2];
-                DebitOK(tokenData[2], tokenData[4], tokenData[3], tokenData[5], cardType, tokenData[8], 0, sCHUDebitTime);
+                DebitOK(tokenData[2], tokenData[4], tokenData[3], tokenData[5], cardType, tokenData[8], 4, sCHUDebitTime);
 
                 int antID = 0;
                 try
@@ -3997,48 +4173,27 @@ void operation::CHUErrorHandler(std::string error_msg)
 
     tProcess.fiLastCHUCmd = 0;
     tProcess.fbConnectingCHU.store(false);
-    ReadIUfromAnt(2);
 }
 
-void operation::ReadIUfromAnt(int iWhy)
-{
-    // iWhy=0 CHU down, 1=cannot connect, 2=gw error
-    if (iWhy > 0 && (tProcess.fbReadIUfromAnt.load() == true))
-    {
-        return;
-    }
 
-    tProcess.fbReadIUfromAnt.store(true);
-    tPBSError[iCHU].ErrNo = -1;
-    Sendmystatus();
-
-    if (tProcess.gbLoopApresent.load() == false)
-    {
-        Logger::getInstance()->FnLog("No LoopA while Read IU from Antenna", "", "OPR");
-        return;
-    }
-
-    if (AntennaOK() == true)
-    {
-        Logger::getInstance()->FnLog("Try Read IU from Antenna", "", "OPR");
-        Antenna::getInstance()->FnAntennaSendReadIUCmd();
-    }
-    else
-    {
-        if (gtStation.iType == tiExit)
-        {
-            Logger::getInstance()->FnLog("Try Read from reader", "", "OPR");
-            EnableCashcard(true);
-        }
-    }
-}
 
 void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo, 
                 const std::string& sPaidAmt, const std::string& sBal,
                 int iCardType, const std::string& sTopupAmt,
-                int iGWStatus, const std::string& sTransTime)
+                int iDeviceType, const std::string& sTransTime)
 {
 
+    //---------
+    tExit.sCardNo = sCardNo;
+    tExit.sPaidAmt = std::stof(sPaidAmt);
+    tExit.iCardType = iCardType;
+    //--------
+    tProcess.gsLastPaidIU = sIUNO;
+    tProcess.gbLastPaidStatus.store(true);
+    tProcess.gsLastCardNo = sCardNo;
+    tProcess.gfLastCardBal= GfeeFormat(std::stof(sBal));
+
+    CloseExitOperation(3);
 }
 
 std::string operation::GetVTypeStr(int iVType)
@@ -4067,4 +4222,279 @@ std::string operation::GetVTypeStr(int iVType)
     }
 
     return sVType;
+}
+
+ void operation::CheckIUorCardStatus(string sCheckNo, int iDevicetype,string sCardNo, int sCardType, float sCardBal)
+ {
+    // device type : 1 = Ant, 2 = LCSC, 3 = UPOS, 4 = CHU
+    string gsCompareNo;
+    
+    if (tExit.gbPaid.load() == true) {
+        writelog ("same as last paid card","OPR");
+        return;
+    }
+    //--------
+    if (tExit.gbWaitingCardDeduction.load() == true) {
+       
+        debitformReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+    }
+    else {
+        if  (iDevicetype == 1 || iDevicetype == 4) gsCompareNo = tProcess.gsLastPaidIU;
+        else gsCompareNo = tProcess.gsLastCardNo;
+
+        if (sCheckNo == gsCompareNo) {
+            if (tProcess.gbLastPaidStatus.load()  == true) {
+                if (iDevicetype == 1) writelog ("same as last paid IU","OPR");
+                else writelog ("same as last paid card","OPR");
+                Openbarrier();
+            }else
+            {
+                if (iDevicetype == 1) EnableCashcard(true);
+                else
+                {
+                    // check Balance
+                    if (GfeeFormat(sCardBal) != tProcess.gfLastCardBal) {
+                        if (iDevicetype == 4 and sCardNo != tProcess.gsLastCardNo) {
+                              PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
+                        }else{
+                             // bal change case
+                                Openbarrier();
+                                return;
+                        }
+                    }
+                    else {
+                        PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
+                    }   
+                }
+            }
+        } else{
+            PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
+        }
+    }
+ }
+
+ void operation::PBSExit(string sIU, int iDevicetype, string sCardNo, int sCardType,float sCardBal)
+{
+    int iRet;
+
+    if (sIU == tExit.sIUNo) return;
+
+    tExit.sIUNo = sIU;
+    
+    //check blacklist
+    iRet = m_db->IsBlackListIU(sIU);
+    if (iRet >= 0){
+        ShowLEDMsg(tExitMsg.MsgExit_BlackList[0], tExitMsg.MsgExit_BlackList[1]);
+        SendMsg2Server("90",sIU+",,,,,Blacklist IU");
+        if(iRet ==0) return;
+    }
+    //check block 
+    string gsBlockIUPrefix = IniParser::getInstance()->FnGetBlockIUPrefix();
+   // writelog ("blockIUprfix =" +gsBlockIUPrefix, "OPR");
+    if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos and sIU.length() == 10)
+    {
+        ShowLEDMsg("Lorry No Exit^Pls Reverse","Lorry No Exit^Pls Reverse");
+        SendMsg2Server("90",sIU+",,,,,Block IU");
+        return;
+    }
+    //---Get Entry time
+    if (tExit.bNoEntryRecord == -1) {
+        iRet = m_db->FetchEntryinfo(sIU);
+        if (tExit.sEntryTime == "") {
+             writelog ("No Entry Record","OPR");
+             tExit.bNoEntryRecord = 1;
+        } else {
+            writelog("GetEntry Time: " + tExit.sEntryTime, "OPR");
+            tExit.bNoEntryRecord = 0;
+        }
+    } 
+    //-----
+    if(sIU.length()==10) 
+	    tExit.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
+	else {
+        tExit.iTransType=GetVTypeFromLoop();
+    }
+
+    if (tExit.iTransType == 9) {
+        ShowLEDMsg(tMsg.Msg_authorizedvehicle[0],tMsg.Msg_authorizedvehicle[1]);
+        CloseExitOperation(0);
+        return;
+    }
+
+    iRet = CheckSeason(sIU,2);
+
+    if (iRet == 1)
+    {   
+        if (tParas.giSeasonCharge == 0 || std::stoi(tSeason.rate_type) ==0 ) {
+            CloseExitOperation(1);
+            return;
+        }
+    }
+    if (tExit.bNoEntryRecord == 1){
+        int iAutoDebit;
+		float sAmt;
+        writelog("No Entry, Check Auto Debit.", "OPR");
+		m_db->GetXTariff(iAutoDebit, sAmt, 0);
+		writelog("Autocharge:"+std::to_string(iAutoDebit), "OPR");
+		writelog("ChargeAmt:"+ Common::getInstance()->SetFeeFormat(sAmt), "OPR");
+        if (iAutoDebit > 0) {
+            tExit.sFee = sAmt;
+            tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+        }else{
+            SendMsg2Server("07",sIU);
+            return;
+        }
+    }else{
+        if ((iRet == 8) || (iRet== 1 and std::stoi(tSeason.rate_type) != 0 )) 
+        {
+            tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+            writelog("Cal Fee Time: " + tExit.sExitTime, "OPR");
+            if(iRet == 1){
+                tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, std::stoi(tSeason.rate_type));
+            }
+            else{
+                tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iTransType);
+            }
+        }
+    }
+    //-------
+    tExit.sPaidAmt = GfeeFormat(tExit.sFee - tExit.sRebateAmt - tExit.sRedeemAmt + tExit.sOweAmt);
+    writelog("Total paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "OPR");
+    //-------------
+    ShowLEDMsg("Parking Fee: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt),"Parking Fee: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
+    if (tExit.sPaidAmt > 0) 
+    {
+        if(iDevicetype != 1){
+            debitformReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+        }else
+        {
+            tExit.gbWaitingCardDeduction = true;
+            EnableCashcard(true);
+          //  SendMsg2CHU (CHU_CLIENT::CHUCmd:: ENTRY_INQ, std::to_string(gtStation.iAntID));
+                //enable EPS
+        }
+    }
+    else
+    {
+        CloseExitOperation(2);
+    
+    } 
+
+}
+
+void operation::debitformReader(string CardNo, float sFee,int iDevicetype,int sCardType, float sCardBal)
+{
+    long glDebitAmt;
+    //---
+    tExit.gbDoingDeduction.store(true);
+    tProcess.gbLastPaidStatus.store(false);
+    tProcess.gsLastCardNo = CardNo;
+    tProcess.gfLastCardBal= GfeeFormat(sCardBal);
+    tExit.sCardNo = CardNo;
+    //------
+    glDebitAmt = sFee * 100;
+
+    ShowLEDMsg("send deduction^to Reader","send deduction^to Reader");
+
+    if(iDevicetype == 3) {
+        writelog("Send deduction fee to UPOS. ", "OPR");
+        writelog("UPOS batch number: " + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss(), "OPR");
+        Upt::getInstance()->FnUptSendDeviceAutoPaymentRequest(glDebitAmt, Common::getInstance()->FnGetDateTimeFormat_yymmddhhmmss());
+    } 
+    else{
+        writelog("Send deduction fee to LCSC. ", "OPR");
+        LCSCReader::getInstance()->FnSendCardDeduct(glDebitAmt);
+    }
+
+}
+
+float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bCheckGT)
+{
+    
+    float parkingfee;
+
+    parkingfee = m_db->CalFeeRAM2G(eTime,payTime,iTransType);
+   
+    return parkingfee;
+}
+
+void operation::CHUDebit(float sFee)
+{
+
+}
+
+void operation::SaveExit()
+{
+    int iRet;
+    std::string sLPRNo = "";
+    
+    if (tExit.sIUNo== "") return;
+    writelog ("Save Exit trans:"+ tExit.sIUNo, "OPR");
+
+    iRet = db::getInstance()->insertexittrans(tExit);
+    if (iRet == iCentralSuccess && tExit.bNoEntryRecord == 0) {
+        iRet = db::getInstance()->updatemovementtrans(tExit);
+    }
+    //----
+    if (iRet == iDBSuccess or iRet == iLocalSuccess)
+    {
+        tProcess.setLastIUNo(tExit.sIUNo);
+    }
+    //-------
+    tPBSError[iDB].ErrNo = (iRet == iDBSuccess ||iRet == iLocalSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
+
+    if ((tExit.sLPN[0] != "")|| (tExit.sLPN[1] != ""))
+	{
+		if((tExit.iTransType == 7) || (tExit.iTransType == 8) || (tExit.iTransType == 22))
+		{
+			sLPRNo = tExit.sLPN[1];
+		}
+		else
+		{
+			sLPRNo = tExit.sLPN[0];
+		}
+	}
+
+    std::string sMsg2Send = (iRet == iDBSuccess || iRet == iLocalSuccess) ? "Exit OK" : (iRet == iCentralFail) ? "Exit Central Failed" : "Exit Local Failed";
+
+    sMsg2Send = tExit.sIUNo + ",,," + sLPRNo + "," + std::to_string(tProcess.giShowType) + "," + sMsg2Send;
+
+    if (tEntry.iStatus == 0) {
+        SendMsg2Server("90", sMsg2Send);
+    }
+    tProcess.gbsavedtrans = true;
+    tExit.gbPaid.store(true);
+    //-------
+    PrintReceipt();
+}
+
+void operation::PrintReceipt()
+{
+    // gbflag4Receipt:   0: default   1: button press  2: Receipt printed
+
+    if (tExit.iflag4Receipt == 0) return;
+    //-------
+   if (tExit.iflag4Receipt == 1 and tExit.gbPaid.load() == true and tExit.sPaidAmt > 0) {
+        
+        PrintTR(false);
+        tExit.iflag4Receipt = 2;
+ 
+   } 
+}
+
+float operation::GfeeFormat(float value) {
+    return std::round(value * 100.0) / 100.0;
+}
+
+void operation::CloseExitOperation(int iStatus)
+{
+   //--- iStatus:  0: free parking, 1: season  2: grace period  3: deduction OK  4: deduction fail 
+
+    if (iStatus < 4){
+        tExit.iStatus = 0;
+    }
+    ShowLEDMsg("Paid OK ^ Have A Nice Day!","Paid OK.^Have A Nice Day!");
+    writelog ("Enter close Exit for: " + tExit.sIUNo, "OPR");
+    SaveExit();
+    Openbarrier();
 }

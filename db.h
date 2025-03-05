@@ -23,7 +23,9 @@ typedef enum
     iUpdateFail = 2,
     iNoentry = 3,    //no entry record
     iOpen = 5,
-    iClose = 6
+    iClose = 6,
+    iCentralSuccess = 7,
+    iLocalSuccess = 8
 
 }DBError;
 
@@ -82,12 +84,15 @@ public:
     int GetDayTypeNoPE(CE_Time curr_date);
     int GetDayTypeWithHE(CE_Time curr_date);
     float HasPaidWithinPeriod(string sTimeFrom, string sTimeTo);
-    double RoundIt(double val, int giTariffFeeMode);
-    double CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckGT = false);
+    float RoundIt(float val, int giTariffFeeMode);
+    float CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckGT = false);
+    float CalFeeRAM2G(string eTime, string payTime,int iTransType, bool bCheckGT = false);
+    int GetXTariff(int &iAutoDebit, float &sAmt, int iVType = 0);
     string CalParkedTime(long lpt);
 
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
+    DBError updatemovementtrans(tExitTrans_Struct& tExit);
 	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
 	DBError loadmessage();
     DBError loadExitmessage();
@@ -100,9 +105,12 @@ public:
     DBError LoadTariff();
     DBError LoadHoliday();
     DBError ClearHoliday();
+    DBError LoadTariffTypeInfo();
+    DBError LoadXTariff();
 
     int FnGetVehicleType(std::string IUCode);
     string GetPartialSeasonMsg(int iTransType);
+    int FetchEntryinfo(string sIUNo);
 
     void moveOfflineTransToCentral();
 	int insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter);
@@ -116,6 +124,8 @@ public:
     int FnGetDatabaseErrorFlag();
     int clearexpiredseason();
     int updateEntryTrans(string lpn, string sTransID);
+    int updateExitTrans(string lpn, string sTransID);
+    int updateExitReceiptNo(string sReceiptNo, string StnID); 
 
     long  glToalRowAffed;
 
@@ -171,7 +181,11 @@ private:
     db();
     //-----------------------
     struct  tariff_struct gtariff[300][10];
+    struct  tariff_type_info_struct  gtarifftypeinfo[2];
+    //---------------
     std::vector<std::string> msholiday;
+    std::vector<std::string> mspecialday;
+    std::vector<struct XTariff_Struct> msxtariff;
 
 };
 

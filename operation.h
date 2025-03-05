@@ -46,7 +46,10 @@ public:
     void Initdevice(io_context& ioContext);
     void ShowLEDMsg(string LEDMsg, string LCDMsg);
     void PBSEntry(string sIU);
-    void PBSExit(string sIU);
+    void PBSExit(string sIU,int iDevicetype,string sCardNo = "", int sCardType = 0,float sCardBal = 0);
+    void debitformReader(string CardNo, float sFee,int iDevicetype,int sCardType = 0,float sCardBal = 0);
+    void CheckIUorCardStatus(string sCheckNo, int iDevicetype,string sCardNo = "",int sCardType = 0,float sCardBal = 0);
+    float CalFeeRAM(string eTime, string payTime,int iTransType, bool bCheckGT = false);
     void Setdefaultparameter();
     string getIPAddress(); 
     void Sendmystatus();
@@ -67,6 +70,8 @@ public:
     void HandlePBSError(EPSError iEPSErr, int iErrCode=0);
     int  GetVTypeFromLoop();
     void SaveEntry();
+    void SaveExit();
+    void CloseExitOperation(int iStatus);
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
     void ManualOpenBarrier();
@@ -79,6 +84,7 @@ public:
     void EnableKDE(bool bEnable);
     void EnableUPOS(bool bEnable);
     void ProcessLCSC(const std::string& eventData);
+    void ProcessBarcodeData(string sBarcodeata);
     void KSM_CardIn();
     void KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired);
     void KSM_CardTakeAway();
@@ -89,21 +95,24 @@ public:
     void ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation);
     void processUPT(Upt::UPT_CMD cmd, const std::string& eventData);
     void PrintTR(bool bForSeason = false);
+    void PrintReceipt();
     void ConnectCHU();
     void processMsgOnCHUConnect(const CHU_CLIENT::CHUCmd& cmd, const std::string& data);
-    void SendMsg2CHU(CHU_CLIENT::CHUCmd cmd, const std::string& data);
+    void SendMsg2CHU(CHU_CLIENT::CHUCmd cmd, const std::string& data = "");
     void CHUConnectHandler();
     void CHUCloseHandler();
     void CHUDataArrivalHandler(const char* data, std::size_t length);
     void CHUErrorHandler(std::string error_msg);
-    void ReadIUfromAnt(int iWhy);
     void RetryEntryInq(int iRetryType);
+    void CHUDebit(float sFee = 0);
     void DebitOK(const std::string& sIUNO, const std::string& sCardNo, 
                 const std::string& sPaidAmt = "", const std::string& sBal = "",
                 int iCardType = 0, const std::string& sTopupAmt = "",
-                int iGWStatus = 0, const std::string& sTransTime = "");
+                int iDeviceType = 0, const std::string& sTransTime = "");
     std::string GetVTypeStr(int iVType);
-
+    
+    float GfeeFormat(float value);
+    
     void Openbarrier();
 
     void LcdIdleTimerTimeoutHandler();
