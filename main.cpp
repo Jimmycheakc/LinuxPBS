@@ -25,7 +25,6 @@
 #include "operation.h"
 #include "printer.h"
 #include "udp.h"
-#include "chu_client.h"
 #include "ksm_reader.h"
 
 
@@ -323,7 +322,6 @@ int main (int agrc, char* argv[])
     LCSCReader::getInstance()->FnLCSCReaderClose();
     Printer::getInstance()->FnPrinterClose();
     Lpr::getInstance()->FnLprClose();
-    CHU_CLIENT::getInstance()->FnChuClientClose();
 
     return 0;
 }

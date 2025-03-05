@@ -399,7 +399,6 @@ struct  tProcess_Struct
 //	bool gbwaitLoopA;
 	std::atomic<bool> fbReadIUfromAnt;
 	int fiLastCHUCmd;
-	std::atomic<bool> fbConnectingCHU;
 	int giCardType;
 	std::chrono::time_point<std::chrono::steady_clock> lastTransTime;
 	std::mutex lastTransTimeMutex;
