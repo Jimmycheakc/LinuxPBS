@@ -12,6 +12,16 @@
 #include "lpr.h"
 #include "upt.h"
 
+typedef enum : unsigned int
+{
+    FreeParking        = 0,
+    SeasonParking      = 1,
+    GracePeriod        = 2,
+    DeductionOK        = 3,
+    DeductionFail      = 4,
+    BalanceChange      = 5
+} TransType;
+
 class operation
 {
 public:
@@ -46,7 +56,7 @@ public:
     void ShowLEDMsg(string LEDMsg, string LCDMsg);
     void PBSEntry(string sIU);
     void PBSExit(string sIU,int iDevicetype,string sCardNo = "", int sCardType = 0,float sCardBal = 0);
-    void debitformReader(string CardNo, float sFee,int iDevicetype,int sCardType = 0,float sCardBal = 0);
+    void debitfromReader(string CardNo, float sFee,int iDevicetype,int sCardType = 0,float sCardBal = 0);
     void CheckIUorCardStatus(string sCheckNo, int iDevicetype,string sCardNo = "",int sCardType = 0,float sCardBal = 0);
     float CalFeeRAM(string eTime, string payTime,int iTransType, bool bCheckGT = false);
     void Setdefaultparameter();
@@ -70,7 +80,7 @@ public:
     int  GetVTypeFromLoop();
     void SaveEntry();
     void SaveExit();
-    void CloseExitOperation(int iStatus);
+    void CloseExitOperation(TransType iStatus);
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
     void ManualOpenBarrier();
@@ -103,6 +113,7 @@ public:
     std::string GetVTypeStr(int iVType);
     
     float GfeeFormat(float value);
+    void  RedeemTime2Amt();
     
     void Openbarrier();
 

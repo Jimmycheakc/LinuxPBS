@@ -812,4 +812,5 @@ private:
     void enqueueWrite(const std::vector<uint8_t>& data);
     void startWrite();
     void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
+    void stopSerialWriteDelayTimer();
 };

@@ -1593,7 +1593,6 @@ void LCSCReader::startWrite()
     auto now = std::chrono::steady_clock::now();
     auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
 
-    /*
     // Check if less than 200 milliseconds
     if (timeSinceLastRead < 200)
     {
@@ -1606,7 +1605,6 @@ void LCSCReader::startWrite()
         
         return;
     }
-    */
 
     write_in_progress_ = true;
     const auto& data = writeQueue_.front();
@@ -1638,6 +1636,31 @@ void LCSCReader::writeEnd(const boost::system::error_code& error, std::size_t by
     write_in_progress_ = false;
 }
 
+bool LCSCReader::isCurrentCmdResponse(LCSCReader::LCSC_CMD currCmd, uint8_t respType)
+{
+    bool ret = false;
+
+    if (((currCmd == LCSC_CMD::GET_STATUS_CMD) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::GET_STATUS))
+        || ((currCmd == LCSC_CMD::LOGIN_1) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::AUTH_LOGIN1))
+        || ((currCmd == LCSC_CMD::LOGIN_2) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::AUTH_LOGIN2))
+        || ((currCmd == LCSC_CMD::LOGOUT) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::AUTH_LOGOUT))
+        || ((currCmd == LCSC_CMD::GET_CARD_ID) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CARD_ID))
+        || ((currCmd == LCSC_CMD::CARD_BALANCE) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CARD_BALANCE))
+        || ((currCmd == LCSC_CMD::CARD_DEDUCT) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CARD_DEDUCT))
+        || ((currCmd == LCSC_CMD::CARD_RECORD) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CARD_RECORD))
+        || ((currCmd == LCSC_CMD::CARD_FLUSH) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CARD_FLUSH))
+        || ((currCmd == LCSC_CMD::GET_TIME) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CLK_GET))
+        || ((currCmd == LCSC_CMD::SET_TIME) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CLK_SET))
+        || ((currCmd == LCSC_CMD::UPLOAD_CFG_FILE) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CFG_UPLOAD))
+        || ((currCmd == LCSC_CMD::UPLOAD_CIL_FILE) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::CIL_UPLOAD))
+        || ((currCmd == LCSC_CMD::UPLOAD_BL_FILE) && (static_cast<LCSC_CMD_TYPE>(respType) == LCSC_CMD_TYPE::BL_UPLOAD)))
+    {
+        ret = true;
+    }
+
+    return ret;
+}
+
 void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
 {
     std::stringstream receivedRespStream;
@@ -1654,7 +1677,7 @@ void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
     if (crc_result == msg.getCrc())
     {
         // Check command code is response
-        if (msg.getCode() == static_cast<uint8_t>(LCSC_CMD_CODE::RESPONSE))
+        if ((msg.getCode() == static_cast<uint8_t>(LCSC_CMD_CODE::RESPONSE)) && isCurrentCmdResponse(getCurrentCmd(), msg.getType()))
         {
             // Cancel rspTimer_ timer
             rspTimer_.cancel();
@@ -1981,6 +2004,8 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
         }
         case 0x20:  // CARD ID
         {
+            bool getCardIDSuccess = false;
+
             switch (payload[0])
             {
                 case 0x00:  // Result cmd success
@@ -1997,78 +2022,71 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                     continueReadFlag_.store(false);
                     FnSendGetCardBalance();
+                    getCardIDSuccess = true;
                     break;
                 }
                 case 0x01:  // Result corrupted cmd
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCorruptedCmd));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x02:  // Result incomplete cmd
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sIncompleteCmd));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x03:  // Result unsupported cmd
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sUnsupportedCmd));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x06:  // Result no card
                 {
-                    if (continueReadFlag_.load())
-                    {
-                        oss.str("");
-                        Logger::getInstance()->FnLog("No card detected, continue detect.", logFileName_, "LCSC");
-                        enqueueCommandToFront(LCSC_CMD::GET_CARD_ID);
-                    }
-                    else
-                    {
-                        oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sNoCard));
-                        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                        continueReadFlag_.store(false);
-                    }
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sNoCard));
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                     break;
                 }
                 case 0x07:  // Result card error
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCardError));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x08:  // Result RF error
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sRFError));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x10:  // Result multiple cards detected
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sMultiCard));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x12:  // Result card not on card issuer list
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCardnotinlist));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
+            }
+
+            if ((continueReadFlag_.load() == true) && (getCardIDSuccess == false))
+            {
+                oss.str("");
+                Logger::getInstance()->FnLog("No card detected, continue detect.", logFileName_, "LCSC");
+                enqueueCommandToFront(LCSC_CMD::GET_CARD_ID);
             }
             break;
         }
         case 0x21:  // Get Card Balance
         {
+            bool getCardBalanceSuccess = false;
+
             switch (payload[0])
             {
                 case 0x00:  // Result success cmd
@@ -2088,73 +2106,64 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     oss << ",cardBalance=" << card_balance;
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                     continueReadFlag_.store(false);
+                    getCardBalanceSuccess = true;
                     break;
                 }
                 case 0x01:  // Result corrupted cmd
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCorruptedCmd));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x02:  // Result incomplete cmd
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sIncompleteCmd));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x03:  // Result unsupported cmd
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sUnsupportedCmd));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x06:  // Result no card
                 {
-                    if (continueReadFlag_.load())
-                    {
-                        oss.str("");
-                        Logger::getInstance()->FnLog("No card balance detected, continue detect.", logFileName_, "LCSC");
-                        enqueueCommandToFront(LCSC_CMD::CARD_BALANCE);
-                    }
-                    else
-                    {
-                        oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sNoCard));
-                        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                        continueReadFlag_.store(false);
-                    }
+                    oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sNoCard));
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                     break;
                 }
                 case 0x07:  // Result card error
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCardError));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x08:  // Result RF error
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sRFError));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x10:  // Result multiple cards detected
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sMultiCard));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
                 case 0x12:  // Result card not on card issuer list
                 {
                     oss << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::sCardnotinlist));
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-                    continueReadFlag_.store(false);
                     break;
                 }
+            }
+
+            if ((continueReadFlag_.load() == true) && (getCardBalanceSuccess == false))
+            {
+                oss.str("");
+                Logger::getInstance()->FnLog("No card balance detected, continue detect.", logFileName_, "LCSC");
+                enqueueCommandToFront(LCSC_CMD::CARD_BALANCE);
             }
             break;
         }

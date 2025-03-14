@@ -26,8 +26,6 @@ typedef enum {
 
 }eFullAction;
 
-
-
 //check season method
 typedef enum {
 	iSOnline = 0,  //online, then offline
@@ -35,6 +33,25 @@ typedef enum {
 	iSRAM = 2      //offline, in RAM
 
 }eCheckSeason;
+
+typedef enum {
+	Init = 0,
+	Login = 1,  //online, then offline
+	Enable = 2,      //offline, in DB
+	Disable = 3      //offline, in RAM
+
+}eUPOSStatus;
+
+typedef enum : unsigned int
+{
+    init					= 0,
+	WaitingCard   			= 1,
+	Doingdeduction 			= 2,
+	DeductionSuccessed     	= 3,
+	Deductionfailed			= 4,
+	CardExpired 			= 5,
+	CardFault				= 6
+} eProcessStatus;
 
 typedef enum {
 	ChuRC_None = 0,                     // None
@@ -302,7 +319,7 @@ struct  tExitTrans_Struct
 	//------
 	int iTransType;
 	int iCardType;
-	int iVehcielType;
+	int iVehicleType;
 	//----
 	int iEntryID;
 	string sEntryTime;
@@ -352,8 +369,7 @@ struct  tExitTrans_Struct
 	string video1_location;
 	string sRPLPN;
 	//-----
-	std::atomic<bool> gbDoingDeduction;
-	std::atomic<bool> gbWaitingCardDeduction;
+	eProcessStatus giDeductionStatus;        // 0: init    1: waiting card   2: doing deduction  3: deduction succeed 4: deduction failed
 	std::atomic<bool> gbPaid;
 	std::atomic<bool> bPayByEZPay;
 
@@ -375,6 +391,8 @@ struct  tProcess_Struct
 	string gsLastCardNo;
 	float gfLastCardBal;
 	std::atomic<bool> gbLastPaidStatus;
+	eUPOSStatus gbUPOSStatus;
+	int giUPOSLoginCnt;
 	//------
 	std::string gsLastDebitFailTime;
 	int giShowType;

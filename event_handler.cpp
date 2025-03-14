@@ -251,6 +251,7 @@ bool EventHandler::handleLcscReaderStatus(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
@@ -410,6 +411,8 @@ bool EventHandler::handleLcscReaderGetCardRecord(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {

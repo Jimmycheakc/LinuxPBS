@@ -443,6 +443,13 @@ void udpclient::processdata (const char* data, std::size_t length)
 		}
 		case CmdFeeForNoEntry:
 		{
+			operation::getInstance()->writelog("Received data:" + std::string(data, length), "UDP");
+			operation::getInstance()->writelog("Fee For No Entry Record.", "UDP");
+			if (operation::getInstance()->tProcess.gbLoopApresent.load() == false) {
+				operation::getInstance()->writelog("No Vehicle on the Loop.", "DB");
+			}else {
+
+			}
 			
 		}
 		case CmdSetLotCount:

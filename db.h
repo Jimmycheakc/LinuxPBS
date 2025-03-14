@@ -93,6 +93,7 @@ public:
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
     DBError updatemovementtrans(tExitTrans_Struct& tExit);
+    DBError insert2movementtrans(tExitTrans_Struct& tExit); 
 	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
 	DBError loadmessage();
     DBError loadExitmessage();
@@ -118,6 +119,7 @@ public:
 	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
     int clearseason();
     int IsBlackListIU(string sIU);
+    int CheckCardOK(string sIUNo);
     int AddRemoteControl(string sTID,string sAction, string sRemarks);
     int AddSysEvent(string sEvent);
 

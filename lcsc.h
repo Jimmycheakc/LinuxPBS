@@ -387,6 +387,7 @@ private:
     LCSC_CMD getCurrentCmd();
     void processTrans(const std::vector<uint8_t>& payload);
     void writeLCSCTrans(const std::string& data);
+    bool isCurrentCmdResponse(LCSC_CMD currCmd, uint8_t respType);
 
     // Serial read and write
     void resetRxBuffer();

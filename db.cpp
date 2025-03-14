@@ -3757,7 +3757,14 @@ DBError db::loadparamfromCentral()
 		A = tResult[0].GetDataItem(0).substr(0,l);
 
 		operation::getInstance()->writelog ("Load Last Receipt No: " + A, "DB");
-		operation::getInstance()->tProcess.glLastSerialNo = std::stol(A);
+		try
+		{
+			operation::getInstance()->tProcess.glLastSerialNo = std::stol(A);
+		}
+		catch (const std::exception& e)
+		{
+			operation::getInstance()->writelog ("Exception: " + std::string(e.what()), "DB");
+		}
 	
 		return iDBSuccess;
 	}
@@ -6462,10 +6469,10 @@ int db::GetDayTypeWithHE(CE_Time curr_date)
 	CE_Time next_date;
 	iRet=curr_date.getweekday();
 
-	operation::getInstance()->writelog("day Type is: " + std::to_string(iRet), "DB");
+	//operation::getInstance()->writelog("day Type is: " + std::to_string(iRet), "DB");
 
 	next_date.SetTime(curr_date.GetUnixTimestamp()+86400);    // 86400 one day
-	operation::getInstance()->writelog("next date time is: " + next_date.DateString(), "DB");
+	//operation::getInstance()->writelog("next date time is: " + next_date.DateString(), "DB");
 	
 	if(iRet!=6)
 	{
@@ -6719,7 +6726,7 @@ float db::CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckG
 	if(bCheckGT== true) 
 		operation::getInstance()->writelog( "Calculate parking fee with no grace .... ", "DB");
 	else 
-		operation::getInstance()->writelog("Calculate parking fee .... ", "DB");
+		operation::getInstance()->writelog("Calculate parking fee for rate type: "+ to_string(iTransType), "DB");
 	//operation::getInstance()->writelog("Entry Time: " + entryTime.DateTimeString(), "DB");
 	//operation::getInstance()->writelog("Pay Time: " + payDT.DateTimeString(), "DB");
 	
@@ -6744,7 +6751,7 @@ float db::CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckG
 	pt.SetTime(entryTime.GetUnixTimestamp());
 	
 	operation::getInstance()->writelog("Cal fee time: " + pt.DateTimeStringNoS() + " ~ " + currentTime.DateTimeStringNoS() , "DB");
-
+	
 	while(1)
 	{
 		timediff=calTime.diffday(PD.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
@@ -6763,6 +6770,7 @@ float db::CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckG
 			}
 			maxZone=0;
 			for(int k=1;k<10;k++){
+
 				if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
 				{
 					maxZone=k;
@@ -7507,7 +7515,7 @@ DBError db::LoadXTariff()
 			for(j=0;j<selResult.size();j++){
 				xtariff.day_index = selResult[j].GetDataItem(0);
             	xtariff.autocharge[0] = selResult[j].GetDataItem(1);
-				operation::getInstance()->writelog("autocharger0: "+ xtariff.autocharge[0], "DB");
+				//operation::getInstance()->writelog("autocharger0: "+ xtariff.autocharge[0], "DB");
 				xtariff.fee[0] = selResult[j].GetDataItem(2);
 				for (i=1; i<5; i++) {
 					xtariff.time[i] = selResult[j].GetDataItem(3+(i-1)*3);
@@ -7553,7 +7561,7 @@ int db::GetXTariff(int &iAutoDebit, float &sAmt, int iVType)
 	bool gbfound = false;
 	//------
 	pDt.SetTime();
-	operation::getInstance()->writelog("PD is:"+pDt.DateTimeString(),"DB");
+	//operation::getInstance()->writelog("PD is:"+pDt.DateTimeString(),"DB");
   	iDayIdx = GetDayType(pDt);
     iDayIdx = iDayIdx + iVType * 3;
     sDayIdx = "," + std::to_string(iDayIdx) + ",";
@@ -7573,8 +7581,8 @@ int db::GetXTariff(int &iAutoDebit, float &sAmt, int iVType)
         	if (pDt.HMTimeString() <= msxtariff[i].time[j + 1]) {
             	iAutoDebit = std:: stoi(msxtariff[i].autocharge[j]);
            	 	sAmt = std::stod(msxtariff[i].fee[j]);
-				operation::getInstance()->writelog("Autocharge: "+ std::to_string(iAutoDebit), "DB");
-				operation::getInstance()->writelog("chargeAmt: "+ std::to_string(sAmt), "DB");
+				//operation::getInstance()->writelog("Autocharge: "+ std::to_string(iAutoDebit), "DB");
+				//operation::getInstance()->writelog("chargeAmt: "+ std::to_string(sAmt), "DB");
 				return(1);
 			}
         }
@@ -7652,7 +7660,58 @@ processLocal:
 	return r;
 }
 
+int db::CheckCardOK(string sIUNo)
+{
+	//Return: 0=Normal, nothing, 
+	//		1=Blacklist, -1=db error
+    //      2=complimentary
+	//		3=master card
+	//		4=validation complimentary 
+	//		5=master season
+	//		6=vvip	
+
+			
+	return 0;	
+}
+
 DBError db::updatemovementtrans(tExitTrans_Struct& tExit) 
+{
+	int r;
+	string sqstr="";
+	string gsZoneEntries = operation::getInstance()->tParas.gsZoneEntries;
+	//------
+	sqstr="UPDATE movement_trans_tmp set exit_lpn = '"+ tExit.lpn + "',";
+	sqstr= sqstr + "exit_station = '" + tExit.xsid + "',";
+	sqstr= sqstr + " exit_time = '" + tExit.sExitTime + "',";
+	sqstr= sqstr + " trans_type = '" + std::to_string(tExit.iTransType) + "',";
+	sqstr= sqstr + " card_mc_no = '" + tExit.sCardNo + "',";
+	sqstr= sqstr + " parking_fee = '" + std::to_string(tExit.sFee) + "',";
+	sqstr= sqstr + " paid_amt = '" + std::to_string(tExit.sPaidAmt) + "',";
+	sqstr= sqstr + " Parked_time = '" + std::to_string(tExit.lParkedTime) + "',";
+	sqstr= sqstr + " receipt_no = '" + tExit.sReceiptNo + "',";
+	sqstr= sqstr + " redeem_amt = '" + std::to_string(tExit.sRedeemAmt) + "',";
+	sqstr= sqstr + " redeem_time = '" + std::to_string(tExit.iRedeemTime) + "',";
+	sqstr= sqstr + " Card_Type = '" + std::to_string(tExit.iCardType) + "',";
+	sqstr= sqstr + " top_up_amt = '" + std::to_string(tExit.sTopupAmt) + "' ";
+	sqstr= sqstr + "where iu_tk_no = '" + tExit.sIUNo + "' and entry_time = '"+ tExit.sEntryTime + "' and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0" ;
+	//------
+	//operation::getInstance()->writelog(sqstr,"DB");
+	//-----
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	if (r==0) 
+	{
+		operation::getInstance()->writelog("Success matching MovementTrans_Tmp","DB");
+		return iCentralSuccess;
+	}
+	else {
+		operation::getInstance()->writelog("fail to match Movementtrans_Tmp","DB");
+		 m_remote_db_err_flag=1;
+	}
+	return iCentralFail;
+}
+
+DBError db::insert2movementtrans(tExitTrans_Struct& tExit) 
 {
 	int r;
 	string sqstr="";
@@ -7686,3 +7745,4 @@ DBError db::updatemovementtrans(tExitTrans_Struct& tExit)
 	}
 	return iCentralFail;
 }
+

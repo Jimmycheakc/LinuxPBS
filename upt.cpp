@@ -3335,6 +3335,7 @@ void Upt::handleCancelCommandRequestState(EVENT event)
         Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
         ackTimer_.cancel();
         rspTimer_.cancel();
+        stopSerialWriteDelayTimer();
         processEvent(EVENT::CANCEL_COMMAND);
     }
 }
@@ -4007,6 +4008,7 @@ void Upt::startWrite()
 {
     if (writeQueue_.empty())
     {
+        Logger::getInstance()->FnLog(__func__ + std::string(" Write Queue is empty."), logFileName_, "UPT");
         return;
     }
 
@@ -4018,8 +4020,15 @@ void Upt::startWrite()
     {
         auto boostTime = boost::posix_time::milliseconds(2000 - timeSinceLastRead);
         serialWriteDelayTimer_.expires_from_now(boostTime);
+
+        // Add debug logging to check if the timer is being set properly
+        std::ostringstream oss;
+        oss << "Setting delay timer for " << (2000 - timeSinceLastRead) << " ms";
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
         serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
                 [this](const boost::system::error_code& /*e*/) {
+                    Logger::getInstance()->FnLog("Timer expired", logFileName_, "UPT");
                     boost::asio::post(strand_, [this]() { startWrite(); });
             }));
         
@@ -4054,6 +4063,29 @@ void Upt::writeEnd(const boost::system::error_code& error, std::size_t bytesTran
         processEvent(EVENT::WRITE_FAILED);
     }
     write_in_progress_ = false;
+}
+
+void Upt::stopSerialWriteDelayTimer()
+{
+    // Convert boost::posix_time::ptime to std::chrono::steady_clock::time_point
+    auto timerExpirationTime = serialWriteDelayTimer_.expires_at();
+    auto timerExpirationSteadyClock = std::chrono::steady_clock::time_point(std::chrono::milliseconds(timerExpirationTime.time_of_day().total_milliseconds()));
+
+    if (timerExpirationSteadyClock > std::chrono::steady_clock::now())
+    {
+        serialWriteDelayTimer_.cancel();
+        // Log the cancellation
+        std::ostringstream oss;
+        oss << "Cancel command received, serial write delay timer canceled.";
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+        // Pop the data from the queue as we want to skip it
+        if (!writeQueue_.empty())
+        {
+            writeQueue_.pop();  // Remove the current data that is being delayed
+            Logger::getInstance()->FnLog("Current command popped from the queue due to cancel.", logFileName_, "UPT");
+        }
+    }
 }
 
 std::vector<Upt::SettlementPayloadRow> Upt::findReceivedSettlementPayloadData(const std::vector<PayloadField>& payloads)
@@ -4212,52 +4244,52 @@ void Upt::handleCmdResponse(const Message& msg)
             {
                 // Need to change to decimal from hex string
                 cardBalanceStr = std::to_string(std::stoi(cardBalanceStr, nullptr, 16));
-
-                // Need to reverse the card type as the field encoding not matched
-                cardTypeStr = Common::getInstance()->FnReverseByPair(cardTypeStr);
-
-                // Cash Card Type
-                if (cardTypeStr == "1001")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "0";
-                }
-                // NETS Flashpay Card Type
-                else if (cardTypeStr == "1002")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "1";
-                }
-                // NETS EFT Card Type (ATM Card)
-                else if (cardTypeStr == "1003")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "2";
-                }
-                // EzLink Card Type
-                else if (cardTypeStr == "7000")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "3";
-                }
-                // Scheme Credit
-                else if (cardTypeStr == "8000")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "4";
-                }
-                // Scheme Debit
-                else if (cardTypeStr == "9000")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "5";
-                }
             }
             catch(const std::exception& ex)
             {
                 std::ostringstream oss;
                 oss << "Exception : " << ex.what();
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            }
+
+            // Need to reverse the card type as the field encoding not matched
+            cardTypeStr = Common::getInstance()->FnReverseByPair(cardTypeStr);
+
+            // Cash Card Type
+            if (cardTypeStr == "1001")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "0";
+            }
+            // NETS Flashpay Card Type
+            else if (cardTypeStr == "1002")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "1";
+            }
+            // NETS EFT Card Type (ATM Card)
+            else if (cardTypeStr == "1000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "2";
+            }
+            // EzLink Card Type
+            else if (cardTypeStr == "7000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "3";
+            }
+            // Scheme Credit
+            else if (cardTypeStr == "8000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "4";
+            }
+            // Scheme Debit
+            else if (cardTypeStr == "9000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "5";
             }
 
             std::ostringstream oss;
@@ -4296,51 +4328,50 @@ void Upt::handleCmdResponse(const Message& msg)
             {
                 // Need to change to decimal from hex string
                 cardBalanceStr = std::to_string(std::stoi(cardBalanceStr, nullptr, 16));
-                cardDeductFeeStr = std::to_string(std::stoi(cardDeductFeeStr, nullptr, 16));
-
-                // Cash Card Type
-                if (cardTypeStr == "1100")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "0";
-                }
-                // NETS Flashpay Card Type
-                else if (cardTypeStr == "1200")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "1";
-                }
-                // NETS EFT Card Type (ATM Card)
-                else if (cardTypeStr == "1000")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "2";
-                }
-                // EzLink Card Type
-                else if (cardTypeStr == "1700")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "3";
-                }
-                // Scheme Credit
-                else if (cardTypeStr == "2000")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "4";
-                }
-                // Scheme Debit
-                else if (cardTypeStr == "3000")
-                {
-                    cardTypeStr.clear();
-                    cardTypeStr = "5";
-                }
-                
+                cardDeductFeeStr = std::to_string(std::stoi(cardDeductFeeStr, nullptr, 16)); 
             }
             catch (const std::exception& ex)
             {
                 std::ostringstream oss;
                 oss << "Exception : " << ex.what();
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            }
+
+            // Cash Card Type
+            if (cardTypeStr == "1100")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "0";
+            }
+            // NETS Flashpay Card Type
+            else if (cardTypeStr == "1200")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "1";
+            }
+            // NETS EFT Card Type (ATM Card)
+            else if (cardTypeStr == "1000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "2";
+            }
+            // EzLink Card Type
+            else if (cardTypeStr == "1700")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "3";
+            }
+            // Scheme Credit
+            else if (cardTypeStr == "2000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "4";
+            }
+            // Scheme Debit
+            else if (cardTypeStr == "3000")
+            {
+                cardTypeStr.clear();
+                cardTypeStr = "5";
             }
 
             std::ostringstream oss;
