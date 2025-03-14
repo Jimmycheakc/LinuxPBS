@@ -3676,6 +3676,17 @@ DBError db::loadParam()
 					{
 						operation::getInstance()->tParas.gsHdTk = readerItem.GetDataItem(1);
 					}
+
+					if (readerItem.GetDataItem(0) == "needcard4complimentary")
+					{
+						operation::getInstance()->tParas.giNeedCard4Complimentary = std::stoi(readerItem.GetDataItem(1));
+					}
+
+					if (readerItem.GetDataItem(0) == "ExitTicketRedemption")
+					{
+						operation::getInstance()->tParas.giExitTicketRedemption = std::stoi(readerItem.GetDataItem(1));
+					}
+
 				}
 				catch (const std::invalid_argument &e)
 				{
@@ -4860,6 +4871,54 @@ DBError db::loadExitLcdAndLedMessage(std::vector<ReaderItem>& selResult)
 					{
 						operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1].clear();
 						operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "InvalidTicket")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CInvalidTicket")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "WrongTicket")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_WrongTicket[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_WrongTicket[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CWrongTicket")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_WrongTicket[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_WrongTicket[1] = readerItem.GetDataItem(1);
+					}
+				}
+
+				if (readerItem.GetDataItem(0) == "RedemptionExpired")
+				{
+					operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[0] = readerItem.GetDataItem(1);
+					operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[1] = readerItem.GetDataItem(1);
+				}
+
+				// Update LCD Message
+				if (readerItem.GetDataItem(0) == "CRedemptionExpired")
+				{
+					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
+					{
+						operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[1].clear();
+						operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[1] = readerItem.GetDataItem(1);
 					}
 				}
 
@@ -7741,7 +7800,121 @@ DBError db::insert2movementtrans(tExitTrans_Struct& tExit)
 	}
 	else {
 		operation::getInstance()->writelog("fail to match Movementtrans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag=1;
+	}
+	return iCentralFail;
+}
+
+int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, double& gbRedeemAmt, int& giRedeemTime)
+{
+	// Valid
+	int iRet = 1;
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	if (isRedemptionTicket == true)
+	{
+		sqlStmt = "SELECT Valid_from, Valid_to, redeem_dt, redeem_amt, redeem_time from Redemption WHERE redeem_no='" + sBarcodeTicket + "'";
+	}
+	else
+	{
+		sqlStmt = "SELECT Valid_from, Valid_to, exit_time FROM Complimentary WHERE complimentary_no='" + sBarcodeTicket + "'";
+	}
+
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag = 1;
+		// DB Error
+		iRet = -1;
+		return iRet;
+	}
+	else
+	{
+		m_remote_db_err_flag = 0;
+	}
+
+	if (selResult.size() > 0)
+	{
+		try
+		{
+			if (selResult[0].GetDataItem(2) == "NULL" || selResult[0].GetDataItem(2) == "")
+			{
+				if (Common::getInstance()->FnGetDateDiffInSeconds(selResult[0].GetDataItem(0)) < 0)
+				{
+					// Not yet valid
+					iRet = 6;
+				}
+				else
+				{
+					if (Common::getInstance()->FnGetDateDiffInSeconds(selResult[0].GetDataItem(1)) > 0)
+					{
+						// Expired
+						iRet = 0;
+					}
+				}
+			}
+			else
+			{
+				// Used
+				iRet = 2;
+			}
+
+			auto tp = Common::getInstance()->FnParseDateTime(selResult[0].GetDataItem(1));
+			std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+			dtExpireTime = *std::localtime(&tt);
+			// Valid
+			if ((iRet == 1) && (isRedemptionTicket == true))
+			{
+				gbRedeemAmt = std::stod(selResult[0].GetDataItem(3));
+				giRedeemTime = std::stoi(selResult[0].GetDataItem(4));
+			}
+		}
+		catch (const std::exception& e)
+		{
+			operation::getInstance()->writelog("Date time format Exception: " + std::string(e.what()), "DB");
+		}
+	}
+	else
+	{
+		// Not found
+		iRet = 4;
+		operation::getInstance()->writelog("No barcode ticket found in central DB","DB");
+	}
+
+	return iRet;
+}
+
+DBError db::update99PaymentTrans()
+{
+	int r;
+	std::string sqlStmt="";
+
+	sqlStmt = "UPDATE Exit_trans_tmp set status=0";
+
+	if (operation::getInstance()->tExit.sRebateAmt > 0)
+	{
+		sqlStmt = sqlStmt + ",redeem_amt=" + std::to_string(operation::getInstance()->tExit.sRebateAmt);
+		sqlStmt = sqlStmt + ",paid_amt=" + std::to_string(operation::getInstance()->tExit.sPaidAmt);
+		sqlStmt = sqlStmt + ",gst_amt=" + std::to_string(operation::getInstance()->tExit.sGSTAmt);
+		sqlStmt = sqlStmt + ",Trans_Type=" + std::to_string(operation::getInstance()->tExit.iTransType);
+		sqlStmt = sqlStmt + ",Card_mc_no='" + operation::getInstance()->tExit.sCardNo + "'";
+		sqlStmt = sqlStmt + ",redeem_no='" + operation::getInstance()->tExit.sRedeemNo + "'";
+	}
+
+	sqlStmt = sqlStmt + " WHERE iu_tk_no='" + operation::getInstance()->tExit.sIUNo + "' and status = 99 AND Station_ID=" + std::to_string(operation::getInstance()->gtStation.iSID);
+
+	r = centraldb->SQLExecutNoneQuery(sqlStmt);
+	if (r == 0)
+	{
+		operation::getInstance()->writelog("Update 99 Trans to valid for EZpay/VCC","DB");
+		return iDBSuccess;
+	}
+	else
+	{
+		operation::getInstance()->writelog("Failed to updated 99 Trans for EZPay/VCC","DB");
+		m_remote_db_err_flag=1;
 	}
 	return iCentralFail;
 }

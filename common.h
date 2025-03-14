@@ -27,6 +27,7 @@ public:
     std::string FnGetDateTimeFormat_yymmddhhmmss();
     std::string FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
     std::string FnFormatDateTime(const std::string& timeString, const std::string& inputFormat, const std::string& outputFormat);
+    std::string FnFormatDateTime(const std::tm& timeStruct, const std::string& outputFormat);
     std::string FnConvertDateTime(uint32_t epochSeconds);
     std::string FnFormatEpochTime(std::time_t epochSeconds);
     std::time_t FnGetEpochSeconds();
@@ -38,6 +39,9 @@ public:
     bool validateDateTime(const std::string& dateTime);
     uint64_t FnGetSecondsSince1January0000();
     std::string FnConvertSecondsSince1January0000ToDateTime(uint64_t seconds_since_0000);
+    std::chrono::system_clock::time_point FnParseDateTime(const std::string& dateTime);
+    int64_t FnGetDateDiffInSeconds(const std::string& dateTime);
+    int64_t FnCompareDateDiffInMinutes(const std::string& dateTime1, const std::string& dateTime2);
     std::string FnGetFileName(const std::string& str);
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
@@ -84,6 +88,8 @@ public:
     std::vector<uint8_t> FnConvertStringToVector(const std::string& str);
     std::string SetFeeFormat(float fee);
     std::string FnFormatToFloatString(const std::string& str);
+    std::string FnToUpper(const std::string& str);
+    std::string FnTrim(const std::string& str);
 
     /**
      * Singleton Common should not be cloneable.

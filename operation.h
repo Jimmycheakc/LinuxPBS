@@ -93,7 +93,7 @@ public:
     void EnableKDE(bool bEnable);
     void EnableUPOS(bool bEnable);
     void ProcessLCSC(const std::string& eventData);
-    void ProcessBarcodeData(string sBarcodeata);
+    void ProcessBarcodeData(string sBarcodedata);
     void KSM_CardIn();
     void KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired);
     void KSM_CardTakeAway();
@@ -111,6 +111,9 @@ public:
                 int iCardType = 0, const std::string& sTopupAmt = "",
                 int iDeviceType = 0, const std::string& sTransTime = "");
     std::string GetVTypeStr(int iVType);
+    void ticketScan(std::string skeyedNo);
+    void ticketOK();
+    void showFee2User(bool bPaying = false);
     
     float GfeeFormat(float value);
     void  RedeemTime2Amt();

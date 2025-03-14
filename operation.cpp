@@ -1965,11 +1965,10 @@ void operation::EnableUPOS(bool bEnable)
 
 }
 
-void operation::ProcessBarcodeData(string sBarcodeata)
+void operation::ProcessBarcodeData(string sBarcodedata)
 {
     BARCODE_READER::getInstance()->FnBarcodeStopRead();
-    
-
+    ticketScan(sBarcodedata);
 }
 
 void operation::ProcessLCSC(const std::string& eventData)
@@ -3969,3 +3968,644 @@ void operation::RedeemTime2Amt()
 
 }
 
+void operation::ticketScan(std::string skeyedNo)
+{
+    int iRet = 0;
+    std::string sCardTkNo = "";
+    std::tm dtExpireTime;
+    double gbRedeemAmt = 0.00;
+    int giRedeemTime = 0;
+    std::string sMsg = "";
+    long lParkTime = 0;
+    std::string TT = "";
+    int ticketType = 0; // 0 = Invalid, 1 = ticket barcode = 12, 2 = ticket barcode = 9
+    bool isRedemptionTicket = false;
+
+    if (tExit.iRedeemTime > 0)
+    {
+        if (tExit.sFee >= 0.01)
+        {
+            if (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt <= 0.00f)
+            {
+                ticketOK();
+                return;
+            }
+            else
+            {
+                ShowLEDMsg("Amount Redeem,^Pls Pay Bal!", "Amount Redeem^Pls Pay Bal!");
+                writelog("Amount Redeem, Pls Pay Bal.","OPR");
+                goto Exit_Sub;
+            }
+        }
+    }
+
+    EnableCashcard(false);
+    Antenna::getInstance()->FnAntennaStopRead();
+
+    if (skeyedNo.length() >= 12)
+    {
+        // Check if ticket barcode is 12 digits
+        if ((Common::getInstance()->FnToUpper(skeyedNo.substr(0, 1)) == "C")
+            || (Common::getInstance()->FnToUpper(skeyedNo.substr(0, 1)) == "R")
+            || (Common::getInstance()->FnToUpper(skeyedNo.substr(0, 2)) == "SC")
+            || (Common::getInstance()->FnToUpper(skeyedNo.substr(0, 2)) == "SR"))
+        {
+            if ((Common::getInstance()->FnToUpper(skeyedNo.substr(0, 1)) == "R")
+                || (Common::getInstance()->FnToUpper(skeyedNo.substr(0, 2)) == "SR"))
+            {
+                isRedemptionTicket = true;
+            }
+            sCardTkNo = Common::getInstance()->FnToUpper(skeyedNo.substr(0, 12));
+        }
+        // Check if ticket barcode is 9 digits
+        else
+        {
+            sCardTkNo = Common::getInstance()->FnToUpper(skeyedNo.substr(0, 9));
+
+            TT = sCardTkNo.substr(7, 1);
+            if ((TT == "V") || (TT == "W") || (TT == "Y") || (TT == "U") || (TT == "Z"))
+            {
+                if ((TT == "V") || (TT == "W") || (TT == "Y"))
+                {
+                    isRedemptionTicket = true;
+                }
+
+                if (((TT == "V") || (TT == "W")) && (tParas.giExitTicketRedemption == 0))
+                {
+                    writelog("Redemption ticket but redemption disabled: " + sCardTkNo, "OPR");
+                    ShowLEDMsg(tExitMsg.MsgExit_RedemptionTicket[0], tExitMsg.MsgExit_RedemptionTicket[1]);
+                    goto Exit_Sub;
+                }
+                else if (TT == "Y")
+                {
+                    writelog("Validation Complimentary Ticket: " + sCardTkNo, "OPR");
+                    ShowLEDMsg(tExitMsg.MsgExit_Comp2Val[0], tExitMsg.MsgExit_Comp2Val[1]);
+                    goto Exit_Sub;
+                }   
+            }
+
+            ShowLEDMsg(tExitMsg.MsgExit_CardIn[0], tExitMsg.MsgExit_CardIn[1]);
+        }
+    }
+    
+    if (sCardTkNo.length() != 9 && sCardTkNo.length() != 12)
+    {
+        writelog("Invalid Ticket (Wrong Len): " + skeyedNo, "OPR");
+        SendMsg2Server("90",skeyedNo + ",,,,,Invalid Ticket (Wrong Len)");
+        ShowLEDMsg(tExitMsg.MsgExit_InvalidTicket[0], tExitMsg.MsgExit_InvalidTicket[1]);
+        goto Exit_Sub;
+    }
+
+    // Ret : 0 = Expired, 1 = Valid, 2 = Used, 6 = Not Started, -1 = DB Error, 4 = Not Found
+    iRet = db::getInstance()->isValidBarCodeTicket(isRedemptionTicket, skeyedNo, dtExpireTime, gbRedeemAmt, giRedeemTime);
+
+    if (isRedemptionTicket == true)
+    {
+        writelog("Redemption Ticket: " + sCardTkNo + ", Expire: " + Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M:%S"), "OPR");
+    }
+    else
+    {
+        writelog("Complimentary Ticket: " + sCardTkNo + ", Expire: " + Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M:%S"), "OPR");
+        tExit.sRedeemNo = sCardTkNo;
+    }
+
+    switch (iRet)
+    {
+        // DB Error
+        case -1:
+        {
+            writelog("Central DB Error", "OPR");
+            ShowLEDMsg(tExitMsg.MsgExit_SystemError[0], tExitMsg.MsgExit_SystemError[1]);
+            SendMsg2Server("90", sCardTkNo + ",,,,,Central DB Error");
+            goto Exit_Sub;
+            break;
+        }
+        // Expired
+        case 0:
+        {
+            writelog("Ticket Expired: " + sCardTkNo, "OPR");
+            if (isRedemptionTicket == true)
+            {
+                ShowLEDMsg(tExitMsg.MsgExit_RedemptionExpired[0], tExitMsg.MsgExit_RedemptionExpired[1]);
+                SendMsg2Server("90", sCardTkNo + ",,,,,Redemption Expired");
+            }
+            else
+            {
+                ShowLEDMsg(tExitMsg.MsgExit_CompExpired[0], tExitMsg.MsgExit_CompExpired[1]);
+                SendMsg2Server("90", sCardTkNo + ",,,,,Complimentary Expired");
+            }
+            goto Exit_Sub;
+            break;
+        }
+        // Valid
+        case 1:
+        {
+            // Handle valid 12 digits barcode ticket
+            if (sCardTkNo.length() == 12)
+            {
+                if ((Common::getInstance()->FnToUpper(sCardTkNo.substr(0, 2)) == "SR")
+                    || (Common::getInstance()->FnToUpper(sCardTkNo.substr(0, 1)) == "R"))
+                {
+                    if (giRedeemTime > 0)
+                    {
+                        tExit.iRedeemTime = giRedeemTime;
+                        sMsg = "Redemption: " + std::to_string(tExit.iRedeemTime) + " Minutes";
+                        RedeemTime2Amt();
+                    }
+                    else
+                    {
+                        tExit.sRedeemAmt = gbRedeemAmt;
+                        sMsg = "Redemption: $" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt);
+                    }
+
+                    tExit.sRedeemNo = sCardTkNo;
+                    writelog(sMsg, "OPR");
+                    ShowLEDMsg(sMsg, sMsg);
+                    BARCODE_READER::getInstance()->FnBarcodeStopRead();
+
+                    if (tExit.sIUNo == "" && tExit.sCardNo == "")
+                    {
+                        tExit.sTag = "Redemption";
+                        SendMsg2Server("90", sCardTkNo + ",,,,,Redemption. Ticket Wait for Card");
+                        EnableCashcard(true);
+                        goto Exit_Sub;
+                    }
+
+                    showFee2User();
+
+                    float fee = 0.00f;
+                    
+                    try
+                    {
+                        fee = std::stof(Common::getInstance()->SetFeeFormat((tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt)));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        writelog("Exception :" + std::string(e.what()), "OPR");
+                    }
+                    
+                    if (fee <= 0.00f)
+                    {
+                        ticketOK();
+                    }
+                    else
+                    {
+                        ShowLEDMsg(tExitMsg.MsgExit_XNoCard[0], tExitMsg.MsgExit_XNoCard[1]);
+                        EnableCashcard(true);
+                    }
+                    goto Fee_Charge;
+                }
+                // Assign tExit structure
+                else
+                {
+                    std::chrono::system_clock::time_point tmExpire;
+                    std::chrono::system_clock::time_point tmExit;
+                    std::tm tmExpireLocal;
+                    std::tm tmExitLocal;
+                    std::string sdtExpireTime = "";
+                    float sFee2Pay = 0.00f;
+
+                    try
+                    {
+                        tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+                        sdtExpireTime = Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M:%S");
+                        lParkTime = Common::getInstance()->FnCompareDateDiffInMinutes(sdtExpireTime, tExit.sExitTime);
+
+                        tmExpire = Common::getInstance()->FnParseDateTime(sdtExpireTime);
+                        tmExit = Common::getInstance()->FnParseDateTime(tExit.sExitTime);
+
+                        // Convert time_point to time_t
+                        std::time_t timeExpire = std::chrono::system_clock::to_time_t(tmExpire);
+                        std::time_t timeExit = std::chrono::system_clock::to_time_t(tmExit);
+
+                        // Convert time_t to tm structure (local time)
+                        std::tm tmExpireLocal = *std::localtime(&timeExpire);
+                        std::tm tmExitLocal = *std::localtime(&timeExit);
+
+                    }
+                    catch (const std::exception& e)
+                    {
+                        writelog("Exception :" + std::string(e.what()), "OPR");
+                    }
+
+                    if ((tmExpireLocal.tm_sec) > (tmExitLocal.tm_sec))
+                    {
+                        lParkTime = lParkTime - 1;
+                    }
+
+                    if (lParkTime < 0)
+                    {
+                        lParkTime = 0;
+                    }
+                    
+                    if (lParkTime > 0)
+                    {
+                        sFee2Pay = CalFeeRAM(sdtExpireTime, tExit.sExitTime, 0);
+                    }
+                    
+                    if ((lParkTime <= 0) || (sFee2Pay <= 0))
+                    {
+                        tExit.iTransType = 10;
+                        tExit.sPaidAmt = 0;
+                        tExit.sCardNo = sCardTkNo;
+                        tProcess.giShowType = 4;
+
+                        if (tParas.giNeedCard4Complimentary  == 0)
+                        {
+                            ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
+                            if (tExit.sIUNo == "")
+                            {
+                                tExit.sIUNo = "N/A";
+                            }
+
+                            if (tExit.bPayByEZPay == true)
+                            {
+                                ShowLEDMsg("Complimentary^EZPay refunded", "");
+
+                                writelog("Complimentary, $" + Common::getInstance()->SetFeeFormat(tExit.sFee) + " refunded to VCC/EZPay", "OPR");
+                                tExit.sRedeemAmt = tExit.sFee;
+                                tExit.sPaidAmt = 0;
+                                tExit.sGSTAmt = 0;
+                                db::getInstance()->update99PaymentTrans();
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            if (tExit.sIUNo == "")
+                            {
+                                ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
+                                tExit.sTag = "Complimentary";
+                                SendMsg2Server("90", sCardTkNo + ",,,,,Compl. Ticket Wait for Card");
+                                BARCODE_READER::getInstance()->FnBarcodeStopRead();
+                                EnableCashcard(true);
+                                return;
+                            }
+                            else
+                            {
+                                if (tExit.bPayByEZPay == true)
+                                {
+                                    ShowLEDMsg("Complimentary^EZpay refunded", "");
+                                    writelog("Complimentary, $" + Common::getInstance()->SetFeeFormat(tExit.sFee) + " refunded to VCC/EZPay", "OPR");
+                                    tExit.sRedeemAmt = tExit.sFee;
+                                    tExit.sPaidAmt = 0;
+                                    tExit.sGSTAmt = 0;
+                                    db::getInstance()->update99PaymentTrans();
+                                    return;
+                                }
+                                ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
+                            }
+                        }
+
+                        ticketOK();
+                    }
+                    else
+                    {
+                        SendMsg2Server("90", sCardTkNo + ",,,,,Complimentary Expired");
+                        ShowLEDMsg(tExitMsg.MsgExit_CompExpired[0], tExitMsg.MsgExit_CompExpired[1]);
+                        return;
+                    }
+                }
+            }
+            else
+            {
+                // Handle valid 9 digits barcode ticket
+                if (sCardTkNo.length() == 9)
+                {
+                    // Complimentary Ticket
+                    if ((TT == "U") || (TT == "Z"))
+                    {
+                        std::chrono::system_clock::time_point tmExpire;
+                        std::chrono::system_clock::time_point tmExit;
+                        std::tm tmExpireLocal;
+                        std::tm tmExitLocal;
+                        std::string sdtExpireTime = "";
+                        float sFee2Pay = 0.00f;
+
+                        try
+                        {
+                            tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+                            sdtExpireTime = Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M") + ":00";
+                            lParkTime = Common::getInstance()->FnCompareDateDiffInMinutes(sdtExpireTime, tExit.sExitTime);
+
+                            tmExpire = Common::getInstance()->FnParseDateTime(sdtExpireTime);
+                            tmExit = Common::getInstance()->FnParseDateTime(tExit.sExitTime);
+
+                            // Convert time_point to time_t
+                            std::time_t timeExpire = std::chrono::system_clock::to_time_t(tmExpire);
+                            std::time_t timeExit = std::chrono::system_clock::to_time_t(tmExit);
+
+                            // Convert time_t to tm structure (local time)
+                            std::tm tmExpireLocal = *std::localtime(&timeExpire);
+                            std::tm tmExitLocal = *std::localtime(&timeExit);
+                        }
+                        catch (const std::exception& e)
+                        {
+                            writelog("Exception :" + std::string(e.what()), "OPR");
+                        }
+
+                        if ((tmExpireLocal.tm_sec) > (tmExitLocal.tm_sec))
+                        {
+                            lParkTime = lParkTime - 1;
+                        }
+
+                        writelog("Complimentary Ticket: " + sCardTkNo + ", Expire: " + sdtExpireTime, "OPR");
+
+                        tExit.sRedeemNo = sCardTkNo;
+                        if (lParkTime < 0)
+                        {
+                            lParkTime = 0;
+                        }
+                        
+                        if (lParkTime > 0)
+                        {
+                            sFee2Pay = CalFeeRAM(sdtExpireTime, tExit.sExitTime, 0);
+                        }
+                        
+                        if ((lParkTime <= 0) || (sFee2Pay <= 0))
+                        {
+                            tExit.iTransType = 10;
+                            tExit.sPaidAmt = 0;
+                            tExit.sCardNo = sCardTkNo;
+                            tProcess.giShowType = 4;
+
+                            if (tParas.giNeedCard4Complimentary  == 0)
+                            {
+                                ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
+                                if (tExit.sIUNo == "")
+                                {
+                                    tExit.sIUNo = "N/A";
+                                }
+
+                                if (tExit.bPayByEZPay == true)
+                                {
+                                    ShowLEDMsg("Complimentary^EZPay refunded", "");
+
+                                    writelog("Complimentary, $" + Common::getInstance()->SetFeeFormat(tExit.sFee) + " refunded to VCC/EZPay", "OPR");
+                                    tExit.sRedeemAmt = tExit.sFee;
+                                    tExit.sPaidAmt = 0;
+                                    tExit.sGSTAmt = 0;
+                                    db::getInstance()->update99PaymentTrans();
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                if (tExit.sIUNo == "")
+                                {
+                                    ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
+                                    tExit.sTag = "Complimentary";
+                                    SendMsg2Server("90", sCardTkNo + ",,,,,Compl. Ticket Wait for Card");
+                                    BARCODE_READER::getInstance()->FnBarcodeStopRead();
+                                    EnableCashcard(true);
+                                    return;
+                                }
+                                else
+                                {
+                                    if (tExit.bPayByEZPay == true)
+                                    {
+                                        ShowLEDMsg("Complimentary^EZpay refunded", "");
+                                        writelog("Complimentary, $" + Common::getInstance()->SetFeeFormat(tExit.sFee) + " refunded to VCC/EZPay", "OPR");
+                                        tExit.sRedeemAmt = tExit.sFee;
+                                        tExit.sPaidAmt = 0;
+                                        tExit.sGSTAmt = 0;
+                                        db::getInstance()->update99PaymentTrans();
+                                        return;
+                                    }
+                                    ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
+                                }
+                            }
+
+                            ticketOK();
+                        }
+                        else
+                        {
+                            SendMsg2Server("90", sCardTkNo + ",,,,,Complimentary Expired");
+                            ShowLEDMsg(tExitMsg.MsgExit_CompExpired[0], tExitMsg.MsgExit_CompExpired[1]);
+                            goto Exit_Sub;
+                        }
+                    }
+                    // Redemption Ticket
+                    else if ((TT == "V") || (TT == "W"))
+                    {
+                        writelog("Disable Scanner", "OPR");
+                        BARCODE_READER::getInstance()->FnBarcodeStopRead();
+
+                        if (TT == "V")
+                        {
+                            tExit.sRebateAmt = gbRedeemAmt;
+                            sMsg = "Redemption: $" + Common::getInstance()->SetFeeFormat(tExit.sRebateAmt);
+                        }
+                        else
+                        {
+                            tExit.iRedeemTime = giRedeemTime;
+                            sMsg = "Redemption: " + std::to_string(tExit.iRedeemTime) + " Minutes";
+                        }
+
+                        ShowLEDMsg(sMsg, sMsg);
+                        writelog(sMsg, "OPR");
+
+                        tExit.sRedeemNo = sCardTkNo;
+
+                        if (tExit.sIUNo == "")
+                        {
+                            ShowLEDMsg(sMsg + "^" + tExitMsg.MsgExit_XNoCard[0], sMsg + "^" + tExitMsg.MsgExit_XNoCard[1]);
+                            BARCODE_READER::getInstance()->FnBarcodeStopRead();
+                            EnableCashcard(true);
+                        }
+                        else
+                        {
+                            if (TT == "W")
+                            {
+                                RedeemTime2Amt();
+                            }
+
+                            if (tExit.bPayByEZPay == true)
+                            {
+                                if (tExit.sFee < tExit.sRedeemAmt)
+                                {
+                                    tExit.sRedeemAmt = tExit.sFee;
+                                }
+                                ShowLEDMsg("Redeemed $" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^Refunded to EZPay", "");
+                                writelog("Redeemed $" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + " refunded to VCC/EZPay", "OPR");
+                                tExit.sPaidAmt = tExit.sFee - tExit.sRedeemAmt;
+                                tExit.sGSTAmt = tExit.sPaidAmt * tParas.gfGSTRate / (1 + tParas.gfGSTRate);
+                                tExit.sCardNo = sCardTkNo;
+                                db::getInstance()->update99PaymentTrans();
+                                return;
+                            }
+
+                            showFee2User();
+                            if (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt <= 0.00f)
+                            {
+                                ticketOK();
+                            }
+                            else
+                            {
+                                ShowLEDMsg(tExitMsg.MsgExit_XNoCard[0], tExitMsg.MsgExit_XNoCard[1]);
+                                BARCODE_READER::getInstance()->FnBarcodeStopRead();
+                                EnableCashcard(true);
+                            }
+                        }
+
+                        goto Fee_Charge;
+                    }
+                    else if (TT == "Y")
+                    {
+                        writelog("Validation Complimentary Ticket: " + sCardTkNo + ", Expire: " + Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M"), "OPR");
+                        ShowLEDMsg(tExitMsg.MsgExit_RedemptionTicket[0], tExitMsg.MsgExit_RedemptionTicket[1]);
+                        tExit.iTransType = 19;
+                        tExit.sIUNo = sCardTkNo;
+                        tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+                        tExit.lParkedTime = 0;
+                        tExit.sFee = 0;
+                        tExit.sPaidAmt = 0;
+
+                        EnableCashcard(true);
+                    }
+                }
+            }
+            break;
+        }
+        // Used
+        case 2:
+        {
+            writelog("Used Ticket: " + sCardTkNo, "OPR");
+            ShowLEDMsg(tExitMsg.MsgExit_UsedTicket[0], tExitMsg.MsgExit_UsedTicket[1]);
+            SendMsg2Server("90", sCardTkNo + ",,,,,Used Ticket");
+            goto Exit_Sub;
+            break;
+        }
+        // Not found
+        case 4:
+        {
+            writelog("Ticket Not Found " + sCardTkNo, "OPR");
+            ShowLEDMsg("Ticket Not Found", "Ticket Not Found");
+            SendMsg2Server("90", sCardTkNo + ",,,,,Ticket Not Found");
+            goto Exit_Sub;
+            break;
+        }
+        // Not started
+        case 6:
+        {
+            writelog("Ticket Not Start: " + sCardTkNo, "OPR");
+            ShowLEDMsg("Ticket Not Start", "Ticket Not Start");
+            SendMsg2Server("90", sCardTkNo + ",,,,,Ticket Not Start");
+            goto Exit_Sub;
+            break;
+        }
+        default:
+        {
+            writelog("Unable to find the return value from barcode ticket.", "OPR");
+            break;
+        }
+    }
+
+Exit_Sub:
+
+    // Temp: Possible need to add 2 seconds delay
+
+    if (tExit.bPayByEZPay == true)
+    {
+        ShowLEDMsg("You may scan^Compl Ticket", "");
+        return;
+    }
+
+    BARCODE_READER::getInstance()->FnBarcodeStartRead();
+
+Fee_Charge:
+
+    if ((tExit.sFee > 0) && (tExit.sIUNo.length() > 9))
+    {
+        writelog("show fee", "OPR");
+        showFee2User();
+
+        if (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt <= 0.00f)
+        {
+            ticketOK();
+        }
+        else
+        {
+            EnableCashcard(true);
+        }
+    }
+    else
+    {
+        // LoopACome();
+    }
+}
+
+void operation::ticketOK()
+{
+    tExit.sPaidAmt = 0;
+    CloseExitOperation(FreeParking);
+}
+
+void operation::showFee2User(bool bPaying)
+{
+    std::string sPT = "";
+    float sFee2Pay = 0.00f;
+    std::string sUpp = "";
+    std::string sLow = "";
+    float sTotalpay = 0.00f;
+
+    sFee2Pay = tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt;
+    sTotalpay = sFee2Pay + tExit.sOweAmt;
+
+    if (sFee2Pay > 0)
+    {
+        sFee2Pay = 0;
+    }
+
+    sPT = db::getInstance()->CalParkedTime(tExit.lParkedTime);
+
+    if ((sPT.length() > 5) || (tExit.sFee > 100))
+    {
+        sUpp = "T:" + sPT + ",$" + Common::getInstance()->SetFeeFormat(sFee2Pay);
+    }
+    else
+    {
+        sUpp = "T:" + sPT + ",Fee:$" + Common::getInstance()->SetFeeFormat(sFee2Pay);
+    }
+
+    if (sFee2Pay > 0 && gtStation.iSubType == iXwithVENoPay)
+    {
+        if (bPaying)
+        {
+            // "Please Wait..."
+            sLow = tExitMsg.MsgExit_XLoopA[0];
+        }
+        else
+        {
+            // "Pls Insert Cashcard"
+            sLow = tExitMsg.MsgExit_XNoCard[0];
+        }
+    }
+    else
+    {
+        // "Grace Period, Free!"
+        sLow = tExitMsg.MsgExit_XCardTaken[0];
+    }
+
+    std::string sMsg = sUpp + "^" + sLow;
+    ShowLEDMsg(sMsg, sMsg);
+
+    std::string exit_entry_time = "00:00";
+    try
+    {
+        if (tExit.sEntryTime != "")
+        {
+            exit_entry_time = Common::getInstance()->FnFormatDateTime(tExit.sEntryTime, "%Y-%m-%d %H:%M:%S", "%H:%M");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        writelog("Exception :" + std::string(e.what()), "OPR");
+    }
+
+    std::ostringstream ss;
+    ss << tExit.sIUNo << "," << exit_entry_time << "~T=" << sPT << ",";
+    ss << Common::getInstance()->SetFeeFormat(tExit.sFee) << "," << ",";
+    ss << tProcess.giShowType << "," << "Fee OK";
+    SendMsg2Server("90", ss.str());
+}

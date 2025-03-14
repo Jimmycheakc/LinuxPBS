@@ -197,6 +197,13 @@ std::string Common::FnFormatDateTime(const std::string& timeString, const std::s
     return oss.str();
 }
 
+std::string Common::FnFormatDateTime(const std::tm& timeStruct, const std::string& outputFormat)
+{
+    std::ostringstream oss;
+    oss << std::put_time(&timeStruct, outputFormat.c_str());
+    return oss.str();
+}
+
 std::time_t Common::FnGetEpochSeconds()
 {
     auto currentTime = std::chrono::system_clock::now();
@@ -336,6 +343,36 @@ std::string Common::FnConvertSecondsSince1January0000ToDateTime(uint64_t seconds
     strftime(buf, sizeof(buf), "%d %b %Y   %H:%M:%S", gmt);
 
     return std::string(buf);
+}
+
+std::chrono::system_clock::time_point Common::FnParseDateTime(const std::string& dateTime)
+{
+    std::tm tm = {};
+    std::istringstream ss(dateTime);
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+
+    if (ss.fail())
+    {
+        throw std::runtime_error("Failed to parse datetime string.");
+    }
+
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+int64_t Common::FnGetDateDiffInSeconds(const std::string& dateTime)
+{
+    auto parsedTime = FnParseDateTime(dateTime);
+    auto now = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - parsedTime);
+    return duration.count();
+}
+
+int64_t Common::FnCompareDateDiffInMinutes(const std::string& dateTime1, const std::string& dateTime2)
+{
+    auto parsedTime1 = FnParseDateTime(dateTime1);
+    auto parsedTime2 = FnParseDateTime(dateTime2);
+    auto duration = std::chrono::duration_cast<std::chrono::minutes>(parsedTime2 - parsedTime1);
+    return duration.count();
 }
 
 std::string Common::FnGetFileName(const std::string& str)
@@ -833,4 +870,24 @@ std::string Common::FnFormatToFloatString(const std::string& str)
     {
         return "Invalid Input";
     }
+}
+
+std::string Common::FnToUpper(const std::string& str)
+{
+    std::string upperStr = str;
+    std::transform(upperStr.begin(), upperStr.end(), upperStr.begin(), ::toupper);
+    return upperStr;
+}
+
+std::string Common::FnTrim(const std::string& str)
+{
+    auto start = std::find_if(str.begin(), str.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    });
+
+    auto end = std::find_if(str.rbegin(), str.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base();
+
+    return (start < end) ? std::string(start, end) : "";
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <ctime>
 #include <stdio.h>
 #include <string>
 #include <sstream>
@@ -128,6 +129,8 @@ public:
     int updateEntryTrans(string lpn, string sTransID);
     int updateExitTrans(string lpn, string sTransID);
     int updateExitReceiptNo(string sReceiptNo, string StnID); 
+    int isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, double& gbRedeemAmt, int& giRedeemTime);
+    DBError update99PaymentTrans();
 
     long  glToalRowAffed;
 

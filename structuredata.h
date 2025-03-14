@@ -372,7 +372,7 @@ struct  tExitTrans_Struct
 	eProcessStatus giDeductionStatus;        // 0: init    1: waiting card   2: doing deduction  3: deduction succeed 4: deduction failed
 	std::atomic<bool> gbPaid;
 	std::atomic<bool> bPayByEZPay;
-
+	string sTag;
 };
 
 
@@ -648,6 +648,8 @@ struct  tParas_Struct
 	float gfGSTRate;					// DB Loaded: GSTRate
 	std::string gsHdRec;				// DB Loaded: HdRec
 	std::string gsHdTk;					// DB Loaded: HdTk
+	int giNeedCard4Complimentary;		// DB Loaded: needcard4complimentary
+	int giExitTicketRedemption;			// DB Loaded: ExitTicketRedemption
 };
 
 struct  tMsg_Struct
@@ -732,6 +734,9 @@ struct tExitMsg_struct
 	std::string MsgExit_FleetCard[2];
 	std::string MsgExit_FreeParking[2];
 	std::string MsgExit_GracePeriod[2];
+	std::string MsgExit_InvalidTicket[2];
+	std::string MsgExit_WrongTicket[2];
+	std::string MsgExit_RedemptionExpired[2];
 	std::string MsgExit_IUProblem[2];
 	std::string MsgExit_MasterSeason[2];
 	std::string MsgExit_NoEntry[2];
