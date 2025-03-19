@@ -572,12 +572,20 @@ void LCSCReader::enqueueCommandToFront(LCSCReader::LCSC_CMD cmd, std::shared_ptr
         return;
     }
 
-    std::ostringstream oss;
-    oss << "Sending LCSC Command to the front of queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
     {
         std::lock_guard<std::mutex> lock(commandQueueMutex_);
+
+        // Check if the front command is the same as the one being enqueued
+        if (!commandQueue_.empty() && commandQueue_.front().cmd == cmd) 
+        {
+            Logger::getInstance()->FnLog("Same command is already at the front of the queue, skipping enqueue.", logFileName_, "LCSC");
+            return;
+        }
+
+        std::ostringstream oss;
+        oss << "Sending LCSC Command to the front of queue: " << getCommandString(cmd);
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
         commandQueue_.emplace_front(cmd, data);
     }
 

@@ -211,11 +211,11 @@ void LCD::FnLCDDisplayScreen(char* str)
     std::size_t found = text.find("^");
     if (found != std::string::npos)
     {
-        strncpy(sub_string_row_1, str, found);
+        strncpy(sub_string_row_1, str, std::min(found, (size_t)MAXIMUM_CHARACTER_PER_ROW));
         sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW] = '\0';
         FnLCDDisplayStringCentered(1, sub_string_row_1);
 
-        strncpy(sub_string_row_2, (str + found + 1), (text.length() - found - 1));
+        strncpy(sub_string_row_2, (str + found + 1), std::min(text.length() - found - 1, (size_t)MAXIMUM_CHARACTER_PER_ROW));
         sub_string_row_2[MAXIMUM_CHARACTER_PER_ROW] = '\0';
         FnLCDDisplayStringCentered(2, sub_string_row_2);
     }

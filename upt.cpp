@@ -3744,7 +3744,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             std::vector<uint8_t> paymentType = {0x80, 0x00};   // Top Up [Top up NETS NCC by NETS EFT]
             msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
-            auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
+            auto fieldData = std::static_pointer_cast<CommandTopUpRequestData>(payloadData);
 
             std::vector<uint8_t> amount(4, 0x00);
             if (fieldData)
@@ -3781,7 +3781,7 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
             std::vector<uint8_t> paymentType = {0x81, 0x00};   // Top Up [Top up NETS NFP by NETS EFT]
             msg.addPayload(createPayload(0x0000000A, static_cast<uint16_t>(FIELD_ID::ID_TXN_TYPE), 0x00, 0x38, paymentType));
 
-            auto fieldData = std::static_pointer_cast<CommandPaymentRequestData>(payloadData);
+            auto fieldData = std::static_pointer_cast<CommandTopUpRequestData>(payloadData);
 
             std::vector<uint8_t> amount(4, 0x00);
             if (fieldData)
