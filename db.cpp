@@ -7911,3 +7911,47 @@ DBError db::update99PaymentTrans()
 	return iCentralFail;
 }
 
+DBError db::insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate)
+{
+	int r;
+	std::string sqlStmt = "";
+
+	sqlStmt = "INSERT INTO UPT_File_Summary (settle_date, settle_file, settle_type, last_total_trans, last_total_amt, send_flag, send_dt)";
+	sqlStmt = sqlStmt + " VALUES ('" + sSettleDate + "','" + sSettleName + "','" + std::to_string(iSettleType) + "','" + std::to_string(lTotalTrans) + "','" + std::to_string(dTotalAmt) + "','" + std::to_string(iSendFlag) + "','" + sSendDate + "')";
+
+	r = centraldb->SQLExecutNoneQuery(sqlStmt);
+	if (r == 0)
+	{
+		operation::getInstance()->writelog("Success to insert into UPT_File_Summary for: " + sSettleName, "DB");
+		return iCentralSuccess;
+	}
+	else
+	{
+		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
+		m_remote_db_err_flag=1;
+	}
+	return iCentralFail;
+}
+
+DBError db::insertUPTFileSummary(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate)
+{
+	int r;
+	std::string sqlStmt = "";
+
+	sqlStmt = "INSERT INTO UPT_File_Summary (settle_date, settle_file, settle_type, total_trans, total_amt, send_flag, send_dt)";
+	sqlStmt = sqlStmt + " VALUES ('" + sSettleDate + "','" + sSettleName + "','" + std::to_string(iSettleType) + "','" + std::to_string(lTotalTrans) + "','" + std::to_string(dTotalAmt) + "','" + std::to_string(iSendFlag) + "','" + sSendDate + "')";
+
+	r = centraldb->SQLExecutNoneQuery(sqlStmt);
+	if (r == 0)
+	{
+		operation::getInstance()->writelog("Success to insert into UPT_File_Summary for: " + sSettleName, "DB");
+		return iCentralSuccess;
+	}
+	else
+	{
+		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
+		m_remote_db_err_flag=1;
+	}
+	return iCentralFail;
+}
+

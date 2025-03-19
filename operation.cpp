@@ -879,12 +879,7 @@ void operation:: Sendmystatus()
   //14 = TGD sensor status 15=Arm drop status,16=barrier status,17=ticket status d DateTime
     CE_Time dt;
 	string str="";
-    //----
-    if (tProcess.gbInitParamFail != 1) {
-        tPBSError[iBarrierStauts].ErrNo = DIO::getInstance()->FnGetBarrierStatus();
-        if (DIO::getInstance()->FnGetArmbroken() == 1) tPBSError[iBarrierStauts].ErrNo=3;
-    }
-    //------
+
     for (int i= 0; i< Errsize; ++i){
         str += std::to_string(tPBSError[i].ErrNo) + ",";
     }
@@ -1495,6 +1490,57 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sCmd = "05";
             tPBSError[iReader].ErrMsg= "Card Reader Error";
             break;
+        }
+        case BarrierStatus:
+        {
+            tPBSError[iBarrierStatus].ErrNo = iErrCode;
+            sCmd = "08";
+            switch (iErrCode)
+            {
+                case 0:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Closed";
+                    sErrMsg = "9Barrier Status: Closed";
+                    break;
+                }
+                case 1:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Open";
+                    sErrMsg = "9Barrier Status: Open";
+                    break;
+                }
+                case 2:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Open Too Long";
+                    sErrMsg = "9Barrier Status: Open Too Long";
+                    break;
+                }
+                case 3:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Arm Drop Down";
+                    sErrMsg = "9Barrier Status: Arm Drop Down";
+                    SendMsg2Server("90", ",,,,,barrierarmdrop");
+                    break;
+                }
+                case 4:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Fail To Open";
+                    sErrMsg = "9Barrier Status: Fail To Open";
+                    break;
+                }
+                case 5:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Fail To Close";
+                    sErrMsg = "9Barrier Status: Fail To Close";
+                    break;
+                }
+                default:
+                {
+                    tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Unknown";
+                    sErrMsg = "9Barrier Status: Unknown";
+                    break;
+                }
+            }
         }
         default:
             break;
@@ -2690,6 +2736,13 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     {
                         oss << " | Exception : " << ex.what();
                     }
+
+                    double dSettleTotalGrand = total_amount / 100.00f;
+                    std::string dtNow = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+                    std::string dtNow2 = Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+                    std::string sSettleName = "UPT" + dtNow2 + Common::getInstance()->FnPadLeft0(2, gtStation.iSID);
+
+                    db::getInstance()->insertUPTFileSummary(dtNow, sSettleName, 2, total_trans_count, dSettleTotalGrand, 1, dtNow);
                 }
                 else
                 {
@@ -2746,6 +2799,14 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     {
                         oss << " | Exception : " << ex.what();
                     }
+
+                    double dSettleTotalGrand = total_amount / 100.00f;
+                    std::string dtNow = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+                    std::string dtNow2 = Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+                    std::string sSettleName = "LastUPT" + dtNow2 + Common::getInstance()->FnPadLeft0(2, gtStation.iSID);
+
+                    db::getInstance()->insertUPTFileSummaryLastSettlement(dtNow, sSettleName, 1, total_trans_count, dSettleTotalGrand, 1, dtNow);
+                    Upt::getInstance()->FnUptSendDeviceSettlementNETSRequest();
                 }
                 else
                 {

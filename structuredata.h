@@ -117,7 +117,7 @@ typedef enum {
   iTGDController = 13,
   iTGDSensor = 14,
   iArmDrop = 15,
-  iBarrierStauts = 16,
+  iBarrierStatus = 16,
   iTicketStatus = 17
 
 }eErrorDevice;
@@ -151,7 +151,8 @@ typedef enum
     SDoorError = 25,
 	SDoorNoError = 26,
     BDoorError = 27,
-	BDoorNoError = 28
+	BDoorNoError = 28,
+	BarrierStatus = 29
 } EPSError;  
 
 class trans_info {

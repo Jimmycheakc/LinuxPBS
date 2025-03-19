@@ -35,7 +35,9 @@ public:
         ARM_BROKEN_ON_EVENT = 18,
         ARM_BROKEN_OFF_EVENT = 19,
         PRINT_RECEIPT_ON_EVENT = 20,
-        PRINT_RECEIPT_OFF_EVENT = 21
+        PRINT_RECEIPT_OFF_EVENT = 21,
+        BARRIER_OPEN_TOO_LONG_ON_EVENT = 22,
+        BARRIER_OPEN_TOO_LONG_OFF_EVENT = 23
     };
 
     static DIO* getInstance();
@@ -106,6 +108,8 @@ private:
     std::thread dioMonitoringThread_;
     int manual_open_barrier_status_flag_;
     std::mutex manual_open_barrier_status_flag_mutex_;
+    int64_t iBarrierOpenTooLongTime_;
+    bool bIsBarrierOpenTooLongTime_;
     DIO();
     int getInputPinNum(int pinNum);
     int getOutputPinNum(int pinNum);

@@ -131,6 +131,8 @@ public:
     int updateExitReceiptNo(string sReceiptNo, string StnID); 
     int isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, double& gbRedeemAmt, int& giRedeemTime);
     DBError update99PaymentTrans();
+    DBError insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate);
+    DBError insertUPTFileSummary(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate);
 
     long  glToalRowAffed;
 

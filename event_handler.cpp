@@ -704,11 +704,15 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT");
+                operation::getInstance()->HandlePBSError(BarrierStatus, 3);
+                db::getInstance()->AddSysEvent("Arm failure detected.");
                 break;
             }
             case DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT");
+                operation::getInstance()->HandlePBSError(BarrierStatus, 0);
+                db::getInstance()->AddSysEvent("Arm recovered successfully.");
                 break;
             }
             case DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT:
@@ -721,6 +725,20 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT");
+                break;
+            }
+            case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_ON_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_ON_EVENT");
+                operation::getInstance()->HandlePBSError(BarrierStatus, 2);
+                db::getInstance()->AddSysEvent("Barrier open too long detected.");
+                break;
+            }
+            case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_OFF_EVENT:
+            {
+                Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_OFF_EVENT");
+                operation::getInstance()->HandlePBSError(BarrierStatus, 0);
+                db::getInstance()->AddSysEvent("Barrier open too long - closed successfully.");
                 break;
             }
             default:

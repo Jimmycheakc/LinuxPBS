@@ -1,6 +1,7 @@
 #include <functional>
 #include <sstream>
 #include <thread>
+#include "common.h"
 #include "dio.h"
 #include "event_manager.h"
 #include "gpio.h"
@@ -37,6 +38,8 @@ DIO::DIO()
     lorry_sensor_di_last_val_(0),
     arm_broken_di_last_val_(0),
     print_receipt_di_last_val_(0),
+    iBarrierOpenTooLongTime_(0),
+    bIsBarrierOpenTooLongTime_(false),
     isDIOMonitoringThreadRunning_(false)
 {
     logFileName_ = "dio";
@@ -55,6 +58,8 @@ DIO* DIO::getInstance()
 
 void DIO::FnDIOInit()
 {
+    iBarrierOpenTooLongTime_ = operation::getInstance()->tParas.giBarrierOpenTooLongTime;
+
     loop_a_di_ = getInputPinNum(IniParser::getInstance()->FnGetLoopA());
     loop_b_di_ = getInputPinNum(IniParser::getInstance()->FnGetLoopB());
     loop_c_di_ = getInputPinNum(IniParser::getInstance()->FnGetLoopC());
@@ -101,6 +106,8 @@ void DIO::monitoringDIOChangeThreadFunction()
 {
     while (isDIOMonitoringThreadRunning_)
     {
+        static std::string barrier_open_time_ = "";
+
         int loop_a_curr_val = (GPIOManager::getInstance()->FnGetGPIO(loop_a_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_a_di_)->FnGetValue() : 0;
         int loop_b_curr_val = (GPIOManager::getInstance()->FnGetGPIO(loop_b_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_b_di_)->FnGetValue() : 0;
         int loop_c_curr_val = (GPIOManager::getInstance()->FnGetGPIO(loop_c_di_) != nullptr) ? GPIOManager::getInstance()->FnGetGPIO(loop_c_di_)->FnGetValue() : 0;
@@ -247,6 +254,9 @@ void DIO::monitoringDIOChangeThreadFunction()
             
             // Send to Input Pin Status to Monitor
             operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierStatus(), 1);
+
+            // Set the barrier open time
+            barrier_open_time_ = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
         }
         else if (barrier_status_curr_value == GPIOManager::GPIO_LOW && barrier_status_di_last_val_ == GPIOManager::GPIO_HIGH)
         {
@@ -254,6 +264,15 @@ void DIO::monitoringDIOChangeThreadFunction()
             
             // Send to Input Pin Status to Monitor
             operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetBarrierStatus(), 0);
+
+            // Clear the barrier open time
+            barrier_open_time_.clear();
+
+            if (bIsBarrierOpenTooLongTime_ == true)
+            {
+                bIsBarrierOpenTooLongTime_ = false;
+                EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_OPEN_TOO_LONG_OFF_EVENT));
+            }
         }
 
         if (manual_open_barrier_status_curr_value == GPIOManager::GPIO_HIGH && manual_open_barrier_di_last_val_ == GPIOManager::GPIO_LOW)
@@ -317,6 +336,29 @@ void DIO::monitoringDIOChangeThreadFunction()
 
             // Send to Input Pin Status to Monitor
             operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetPrintReceipt(), 0);
+        }
+
+
+        // Handle if barrier open too long
+        if ((iBarrierOpenTooLongTime_ > 0) && (!barrier_open_time_.empty()))
+        {
+            int64_t duration_sec = 0;
+            try
+            {
+                // Compare with now() to get the differnece in seconds
+                duration_sec = Common::getInstance()->FnGetDateDiffInSeconds(barrier_open_time_);
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog("Exception :" + std::string(e.what()), logFileName_, "DIO");
+            }
+
+            if (duration_sec > iBarrierOpenTooLongTime_)
+            {
+                bIsBarrierOpenTooLongTime_ = true;
+                EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::BARRIER_OPEN_TOO_LONG_ON_EVENT));
+                barrier_open_time_.clear();
+            }
         }
 
         loop_a_di_last_val_ = loop_a_curr_val;
