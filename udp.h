@@ -20,6 +20,7 @@ typedef enum : unsigned int
     CmdCarparkfull          = 24,
     CmdOpenBarrier          = 27,
     CmdStatusOnline         = 28,
+    CmdContinueOpenBarrier  = 30,
     CmdDownloadTariff       = 32,
     CmdDownloadHoliday      = 33,
     CmdSetTime              = 35,

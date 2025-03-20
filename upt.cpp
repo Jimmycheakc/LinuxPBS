@@ -1140,6 +1140,7 @@ Upt::Upt()
     ackTimer_(ioContext_),
     rspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
+    serialWriteTimer_(ioContext_),
     ackRecv_(false),
     rspRecv_(false),
     pendingRspRecv_(false),
@@ -3043,7 +3044,8 @@ const Upt::StateTransition Upt::stateTransitionTable[static_cast<int>(STATE::STA
     {
         {EVENT::WRITE_COMPLETED                                 , &Upt::handleSendingRequestAsyncState          , STATE::WAITING_FOR_ACK                    },
         {EVENT::WRITE_FAILED                                    , &Upt::handleSendingRequestAsyncState          , STATE::IDLE                               },
-        {EVENT::CANCEL_COMMAND                                  , &Upt::handleSendingRequestAsyncState          , STATE::CANCEL_COMMAND_REQUEST             }
+        {EVENT::CANCEL_COMMAND                                  , &Upt::handleSendingRequestAsyncState          , STATE::CANCEL_COMMAND_REQUEST             },
+        {EVENT::WRITE_TIMEOUT                                   , &Upt::handleSendingRequestAsyncState          , STATE::IDLE                               }
     }},
     {STATE::WAITING_FOR_ACK,
     {
@@ -3122,6 +3124,11 @@ std::string Upt::eventToString(EVENT event)
         case EVENT::CANCEL_COMMAND:
         {
             eventStr = "CANCEL_COMMAND";
+            break;
+        }
+        case EVENT::WRITE_TIMEOUT:
+        {
+            eventStr = "WRITE_TIMEOUT";
             break;
         }
         case EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE:
@@ -3236,6 +3243,23 @@ void Upt::checkCommandQueue()
 void Upt::popFromCommandQueueAndEnqueueWrite()
 {
     std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    
+    std::ostringstream oss;
+    oss << "Command queue size: " << commandQueue_.size() << std::endl;
+    if (!commandQueue_.empty())
+    {
+        oss << "Commands in queue: " << std::endl;
+        for (const auto& cmdData : commandQueue_)
+        {
+            oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
+        }
+    }
+    else
+    {
+        oss << "Command queue is empty." << std::endl;
+    }
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
     if (!commandQueue_.empty())
     {
         ackRecv_.store(false);
@@ -3256,6 +3280,7 @@ void Upt::handleIdleState(EVENT event)
     {
         Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
         popFromCommandQueueAndEnqueueWrite();
+        startSerialWriteTimer();
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
@@ -3271,17 +3296,24 @@ void Upt::handleSendingRequestAsyncState(EVENT event)
     if (event == EVENT::WRITE_COMPLETED)
     {
         Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
+        serialWriteTimer_.cancel();
         startAckTimer();
     }
     else if (event == EVENT::WRITE_FAILED)
     {
         Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+        serialWriteTimer_.cancel();
         handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::SEND_FAILED);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
         Logger::getInstance()->FnLog("Received cancel command event in Sending Request Async State", logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
+    }
+    else if (event == EVENT::WRITE_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Received serial write timeout event in Sending Request Async State.", logFileName_, "UPT");
+        handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -3335,8 +3367,44 @@ void Upt::handleCancelCommandRequestState(EVENT event)
         Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
         ackTimer_.cancel();
         rspTimer_.cancel();
+        serialWriteTimer_.cancel();
         stopSerialWriteDelayTimer();
         processEvent(EVENT::CANCEL_COMMAND);
+    }
+}
+
+void Upt::startSerialWriteTimer()
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    serialWriteTimer_.expires_from_now(boost::posix_time::seconds(10));
+    serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&Upt::handleSerialWriteTimeout, this, std::placeholders::_1)));
+}
+
+void Upt::handleSerialWriteTimeout(const boost::system::error_code& error)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+
+    if (!error)
+    {
+        Logger::getInstance()->FnLog("Serial Write timeout occurred.", logFileName_, "UPT");
+        write_in_progress_ = false;  // Reset flag to allow next write
+        processEvent(EVENT::WRITE_TIMEOUT);
+    }
+    else if (error == boost::asio::error::operation_aborted)
+    {
+        Logger::getInstance()->FnLog("Serial Write Timer was cancelled (likely because write completed in time).", logFileName_, "UPT");
+        return;
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Serial Write Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+        write_in_progress_ = false; // Reset flag to allow retry
+        processEvent(EVENT::WRITE_TIMEOUT);
     }
 }
 
@@ -3994,10 +4062,10 @@ bool Upt::isMsgStatusValid(uint32_t msgStatus)
 
 void Upt::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    boost::asio::post(strand_, [this, data]() {
-        bool write_in_progress_ = !writeQueue_.empty();
-        writeQueue_.push(data);
-        if (!write_in_progress_)
+    boost::asio::dispatch(strand_, [this, data = std::move(data)]() {
+        bool wasWriting_ = this->write_in_progress_;
+        writeQueue_.push(std::move(data));
+        if (!wasWriting_)
         {
             startWrite();
         }
@@ -4009,8 +4077,11 @@ void Upt::startWrite()
     if (writeQueue_.empty())
     {
         Logger::getInstance()->FnLog(__func__ + std::string(" Write Queue is empty."), logFileName_, "UPT");
+        write_in_progress_ = false;  // Ensure flag is reset when queue is empty
         return;
     }
+
+    write_in_progress_ = true;  // Set this immediately to prevent duplicate writes
 
     auto now = std::chrono::steady_clock::now();
     auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
@@ -4035,7 +4106,6 @@ void Upt::startWrite()
         return;
     }
 
-    write_in_progress_ = true;
     const auto& data = writeQueue_.front();
     std::ostringstream oss;
     oss << "Data sent : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);

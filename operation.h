@@ -119,6 +119,8 @@ public:
     void  RedeemTime2Amt();
     
     void Openbarrier();
+    void closeBarrier();
+    void continueOpenBarrier();
 
     void LcdIdleTimerTimeoutHandler();
     void FnLoopATimeoutHandler();

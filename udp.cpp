@@ -375,7 +375,30 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("Close barrier from PMS","UDP");
+
 			operation::getInstance()->ManualCloseBarrier();
+			if (db::getInstance()->writeparameter2local("LockBarrier", "0") == 0)
+			{
+				// Update it when update/insert the parameter successfully
+				operation::getInstance()->writelog("Update the parameter 'LockBarrier' successfully", "UDP");
+				operation::getInstance()->tParas.gbLockBarrier = false;
+			}
+			operation::getInstance()->SendMsg2Server("99", "Close Barrier");
+			break;
+		}
+		case CmdContinueOpenBarrier:
+		{
+			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+			operation::getInstance()->writelog("Continue open barrier from PMS","UDP");
+
+			operation::getInstance()->continueOpenBarrier();
+			if (db::getInstance()->writeparameter2local("LockBarrier", "1") == 0)
+			{
+				// Update it when update/insert the parameter successfully
+				operation::getInstance()->writelog("Update the parameter 'LockBarrier' successfully", "UDP");
+				operation::getInstance()->tParas.gbLockBarrier = true;
+			}
+			operation::getInstance()->SendMsg2Server("99", "Continue Open Barrier");
 			break;
 		}
 		case CmdSetTime:

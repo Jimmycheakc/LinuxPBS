@@ -51,14 +51,13 @@ operation* operation::getInstance()
 
 void operation::OperationInit(io_context& ioContext)
 {
+    Setdefaultparameter();
     operationStrand_ = std::make_unique<boost::asio::io_context::strand>(ioContext);
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
     tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
     tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
     //
     iCurrentContext = &ioContext;
-    //
-    Setdefaultparameter();
     //--- broad cast UDP
     tProcess.gsBroadCastIP = getIPAddress();
     try
@@ -139,6 +138,14 @@ void operation::OperationInit(io_context& ioContext)
         //-----
         m_db->downloadseason();
         m_db->moveOfflineTransToCentral();
+
+        // Check Barrier
+        writelog("Check barrier", "OPR");
+        if (tParas.gbLockBarrier == true)
+        {
+            writelog("Startup: continue open barrier", "OPR");
+            continueOpenBarrier();
+        }
         //-----
     }else {
         tProcess.gbInitParamFail = 1;
@@ -402,6 +409,11 @@ void operation::Openbarrier()
         ShowLEDMsg ("Please Take^CashCard.","Please Take^Cashcard.");
         return;
     }
+
+    if (tProcess.giBarrierContinueOpened == 1)
+    {
+        return;
+    }
     writelog ("Open Barrier","OPR");
 
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
@@ -411,6 +423,30 @@ void operation::Openbarrier()
     std::this_thread::sleep_for(std::chrono::milliseconds(tParas.gsBarrierPulse));
     //
     DIO::getInstance()->FnSetOpenBarrier(0);
+}
+
+void operation::closeBarrier()
+{
+    writelog ("Close barrier.", "OPR");
+    
+    if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
+
+    DIO::getInstance()->FnSetCloseBarrier(1);
+    //
+    std::this_thread::sleep_for(std::chrono::milliseconds(tParas.gsBarrierPulse));
+    //
+    DIO::getInstance()->FnSetCloseBarrier(0);
+
+    tProcess.giBarrierContinueOpened = 0;
+}
+
+void operation::continueOpenBarrier()
+{
+    Logger::getInstance()->FnLog("Continue Open Barrier", "OPR");
+
+    DIO::getInstance()->FnSetOpenBarrier(1);
+
+    tProcess.giBarrierContinueOpened = 1;
 }
 
 void operation::Clearme()
@@ -784,8 +820,9 @@ void operation::PBSEntry(string sIU)
 
 
 void operation:: Setdefaultparameter()
-
 {
+    tParas = {0};
+
     tProcess.gsDefaultIU = "1096000001";
     tProcess.glNoofOfflineData = 0;
     tProcess.giSystemOnline = -1;
@@ -829,6 +866,7 @@ void operation:: Setdefaultparameter()
     //----
     tProcess.gbUPOSStatus = Init;
     tProcess.giUPOSLoginCnt = 0;
+    tProcess.giBarrierContinueOpened = 0;
 }
 
 string operation:: getIPAddress() 
@@ -1752,13 +1790,7 @@ void operation::ManualCloseBarrier()
     writelog ("Manual Close barrier.", "OPR");
     m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual close barrier","");
     
-    if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
-
-    DIO::getInstance()->FnSetCloseBarrier(1);
-    //
-    std::this_thread::sleep_for(std::chrono::milliseconds(tParas.gsBarrierPulse));
-    //
-    DIO::getInstance()->FnSetCloseBarrier(0);
+    closeBarrier();
 }
 
 int operation:: GetSeasonTransType(int VehicleType, int SeasonType, int TransType)

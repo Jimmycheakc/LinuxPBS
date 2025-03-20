@@ -3686,7 +3686,6 @@ DBError db::loadParam()
 					{
 						operation::getInstance()->tParas.giExitTicketRedemption = std::stoi(readerItem.GetDataItem(1));
 					}
-
 				}
 				catch (const std::invalid_argument &e)
 				{

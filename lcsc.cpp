@@ -217,6 +217,7 @@ LCSCReader::LCSCReader()
     work_(ioContext_),
     rspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
+    serialWriteTimer_(ioContext_),
     logFileName_("lcsc"),
     currentState_(LCSCReader::STATE::IDLE),
     write_in_progress_(false),
@@ -657,7 +658,8 @@ const LCSCReader::StateTransition LCSCReader::stateTransitionTable[static_cast<i
     {STATE::SENDING_REQUEST_ASYNC,
     {
         {EVENT::WRITE_COMPLETED                         , &LCSCReader::handleSendingRequestAsyncState                   , STATE::WAITING_FOR_RESPONSE                   },
-        {EVENT::WRITE_FAILED                            , &LCSCReader::handleSendingRequestAsyncState                   , STATE::IDLE                                   }
+        {EVENT::WRITE_FAILED                            , &LCSCReader::handleSendingRequestAsyncState                   , STATE::IDLE                                   },
+        {EVENT::WRITE_TIMEOUT                           , &LCSCReader::handleSendingRequestAsyncState                   , STATE::IDLE                                   }
     }},
     {STATE::WAITING_FOR_RESPONSE,
     {
@@ -667,7 +669,8 @@ const LCSCReader::StateTransition LCSCReader::stateTransitionTable[static_cast<i
     {STATE::SENDING_CHUNK_COMMAND_REQUEST_ASYNC,
     {
         {EVENT::WRITE_COMPLETED                         , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::WAITING_FOR_CHUNK_COMMAND_RESPONSE     },
-        {EVENT::WRITE_FAILED                            , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   }
+        {EVENT::WRITE_FAILED                            , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   },
+        {EVENT::WRITE_TIMEOUT                           , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   }
     }},
     {STATE::WAITING_FOR_CHUNK_COMMAND_RESPONSE,
     {
@@ -728,6 +731,11 @@ std::string LCSCReader::eventToString(LCSCReader::EVENT event)
         case EVENT::CHUNK_COMMAND_ERROR:
         {
             returnStr = "CHUNK_COMMAND_ERROR";
+            break;
+        }
+        case EVENT::WRITE_TIMEOUT:
+        {
+            returnStr = "WRITE_TIMEOUT";
             break;
         }
     }
@@ -939,6 +947,23 @@ bool LCSCReader::isChunkedCommandType(LCSCReader::LCSC_CMD_TYPE cmd)
 void LCSCReader::popFromCommandQueueAndEnqueueWrite()
 {
     std::lock_guard<std::mutex> lock(commandQueueMutex_);
+
+    std::ostringstream oss;
+    oss << "Command queue size: " << commandQueue_.size() << std::endl;
+    if (!commandQueue_.empty())
+    {
+        oss << "Commands in queue: " << std::endl;
+        for (const auto& cmdData : commandQueue_)
+        {
+            oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
+        }
+    }
+    else
+    {
+        oss << "Command queue is empty." << std::endl;
+    }
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
     if (!commandQueue_.empty())
     {
         CommandWithData cmdData = commandQueue_.front();
@@ -954,6 +979,23 @@ void LCSCReader::popFromChunkCommandQueueAndEnqueueWrite()
     struct CommandWithData cmdData(LCSC_CMD::GET_STATUS_CMD);
 
     std::lock_guard<std::mutex> lock(commandQueueMutex_);
+
+    std::ostringstream oss;
+    oss << "Command queue size: " << commandQueue_.size() << std::endl;
+    if (!commandQueue_.empty())
+    {
+        oss << "Commands in queue: " << std::endl;
+        for (const auto& cmdData : commandQueue_)
+        {
+            oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
+        }
+    }
+    else
+    {
+        oss << "Command queue is empty." << std::endl;
+    }
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
     {
         if (!commandQueue_.empty())
         {
@@ -997,11 +1039,13 @@ void LCSCReader::handleIdleState(LCSCReader::EVENT event)
     {
         Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "LCSC");
         popFromCommandQueueAndEnqueueWrite();
+        startSerialWriteTimer(NORMAL_CMD_WRITE_TIMEOUT);
     }
     else if (event == EVENT::CHUNK_COMMAND_ENQUEUED)
     {
         Logger::getInstance()->FnLog("Pop from chunk command queue and write.", logFileName_, "LCSC");
         popFromChunkCommandQueueAndEnqueueWrite();
+        startSerialWriteTimer(CHUNK_CMD_WRITE_TIMEOUT);
     }
 }
 
@@ -1013,10 +1057,17 @@ void LCSCReader::handleSendingRequestAsyncState(LCSCReader::EVENT event)
     {
         Logger::getInstance()->FnLog("Write completed. Start receiving response.", logFileName_, "LCSC");
         startResponseTimer();
+        serialWriteTimer_.cancel();
     }
     else if (event == EVENT::WRITE_FAILED)
     {
         Logger::getInstance()->FnLog("Write failed.", logFileName_, "LCSC");
+        serialWriteTimer_.cancel();
+        handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
+    }
+    else if (event == EVENT::WRITE_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Received serial write timeout event in Sending Request Async State.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
     }
 }
@@ -1046,10 +1097,17 @@ void LCSCReader::handleSendingChunkCommandRequestAsyncState(EVENT event)
     {
         Logger::getInstance()->FnLog("Write completed. Start receiving response.", logFileName_, "LCSC");
         startResponseTimer();
+        serialWriteTimer_.cancel();
     }
     else if (event == EVENT::WRITE_FAILED)
     {
         Logger::getInstance()->FnLog("Write failed.", logFileName_, "LCSC");
+        serialWriteTimer_.cancel();
+        handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
+    }
+    else if (event == EVENT::WRITE_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Received serial write timeout event in Sending Chunk Cmd Request Async State.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
     }
 }
@@ -1082,6 +1140,41 @@ void LCSCReader::handleWaitingForChunkCommandResponseState(EVENT event)
     {
         Logger::getInstance()->FnLog("Chunk of command data error.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::rNotRespCmd);
+    }
+}
+
+void LCSCReader::startSerialWriteTimer(int seconds)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    serialWriteTimer_.expires_from_now(boost::posix_time::seconds(seconds));
+    serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_, 
+        std::bind(&LCSCReader::handleSerialWriteTimeout, this, std::placeholders::_1)));
+}
+
+void LCSCReader::handleSerialWriteTimeout(const boost::system::error_code& error)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+
+    if (!error)
+    {
+        Logger::getInstance()->FnLog("Serial Timer Timeout.", logFileName_, "LCSC");
+        write_in_progress_ = false;  // Reset flag to allow next write
+        processEvent(EVENT::WRITE_TIMEOUT);
+    }
+    else if (error == boost::asio::error::operation_aborted)
+    {
+        Logger::getInstance()->FnLog("Serial Write Timer was cancelled (likely because write completed in time).", logFileName_, "LCSC");
+        return;
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Serial Write Timer error : " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+        write_in_progress_ = false; // Reset flag to allow retry
+        processEvent(EVENT::WRITE_TIMEOUT);
     }
 }
 
@@ -1581,10 +1674,10 @@ bool LCSCReader::isRxResponseComplete(const std::vector<uint8_t>& dataBuff)
 
 void LCSCReader::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    boost::asio::post(strand_, [this, data]() {
-        bool write_in_progress = !writeQueue_.empty();
-        writeQueue_.push(data);
-        if (!write_in_progress)
+    boost::asio::dispatch(strand_, [this, data = std::move(data)]() {
+        bool wasWriting_ = this->write_in_progress_;
+        writeQueue_.push(std::move(data));
+        if (!wasWriting_)
         {
             startWrite();
         }
@@ -1595,8 +1688,12 @@ void LCSCReader::startWrite()
 {
     if (writeQueue_.empty())
     {
+        Logger::getInstance()->FnLog(__func__ + std::string(" Write Queue is empty."), logFileName_, "UPT");
+        write_in_progress_ = false;  // Ensure flag is reset when queue is empty
         return;
     }
+
+    write_in_progress_ = true;  // Set this immediately to prevent duplicate writes
 
     auto now = std::chrono::steady_clock::now();
     auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
@@ -1614,7 +1711,6 @@ void LCSCReader::startWrite()
         return;
     }
 
-    write_in_progress_ = true;
     const auto& data = writeQueue_.front();
     std::ostringstream oss;
     oss << "Data sent : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);

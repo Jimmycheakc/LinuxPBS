@@ -27,6 +27,7 @@ KSM_Reader::KSM_Reader()
     rspRecv_(false),
     ackTimer_(ioContext_),
     rspTimer_(ioContext_),
+    serialWriteTimer_(ioContext_),
     TxNum_(0),
     RxNum_(0),
     cardPresented_(false),
@@ -504,10 +505,10 @@ void KSM_Reader::readerCmdSend(const std::vector<unsigned char>& dataBuff)
 
 void KSM_Reader::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    boost::asio::post(strand_, [this, data]() {
-        bool write_in_progress_ = !writeQueue_.empty();
-        writeQueue_.push(data);
-        if (!write_in_progress_)
+    boost::asio::dispatch(strand_, [this, data = std::move(data)]() {
+        bool wasWriting_ = this->write_in_progress_;
+        writeQueue_.push(std::move(data));
+        if (!wasWriting_)
         {
             startWrite();
         }
@@ -518,6 +519,8 @@ void KSM_Reader::startWrite()
 {
     if (writeQueue_.empty())
     {
+        ksmLogger(__func__ + std::string(" Write Queue is empty."));
+        write_in_progress_ = false;  // Ensure flag is reset when queue is empty
         return;
     }
 
@@ -1054,6 +1057,11 @@ std::string KSM_Reader::eventToString(EVENT event)
             eventStr = "RESPONSE_TIMER_CANCELLED_RSP_RECEIVED";
             break;
         }
+        case EVENT::WRITE_TIMEOUT:
+        {
+            eventStr = "WRITE_TIMEOUT";
+            break;
+        }
     }
 
     return eventStr;
@@ -1099,14 +1107,16 @@ const KSM_Reader::StateTransition KSM_Reader::stateTransitionTable[static_cast<i
     {STATE::SENDING_REQUEST_ASYNC,
     {
         {EVENT::WRITE_COMPLETED                                 , &KSM_Reader::handleSendingRequestAsyncState          , STATE::WAITING_FOR_ACK                    },
-        {EVENT::WRITE_FAILED                                    , &KSM_Reader::handleSendingRequestAsyncState          , STATE::IDLE                               }
+        {EVENT::WRITE_FAILED                                    , &KSM_Reader::handleSendingRequestAsyncState          , STATE::IDLE                               },
+        {EVENT::WRITE_TIMEOUT                                   , &KSM_Reader::handleSendingRequestAsyncState          , STATE::IDLE                               }
     }},
     {STATE::WAITING_FOR_ACK,
     {
         {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &KSM_Reader::handleWaitingForAckState                , STATE::WAITING_FOR_ACK                    },
         {EVENT::ACK_TIMEOUT                                     , &KSM_Reader::handleWaitingForAckState                , STATE::IDLE                               },
         {EVENT::WRITE_COMPLETED                                 , &KSM_Reader::handleWaitingForAckState                , STATE::WAITING_FOR_RESPONSE               },
-        {EVENT::WRITE_FAILED                                    , &KSM_Reader::handleWaitingForAckState                , STATE::IDLE                               }
+        {EVENT::WRITE_FAILED                                    , &KSM_Reader::handleWaitingForAckState                , STATE::IDLE                               },
+        {EVENT::WRITE_TIMEOUT                                   , &KSM_Reader::handleWaitingForAckState                , STATE::IDLE                               }
     }},
     {STATE::WAITING_FOR_RESPONSE,
     {
@@ -1218,6 +1228,23 @@ KSM_Reader::KSMReaderCmdID KSM_Reader::getCurrentCmd()
 void KSM_Reader::popFromCommandQueueAndEnqueueWrite()
 {
     std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+
+    std::ostringstream oss;
+    oss << "Command queue size: " << commandQueue_.size() << std::endl;
+    if (!commandQueue_.empty())
+    {
+        oss << "Commands in queue: " << std::endl;
+        for (const auto& cmdData : commandQueue_)
+        {
+            oss << "[Cmd: " << KSMReaderCmdIDToString(cmdData.cmd) << "]" << std::endl;
+        }
+    }
+    else
+    {
+        oss << "Command queue is empty." << std::endl;
+    }
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
     if (!commandQueue_.empty())
     {
         ackRecv_.store(false);
@@ -1237,6 +1264,7 @@ void KSM_Reader::handleIdleState(EVENT event)
     {
         ksmLogger("Pop from command queue and write.");
         popFromCommandQueueAndEnqueueWrite();
+        startSerialWriteTimer();
     }
 }
 
@@ -1248,10 +1276,17 @@ void KSM_Reader::handleSendingRequestAsyncState(EVENT event)
     {
         ksmLogger("Write completed. Start receiving ack.");
         startAckTimer();
+        serialWriteTimer_.cancel();
     }
     else if (event == EVENT::WRITE_FAILED)
     {
         ksmLogger("Write failed.");
+        serialWriteTimer_.cancel();
+        handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderSend_Failed);
+    }
+    else if (event == EVENT::WRITE_TIMEOUT)
+    {
+        ksmLogger("Received serial write timeout event in Sending Request Async State.");
         handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderSend_Failed);
     }
 }
@@ -1263,6 +1298,7 @@ void KSM_Reader::handleWaitingForAckState(EVENT event)
     if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
     {
         ksmLogger("ACK Received. Start sending sendEnq.");
+        startSerialWriteTimer();
     }
     else if (event == EVENT::ACK_TIMEOUT)
     {
@@ -1272,11 +1308,18 @@ void KSM_Reader::handleWaitingForAckState(EVENT event)
     else if (event == EVENT::WRITE_COMPLETED)
     {
         ksmLogger("SendEnq - Write completed. Start receiving response.");
+        serialWriteTimer_.cancel();
         startResponseTimer();
     }
     else if (event == EVENT::WRITE_FAILED)
     {
         ksmLogger("SendEnq - Write failed.");
+        serialWriteTimer_.cancel();
+        handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderSend_Failed);
+    }
+    else if (event == EVENT::WRITE_TIMEOUT)
+    {
+        ksmLogger("Received serial write timeout event in Waiting For Ack State.");
         handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderSend_Failed);
     }
 }
@@ -1293,6 +1336,40 @@ void KSM_Reader::handleWaitingForResponseState(EVENT event)
     {
         ksmLogger("Response Timer Timeout.");
         handleCmdErrorOrTimeout(getCurrentCmd(), KSMReaderCmdRetCode::KSMReaderRecv_NoResp);
+    }
+}
+
+void KSM_Reader::startSerialWriteTimer()
+{
+    ksmLogger(__func__);
+    serialWriteTimer_.expires_from_now(boost::posix_time::seconds(5));
+    serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&KSM_Reader::handleSerialWriteTimeout, this, std::placeholders::_1)));
+}
+
+void KSM_Reader::handleSerialWriteTimeout(const boost::system::error_code& error)
+{
+    ksmLogger(__func__);
+
+    if (!error)
+    {
+        ksmLogger("Serial Timer Timeout.");
+        write_in_progress_ = false;  // Reset flag to allow next write
+        processEvent(EVENT::WRITE_TIMEOUT);
+    }
+    else if (error == boost::asio::error::operation_aborted)
+    {
+        ksmLogger("Serial Write Timer was cancelled (likely because write completed in time).");
+        return;
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Serial Write Timer error: " << error.message();
+        ksmLogger(oss.str());
+
+        write_in_progress_ = false; // Reset flag to allow retry
+        processEvent(EVENT::WRITE_TIMEOUT);
     }
 }
 

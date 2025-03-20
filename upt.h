@@ -671,6 +671,7 @@ public:
         PENDING_RESPONSE_TIMER_TIMEOUT,
         CANCEL_COMMAND,
         CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE,
+        WRITE_TIMEOUT,
         EVENT_COUNT
     };
 
@@ -750,6 +751,7 @@ private:
     boost::asio::deadline_timer ackTimer_;
     boost::asio::deadline_timer rspTimer_;
     boost::asio::deadline_timer serialWriteDelayTimer_;
+    boost::asio::deadline_timer serialWriteTimer_;
     std::atomic<bool> ackRecv_;
     std::atomic<bool> rspRecv_;
     std::atomic<bool> pendingRspRecv_;
@@ -789,11 +791,13 @@ private:
     void handleWaitingForAckState(EVENT event);
     void handleWaitingForResponseState(EVENT event);
     void handleCancelCommandRequestState(EVENT event);
+    void startSerialWriteTimer();
     void startAckTimer();
     void startResponseTimer();
     bool checkCmd(UPT_CMD cmd);
     std::vector<uint8_t> prepareCmd(UPT_CMD cmd, std::shared_ptr<void> payloadData);
     PayloadField createPayload(uint32_t length, uint16_t payloadFieldId, uint8_t fieldReserve, uint8_t fieldEncoding, const std::vector<uint8_t>& fieldData);
+    void handleSerialWriteTimeout(const boost::system::error_code& error);
     void handleAckTimeout(const boost::system::error_code& error);
     void handleCmdResponseTimeout(const boost::system::error_code& error);
     void handleReceivedCmd(const std::vector<uint8_t>& dataBuff);

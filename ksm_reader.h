@@ -76,6 +76,7 @@ public:
         ACK_TIMER_CANCELLED_ACK_RECEIVED,
         RESPONSE_TIMEOUT,
         RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
+        WRITE_TIMEOUT,
         EVENT_COUNT
     };
 
@@ -170,6 +171,7 @@ private:
     std::atomic<bool> rspRecv_;
     boost::asio::deadline_timer ackTimer_;
     boost::asio::deadline_timer rspTimer_;
+    boost::asio::deadline_timer serialWriteTimer_;
     std::atomic<bool> continueReadCardFlag_;
     std::atomic<bool> blockGetStatusCmdLogFlag_;
     KSM_Reader();
@@ -214,6 +216,7 @@ private:
     void handleSendingRequestAsyncState(EVENT event);
     void handleWaitingForAckState(EVENT event);
     void handleWaitingForResponseState(EVENT event);
+    void handleSerialWriteTimeout(const boost::system::error_code& error);
     void handleAckTimeout(const boost::system::error_code& error);
     void handleCmdResponseTimeout(const boost::system::error_code& error);
     void handleCmdErrorOrTimeout(KSMReaderCmdID cmd, KSMReaderCmdRetCode retCode);
@@ -221,5 +224,6 @@ private:
     KSMReaderCmdID getCurrentCmd();
     void startAckTimer();
     void startResponseTimer();
+    void startSerialWriteTimer();
     void ksmLogger(const std::string& logMsg);
 };

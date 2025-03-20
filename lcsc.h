@@ -53,6 +53,9 @@ public:
     const std::string LOCAL_LCSC_FOLDER_PATH = "/home/root/carpark/LTA";
     const std::string LOCAL_LCSC_SETTLEMENT_FOLDER_PATH = "/home/root/carpark/LTA_SETTLEMENT";
 
+    static const int NORMAL_CMD_WRITE_TIMEOUT = 10;
+    static const int CHUNK_CMD_WRITE_TIMEOUT  = 60;
+
     enum class mCSCEvents : int
     {
         sGetStatusOK        = 0,
@@ -202,6 +205,7 @@ public:
         SEND_NEXT_CHUNK_COMMAND,
         ALL_CHUNK_COMMAND_COMPLETED,
         CHUNK_COMMAND_ERROR,
+        WRITE_TIMEOUT,
         EVENT_COUNT
     };
 
@@ -308,6 +312,7 @@ private:
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     boost::asio::deadline_timer rspTimer_;
     boost::asio::deadline_timer serialWriteDelayTimer_;
+    boost::asio::deadline_timer serialWriteTimer_;
     std::string logFileName_;
     std::thread ioContextThread_;
     std::mutex commandQueueMutex_;
@@ -349,8 +354,10 @@ private:
     void handleWaitingForResponseState(EVENT event);
     void handleSendingChunkCommandRequestAsyncState(EVENT event);
     void handleWaitingForChunkCommandResponseState(EVENT event);
+    void startSerialWriteTimer(int seconds);
     void startResponseTimer();
     void handleCmdResponseTimeout(const boost::system::error_code& error);
+    void handleSerialWriteTimeout(const boost::system::error_code& error);
     bool isRxResponseComplete(const std::vector<uint8_t>& dataBuff);
     void handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff);
     void popFromCommandQueueAndEnqueueWrite();

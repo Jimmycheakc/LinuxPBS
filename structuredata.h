@@ -415,6 +415,7 @@ struct  tProcess_Struct
 	int giLastHousekeepingDate;
 	int giEntryDebit;
 	long glLastSerialNo;
+	int giBarrierContinueOpened;
 //	bool gbwaitLoopA;
 	std::atomic<bool> fbReadIUfromAnt;
 	int fiLastCHUCmd;
