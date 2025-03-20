@@ -3647,7 +3647,9 @@ std::string operation::GetVTypeStr(int iVType)
         if  (iDevicetype == 1 || iDevicetype == 4) gsCompareNo = tProcess.gsLastPaidIU;
         else gsCompareNo = tProcess.gsLastCardNo;
 
-        if (sCheckNo == gsCompareNo) {
+        auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - operation::getInstance()->tProcess.getLastTransTime());
+    
+        if (sCheckNo == gsCompareNo && sameAsLastIUDuration.count() <= tParas.giMaxTransInterval) {
             if (tProcess.gbLastPaidStatus.load()  == true) {
                 if (iDevicetype == 1) sMsg = "same as last^paid IU" ;
                 else sMsg = "Same as last^paid card";
@@ -3772,18 +3774,45 @@ std::string operation::GetVTypeStr(int iVType)
         //-------
         writelog("parked time: " + std::to_string(tExit.lParkedTime), "OPR");
         //---------
-        if(iRet == 1 and std::stoi(tSeason.rate_type) != 0) {
-            // Show partial season fee 
-            tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, std::stoi(tSeason.rate_type));
-        }
-        else{
-            tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
-            if (iRet == 1){
-                tExit.sPaidAmt = 0;
-                CloseExitOperation(SeasonParking);
-                return;
+        if(iRet == 1)
+        {  
+            if (std::stoi(tSeason.rate_type) != 0) {
+                // Show partial season fee 
+                writelog ("Cal fee for partial season. RateType: " + tSeason.rate_type, "OPR");
+                tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, std::stoi(tSeason.rate_type));
+
+            }else{
+                if (tExit.sEntryTime < tSeason.date_from) {
+                    writelog ("Season EntryTime early than date from, Cal fee for entry ~ date from", "OPR");
+                    iRet = 8;
+                    tExit.sFee = CalFeeRAM(tExit.sEntryTime, tSeason.date_from, tExit.iVehicleType);
+                    ShowLEDMsg("Season Start On^" + tSeason.date_from.substr(0,16),"Season Start On^" + tSeason.date_from.substr(0,16));
+                    //-----
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                } else
+                {
+                    tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
+                }
             }
-            // show fee to user
+        }
+        else
+        {
+            if(iRet == 2 && tSeason.date_to > tExit.sEntryTime) {
+                writelog ("Season expired. EntryTime early than date to, cal fee for date to ~ exit", "OPR");
+                tExit.sFee = CalFeeRAM(tSeason.date_to, tExit.sExitTime, tExit.iVehicleType);
+                ShowLEDMsg("Season Expire On^" + tSeason.date_to.substr(0,16) ,"Season Expire On^" + tSeason.date_to.substr(0,16));
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+            } else
+            {
+                tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
+            }
+        }
+        //------ whole day season 
+        if (iRet == 1 && std::stoi(tSeason.rate_type) == 0)
+        {
+            tExit.sPaidAmt = 0;
+            CloseExitOperation(SeasonParking);
+            return;
         }
     }
     //-------
@@ -3824,7 +3853,7 @@ std::string operation::GetVTypeStr(int iVType)
         }else
         {
             tExit.giDeductionStatus = WaitingCard;
-            ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Waiting for Card","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Waiting for Card");
+           // ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Waiting for Card","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Waiting for Card");
             EnableCashcard(true);
                 //enable EPS
         }
@@ -3832,7 +3861,6 @@ std::string operation::GetVTypeStr(int iVType)
     else
     {
        CloseExitOperation(FreeParking);
-       
     } 
 
 }
@@ -3850,7 +3878,7 @@ void operation::debitfromReader(string CardNo, float sFee,int iDevicetype,int sC
     //------
     glDebitAmt = sFee * 100;
 
-    ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...");
+    //ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...");
 
     if(iDevicetype == 3) {
         writelog("Send deduction Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +  " to UPOS. ", "OPR");
@@ -3889,7 +3917,7 @@ void operation::SaveExit()
     writelog ("Save Exit trans:"+ tExit.sIUNo, "OPR");
     //----
     if (tExit.sRedeemAmt > (tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt)) tExit.sRedeemAmt = tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt;
-
+    //----
     iRet = db::getInstance()->insertexittrans(tExit);
     if (iRet == iCentralSuccess){
         if (tExit.bNoEntryRecord == 0) {
@@ -3902,6 +3930,7 @@ void operation::SaveExit()
     if (iRet == iCentralSuccess || iRet == iLocalSuccess)
     {
         tProcess.setLastIUNo(tExit.sIUNo);
+        tProcess.setLastTransTime(std::chrono::steady_clock::now());
     }
     //-------
     tPBSError[iDB].ErrNo = (iRet == iCentralSuccess ||iRet == iLocalSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;

@@ -7511,16 +7511,16 @@ string db::CalParkedTime(long lpt)
 			if(hr>10)
 			{
 				if(mt>10)
-				ret= to_string(dt)+"D"+ to_string(hr)+":"+ to_string(mt);
+				ret= to_string(dt)+"D "+ to_string(hr)+":"+ to_string(mt);
 				else
-				ret= to_string(dt)+"D"+ to_string(hr)+":0"+ to_string(mt);
+				ret= to_string(dt)+"D "+ to_string(hr)+":0"+ to_string(mt);
 			}
 			else
 			{
 				if(mt>10)
-				ret= to_string(dt)+"D0"+ to_string(hr)+":"+ to_string(mt);
+				ret= to_string(dt)+"D 0"+ to_string(hr)+":"+ to_string(mt);
 				else
-				ret= to_string(dt)+"D0"+ to_string(hr)+":0"+ to_string(mt);
+				ret= to_string(dt)+"D 0"+ to_string(hr)+":0"+ to_string(mt);
 			}
 		}
 		else
