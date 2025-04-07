@@ -1896,7 +1896,7 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
         if (gtStation.iType == tientry)
         {
             tEntry.sLPN[i]=LPN;
-            SendMsg2Server("90", "," + tEntry.sIUTKNo + "," + tEntry.sCardNo + "," + LPN, "," + "PMS_DVR");
+            SendMsg2Server("90", "," + tEntry.sIUTKNo + "," + tEntry.sCardNo + "," + LPN + ",," + "PMS_DVR");
         }
     }
     else

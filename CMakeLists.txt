@@ -8,25 +8,34 @@ find_package(ODBC REQUIRED)
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
+# Find PkgConfig
+find_package(PkgConfig REQUIRED)
+
+# Use pkg-config to find libevdev and libudev
+pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -march=armv8-a")
 
 # Set the root directory for the target environment
-set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux)
+set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux)
 
 # Specify the sysroot directory
-set(CMAKE_SYSROOT ../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux)
+set(CMAKE_SYSROOT ../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux)
 
 add_definitions(-DFMT_HEADER_ONLY)
+add_definitions(-DSPDLOG_FMT_EXTERNAL)
 
 # Add include directories
-include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
-include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/spdlog)
-include_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/boost)
+include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
+include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/spdlog)
+include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include/boost)
+include_directories(${LIBEVDEV_INCLUDE_DIRS})
 
 # Add link directories
-link_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/lib)
-link_directories(../../../../SDK_2022.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/lib)
+link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/local/lib)
+link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/lib)
+link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/lib)
 
 # Lisy your source files
 set(SOURCE_FILES
@@ -56,15 +65,6 @@ set(SOURCE_FILES
     main.cpp
 )
 
-# Conditionally include test.cpp
-option(BUILD_TEST "Build test.cpp" OFF)
-if (BUILD_TEST)
-    list(APPEND SOURCE_FILES test.cpp)
-
-    # Add BUILD_TEST as a preprocessor definition
-    add_definitions(-DBUILD_TEST)
-endif()
-
 # Conditionally include console output log
 option(ENABLE_CONSOLE_LOG "Output console log" OFF)
 if (ENABLE_CONSOLE_LOG)
@@ -78,4 +78,13 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/LinuxPBS.ini ${CMAKE_CURRENT_BINARY_D
 add_executable(linuxpbs ${SOURCE_FILES})
 
 # Link against libraries
-target_link_libraries(linuxpbs spdlog boost_system boost_filesystem ch347 ps_par OpenSSL::Crypto ${ODBC_LIBRARIES})
+target_link_libraries(linuxpbs
+    spdlog
+    boost_system
+    boost_filesystem
+    ch347
+    ps_par
+    OpenSSL::Crypto
+    ${ODBC_LIBRARIES}
+    ${LIBEVDEV_LIBRARIES}
+)
