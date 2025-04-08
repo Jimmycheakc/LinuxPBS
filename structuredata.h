@@ -36,10 +36,11 @@ typedef enum {
 
 typedef enum {
 	Init = 0,
-	Login = 1,  //online, then offline
-	Enable = 2,      //offline, in DB
-	Disable = 3      //offline, in RAM
-
+	Login = 1,  	
+	Enable = 2,      
+	Disable = 3,
+	ReadCardTimeout = 4      
+	
 }eUPOSStatus;
 
 typedef enum : unsigned int
@@ -302,7 +303,7 @@ struct  tEntryTrans_Struct
 	float sOweAmt=0;
 	bool sEnableReader;
 	string sLPN[2];
-	int iVehcileType;
+	int iVehicleType;
 //	string sGreeting;
 //	string sRPLPN;
 //	string sPaidtime;
@@ -388,7 +389,7 @@ struct  tProcess_Struct
 	int offline_status;
 	int giSystemOnline;
 	//------ for fee calculation 
-	string gsLastPaidIU;
+	string gsLastPaidTrans;
 	string gsLastCardNo;
 	float gfLastCardBal;
 	std::atomic<bool> gbLastPaidStatus;
@@ -456,10 +457,10 @@ struct  tProcess_Struct
 		gsLastIUNo = msg;
 	}
 
-	void setLastPaidIU(const std::string& msg)
+	void setLastPaidTrans(const std::string& msg)
 	{
 		std::lock_guard<std::mutex> lock(gsLastPaidIUMutex);
-		gsLastPaidIU = msg;
+		gsLastPaidTrans = msg;
 	}
 
 	std::string getLastIUNo()

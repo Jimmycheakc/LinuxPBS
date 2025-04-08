@@ -286,7 +286,7 @@ bool operation::LoadParameter()
 
 bool operation:: LoadedparameterOK()
 {
-    if (tProcess.gbloadedLEDMsg == true and tProcess.gbloadedLEDExitMsg == true and tProcess.gbloadedParam==true and tProcess.gbloadedStnSetup==true and tProcess.gbloadedVehtype ==true) return true;
+    if (tProcess.gbloadedLEDMsg == true && tProcess.gbloadedLEDExitMsg == true && tProcess.gbloadedParam==true && tProcess.gbloadedStnSetup==true && tProcess.gbloadedVehtype ==true) return true;
     else return false;
 }
 
@@ -363,6 +363,9 @@ void operation::LoopCCome()
 void operation::LoopCGone()
 {
     writelog ("Loop C End","OPR");
+    //-----
+    Clearme();
+    //------
     if (tProcess.gbLoopApresent.load() == true)
     {
         LoopACome();
@@ -383,7 +386,7 @@ void operation::VehicleCome(string sNo)
         Antenna::getInstance()->FnAntennaStopRead();
     }
 
-    if (sNo.length()==10 and sNo == tProcess.gsDefaultIU) {
+    if (sNo.length()==10 && sNo == tProcess.gsDefaultIU) {
         SendMsg2Server ("90",sNo+",,,,,Default IU");
         writelog ("Default IU: "+sNo,"OPR");
         //---------
@@ -398,7 +401,7 @@ void operation::VehicleCome(string sNo)
     } 
     else{
         //check IU or card status
-        CheckIUorCardStatus(sNo, 1);
+        CheckIUorCardStatus(sNo, Ant);
     }
     return;
 }
@@ -476,7 +479,7 @@ void operation::Clearme()
 
         tEntry.sLPN[0] = "";
         tEntry.sLPN[1] = "";
-        tEntry.iVehcileType = 0;
+        tEntry.iVehicleType = 0;
         tEntry.gbEntryOK = false;
         tEntry.sEnableReader = false;
         tEntry.gsTransID = ""; 
@@ -753,7 +756,7 @@ void operation::PBSEntry(string sIU)
     //check block 
     string gsBlockIUPrefix = IniParser::getInstance()->FnGetBlockIUPrefix();
    // writelog ("blockIUprfix =" +gsBlockIUPrefix, "OPR");
-    if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos and sIU.length() == 10)
+    if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos && sIU.length() == 10)
     {
         ShowLEDMsg("Lorry No Entry^Pls Reverse","Lorry No Entry^Pls Reverse");
         SendMsg2Server("90",sIU+",,,,,Block IU");
@@ -772,28 +775,28 @@ void operation::PBSEntry(string sIU)
         Openbarrier();
         return;
     }
-    if (tProcess.gbcarparkfull.load() == true and tParas.giFullAction == iLock)
+    if (tProcess.gbcarparkfull.load() == true && tParas.giFullAction == iLock)
     {   
         ShowLEDMsg(tMsg.Msg_LockStation[0], tMsg.Msg_LockStation[1]);
         writelog("Loop A while station Locked","OPR");
         return;
     }
-    tEntry.iVehcileType = (tEntry.iTransType -1 )/3;
+    tEntry.iVehicleType = (tEntry.iTransType -1 )/3;
     iRet = CheckSeason(sIU,1);
 
-    if (tProcess.gbcarparkfull.load() == true and iRet == 1 and (std::stoi(tSeason.rate_type) !=0) and tParas.giFullAction ==iNoPartial )
+    if (tProcess.gbcarparkfull.load() == true && iRet == 1 && (std::stoi(tSeason.rate_type) !=0) && tParas.giFullAction ==iNoPartial )
     {   
         writelog ("VIP Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^VIP Season Only", "Carpark Full!^VIP Season Only");
         return;
     } 
-    if (tProcess.gbcarparkfull.load() == true and iRet != 1 )
+    if (tProcess.gbcarparkfull.load() == true && iRet != 1 )
     {   
         writelog ("Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^Season only", "Carpark Full!^Season only");
         return;
     } 
-    if (iRet == 6 and sIU.length()>10)
+    if (iRet == 6 && sIU.length()>10)
     {
         writelog ("season passback","OPR");
         SendMsg2Server("90",sIU+",,,,,Season Passback");
@@ -801,7 +804,7 @@ void operation::PBSEntry(string sIU)
         return;
     }
     if (iRet ==1 or iRet == 4 or iRet == 6) {
-        tEntry.iTransType = GetSeasonTransType(tEntry.iVehcileType,std::stoi(tSeason.rate_type), tEntry.iTransType);
+        tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
         tProcess.giShowType = 0;
     }
 
@@ -858,7 +861,7 @@ void operation:: Setdefaultparameter()
     tProcess.fbReadIUfromAnt.store(false);
     tProcess.fiLastCHUCmd = 0;
     tProcess.gsLastDebitFailTime = "";
-    tProcess.gsLastPaidIU = "";
+    tProcess.gsLastPaidTrans = "";
 	tProcess.gsLastCardNo = "";
 	tProcess.gfLastCardBal = 0;
     tProcess.gbLastPaidStatus.store(false);
@@ -1674,8 +1677,15 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
     int giSeasonTransType;
     std::string sMsgPartialSeason;
 
-    if (gtStation.iType == tientry) giSeasonTransType = tEntry.iTransType;
-    else giSeasonTransType = tExit.iTransType;
+    if (gtStation.iType == tientry){
+         tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
+         giSeasonTransType = tEntry.iTransType;
+    } 
+    else {
+         tExit.iTransType = GetSeasonTransType(tExit.iVehicleType,std::stoi(tSeason.rate_type), tExit.iTransType);
+        giSeasonTransType = tExit.iTransType;
+    }
+    tProcess.giShowType = 0;
 
     if (giSeasonTransType > 49) {
         sMsgPartialSeason = db::getInstance()->GetPartialSeasonMsg(giSeasonTransType);
@@ -1737,6 +1747,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sLCD = "Wrong Season Type";
                 writelog ("Wrong Season Type", "OPR");
                 break;
+            case 9: 
+                sMsg = "Complimentary";
+                sLCD = "Complimentary";
+                writelog ("Complimentary!", "OPR");
+                break;
             case 10:     
                 sMsg = tMsg.Msg_SeasonAsHourly[0];
                 sLCD = tMsg.Msg_SeasonAsHourly[1];
@@ -1748,8 +1763,8 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 writelog ("Season within allowance", "OPR");
                 break;
             case 12:
-               // sMsg = gsMsgMasterSeason
-               // sLCD = gscMsgMasterSeason
+                sMsg = tExitMsg.MsgExit_MasterSeason[0];
+                sLCD = tExitMsg.MsgExit_MasterSeason[1];
                 writelog ("Master Season", "OPR");
                 break;
             case 13:     
@@ -1766,22 +1781,33 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
         pos=sLCD.find("Season");
         if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
         
+        if (iReturn = 1 && std::stoi(tSeason.rate_type) != 0) {
+            sMsg = sMsgPartialSeason;
+            sLCD = sMsgPartialSeason;
+        }
+        
         ShowLEDMsg(sMsg,sLCD);
         
-        if (iReturn != 1) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (iReturn != 1 || std::stoi(tSeason.rate_type) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 }
 
-void operation::ManualOpenBarrier()
+void operation::ManualOpenBarrier(bool bPMS)
 {
-     writelog ("Manual open barrier.", "OPR");
+     if (bPMS == true) writelog ("Manual open barrier by PMS", "OPR");
+     else writelog ("Manual open barrier by operator", "OPR");
+     //------------
      if (gtStation.iType == tientry){
-	    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();;
+	    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
         tEntry.iStatus = 4;
         //---------
         m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tEntry.sIUTKNo);
         SaveEntry();
         Openbarrier();
+     }else{
+        if (tExit.sExitTime == "") tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+        m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tExit.sIUNo);
+        CloseExitOperation(Manualopen);
      }
 }
 
@@ -2036,7 +2062,7 @@ void operation::EnableUPOS(bool bEnable)
     //-------- 
     if (bEnable == true) {
         if (tProcess.gbUPOSStatus == Enable) return;
-        writelog("Send Card Detect Request to UPOS", "OPR");
+        if (tProcess.gbUPOSStatus != ReadCardTimeout) writelog("Send Card Detect Request to UPOS", "OPR");
         Upt::getInstance()->FnUptSendCardDetectRequest();
         tProcess.gbUPOSStatus = Enable;
     }else{
@@ -2175,7 +2201,6 @@ void operation::ProcessLCSC(const std::string& eventData)
                 }
 
             }
-
             break;
         }
         case LCSCReader::mCSCEvents::sGetBlcSuccess:
@@ -2233,7 +2258,8 @@ void operation::ProcessLCSC(const std::string& eventData)
             }
             else
             {
-                CheckIUorCardStatus(sCardNo, 2, sCardNo,3, std::stof(sBal)/100);
+                EnableUPOS(false);
+                CheckIUorCardStatus(sCardNo, LCSC, sCardNo,LCSC, std::stof(sBal)/100);
             }
 
             break;
@@ -2295,7 +2321,7 @@ void operation::ProcessLCSC(const std::string& eventData)
             oss << "LCSC deduct successfully: Card No: " << sCardNo << ", Card Serial Number: " << card_serial_num << ", Balance After Deduction: $" << Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans);
             writelog(oss.str(), "OPR");
             //-------
-            operation::getInstance()->DebitOK("", sCardNo, "", Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans), 1, "", 2, "");
+            operation::getInstance()->DebitOK("", sCardNo, "", Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans), 1, "", LCSC, "");
             break;
         }
         case LCSCReader::mCSCEvents::sGetCardRecord:
@@ -2334,9 +2360,12 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         case LCSCReader::mCSCEvents::sCardFlushed:
         {
-            
+            writelog("LCSC command CardFlushed.","OPR");
+            //--- handle no card
+            RetryLCSCLastCommand();
             break;
         }
+
         case LCSCReader::mCSCEvents::sSetTimeSuccess:
         {
             break;
@@ -2370,25 +2399,27 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         case LCSCReader::mCSCEvents::sNoCard:
         {
-            if (tEntry.gbEntryOK == false)
-            {
-                writelog("Received No card Event", "OPR");
-            }
+            writelog("Received No card Event", "OPR");
+            RetryLCSCLastCommand();
             break;
         }
         case LCSCReader::mCSCEvents::sTimeout:
         {
             writelog("LCSC command timeout.","OPR");
+            //--- handle no card
+            RetryLCSCLastCommand();
             break;
         }
         case LCSCReader::mCSCEvents::sSendcmdfail:
         {
             writelog("LCSC send command failed.","OPR");
+            RetryLCSCLastCommand();
             break;
         }
         case LCSCReader::mCSCEvents::rNotRespCmd:
         {
             writelog("Not the LCSC command response.","OPR");
+            RetryLCSCLastCommand();
             break;
         }
         case LCSCReader::mCSCEvents::sRecordNotFlush:
@@ -2408,21 +2439,33 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         default:
         {
-            tExit.giDeductionStatus = WaitingCard;
-            writelog ("Received Error Event" + std::to_string(static_cast<int>(msg_status)), "OPR");
-            if (tProcess.gbLoopApresent.load() == true)
-            {
-                ShowLEDMsg("Deduction Error!", "Deduction Error!");
-                SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Deduction Error");
-                EnableCashcard(true);
-            }
-            else
-            {
-                EnableCashcard(false);
-            }
+              
+                writelog ("Received Error Event" + std::to_string(static_cast<int>(msg_status)), "OPR");
+                RetryLCSCLastCommand();
             break;
         }
     }
+}
+
+void operation:: RetryLCSCLastCommand()
+{
+    string sMsg;
+    if (tProcess.gbLoopApresent.load() == true)
+    {
+        if (tExit.giDeductionStatus == Doingdeduction) sMsg = "Deduction Error";
+        else sMsg = "Reading Card^Error";
+        ShowLEDMsg(sMsg, sMsg);
+        SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,," + sMsg);
+        tExit.giDeductionStatus = WaitingCard;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        EnableCashcard(true);
+        if (sMsg == "Deduction Error") showFee2User();
+    }
+    else
+    {
+        EnableCashcard(false);
+    }
+
 }
 
 void operation:: KSM_CardIn()
@@ -2476,7 +2519,7 @@ void operation::KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardE
 
  void operation:: KSM_CardTakeAway()
 {
-    writelog ("Card Take Away ", "PBS");
+    writelog ("Card Take Away ", "OPR");
     tProcess.giCardIsIn = 2;
 
     if (tEntry.gbEntryOK == true)
@@ -2676,6 +2719,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         HandlePBSError(UPOSError);
                    }else{
                         tProcess.giUPOSLoginCnt = tProcess.giUPOSLoginCnt  + 1;
+                        Upt::getInstance()->FnUptSendDeviceLogonRequest();
                    }
              
                 }
@@ -2688,6 +2732,13 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                 oss << "DEVICE_LOGON_REQUEST (UPOS CMD) | ";
                 oss << "msg status : " << std::to_string(msg_status) << " (PARSE_FAILED)";
                 writelog(oss.str(), "OPR");
+                //--------
+                if  ( tProcess.giUPOSLoginCnt > 3) {
+                    HandlePBSError(UPOSError);
+                }else{
+                    tProcess.giUPOSLoginCnt = tProcess.giUPOSLoginCnt  + 1;
+                    Upt::getInstance()->FnUptSendDeviceLogonRequest();
+                }
             }
             break;
         }
@@ -2858,6 +2909,8 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
         }
         case Upt::UPT_CMD::CARD_DETECT_REQUEST:
         {
+            tProcess.gbUPOSStatus = Disable;
+            //----------
             if (msg_status != static_cast<uint32_t>(Upt::MSG_STATUS::PARSE_FAILED))
             {
                 std::ostringstream oss;
@@ -2897,7 +2950,8 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         oss << " | card type : " << card_type << " | card can : " << card_can << " | card balance : " << std::fixed << std::setprecision(2) << (card_balance/100.0);
                          writelog(oss.str(), "OPR");
                         //---------
-                        CheckIUorCardStatus(card_can,3,card_can,std::stoi(card_type) + 6, std::round(card_balance)/100);
+                        EnableLCSC(false);
+                        CheckIUorCardStatus(card_can,UPOS,card_can,std::stoi(card_type) + 6, std::round(card_balance)/100);
                     }
                     catch (const std::exception& ex)
                     {
@@ -2908,8 +2962,9 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                 else if (msg_status == static_cast<uint32_t>(Upt::MSG_STATUS::TIMEOUT))
                 {
                     //Handle the cmd = 00000002 request response timeout
-                    writelog("UPOS Reader read card timeout.", "OPR");
+                   // writelog("UPOS Reader read card timeout.", "OPR");
                     if (tProcess.gbLoopApresent.load() == true || tExit.gbPaid == false){
+                        tProcess.gbUPOSStatus = ReadCardTimeout;
                         EnableUPOS(true);
                     }
                 }
@@ -2918,7 +2973,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     //Handle the cmd = 40000000 request response timeout
                     writelog("Received Response code = 40000000", "OPR");
                     if (tProcess.gbLoopApresent.load() == true || tExit.gbPaid == false || tExit.sPaidAmt > 0 || tExit.giDeductionStatus == WaitingCard){
-                        debitfromReader("", tExit.sPaidAmt , 3);
+                        debitfromReader("", tExit.sPaidAmt , UPOS);
                     }
                 }
                 else
@@ -2937,6 +2992,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
         }
         case Upt::UPT_CMD::PAYMENT_MODE_AUTO_REQUEST:
         {
+            tProcess.gbUPOSStatus = Disable;
             if (msg_status != static_cast<uint32_t>(Upt::MSG_STATUS::PARSE_FAILED))
             {
                 std::ostringstream oss;
@@ -3000,7 +3056,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         }
                         oss << " | card type : " << card_type << " | card can : " << card_can << " | card fee : " << std::fixed << std::setprecision(2) << (card_fee / 100.0) << " | card balance : " << std::fixed << std::setprecision(2) << (card_balance / 100.0) << " | card reference no : " << card_reference_no << " | card batch no : " << card_batch_no;
                         writelog(oss.str(), "OPR");
-                        operation::getInstance()->DebitOK("", card_can, Common::getInstance()->SetFeeFormat(card_fee / 100.0), Common::getInstance()->SetFeeFormat(card_balance / 100.0), std::stoi(card_type) + 6, "", 3, "");
+                        operation::getInstance()->DebitOK("", card_can, Common::getInstance()->SetFeeFormat(card_fee / 100.0), Common::getInstance()->SetFeeFormat(card_balance / 100.0), std::stoi(card_type) + 6, "", UPOS, "");
                     }
                     catch (const std::exception& ex)
                     {
@@ -3014,7 +3070,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     writelog("UPOS deduction timeout.", "OPR");
                     if (tProcess.gbLoopApresent.load() == true|| tExit.gbPaid == false || tExit.giDeductionStatus == Doingdeduction )
                     {
-                        tProcess.gbUPOSStatus = Disable;
+                       
                         tExit.giDeductionStatus = WaitingCard;
                         EnableCashcard(true);
                     }
@@ -3027,7 +3083,6 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     tExit.giDeductionStatus = CardExpired;
                     ShowLEDMsg("Card Expired!", "Card Expired!");
                     SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Expired");
-                    tProcess.gbUPOSStatus = Disable;
                     EnableCashcard(true);
                     break;
                     
@@ -3039,14 +3094,12 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         tExit.giDeductionStatus = CardFault;
                         ShowLEDMsg("Card Fault!", "Card Fault!");
                         SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Fault");
-                        tProcess.gbUPOSStatus = Disable;
                         EnableCashcard(true);
                         break;
                 }
                 else {
                         writelog("UPT Deduction Error.", "OPR");
                         tExit.giDeductionStatus = WaitingCard;
-                        tProcess.gbUPOSStatus = Disable;
                         ShowLEDMsg("Deduction Error!", "Deduction Error!");
                         SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Deduction Error");
                         EnableCashcard(true);
@@ -3061,7 +3114,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                 writelog(oss.str(), "OPR");
                 //-------
                 writelog("UPT Deduction Error.", "OPR");
-                tExit.giDeductionStatus = init;
+                tExit.giDeductionStatus = WaitingCard;
                 tProcess.gbUPOSStatus = Disable;
                 ShowLEDMsg("Deduction Error!", "Deduction Error!");
                 SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Deduction Error");
@@ -3129,7 +3182,6 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
         }
     }
 }
-
 
 void operation::PrintTR(bool bForSeason)
 {
@@ -3585,7 +3637,7 @@ void operation::PrintTR(bool bForSeason)
 void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo, 
                 const std::string& sPaidAmt, const std::string& sBal,
                 int iCardType, const std::string& sTopupAmt,
-                int iDeviceType, const std::string& sTransTime)
+                DeviceType iDevicetype, const std::string& sTransTime)
 {
 
     //---------
@@ -3593,10 +3645,11 @@ void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo,
     if (sPaidAmt != "") tExit.sPaidAmt = GfeeFormat(std::stof(sPaidAmt));
     tExit.iCardType = iCardType;
     //--------
-    tProcess.gsLastPaidIU = sIUNO;
+    tProcess.gsLastPaidTrans = tExit.sIUNo;
     tProcess.gbLastPaidStatus.store(true);
     tProcess.gsLastCardNo = sCardNo;
     if (sBal != "") tProcess.gfLastCardBal= GfeeFormat(std::stof(sBal));
+    else tProcess.gfLastCardBal = 0;
     //-------
     tExit.giDeductionStatus = DeductionSuccessed;
 
@@ -3632,12 +3685,14 @@ std::string operation::GetVTypeStr(int iVType)
     return sVType;
 }
 
- void operation::CheckIUorCardStatus(string sCheckNo, int iDevicetype,string sCardNo, int sCardType, float sCardBal)
+ void operation::CheckIUorCardStatus(string sCheckNo, DeviceType iDevicetype,string sCardNo, int sCardType, float sCardBal)
  {
-    // device type : 1 = Ant, 2 = LCSC, 3 = UPOS, 4 = CHU
+    // device type : 0 = PMS(EntryTime), 1 = Ant, 2 = LCSC, 3 = UPOS, 4 = CHU
+
     string gsCompareNo;
     int iRet;
     string sMsg;
+    //--------
     if (tExit.giDeductionStatus == CardExpired || tExit.giDeductionStatus == CardFault) {
         if( tProcess.gsLastCardNo == sCheckNo) {
             writelog ("Fault card! Change another", "OPR");
@@ -3645,21 +3700,46 @@ std::string operation::GetVTypeStr(int iVType)
             EnableCashcard(true);
             return;
         }
-
         tExit.giDeductionStatus = WaitingCard;
     }
-    if (tExit.gbPaid.load() == true) {
+    //-------- check paid status
+    if (tExit.gbPaid.load() == true ) {
         writelog ("Paid already!","OPR");
         ShowLEDMsg("Paid already^Have a nice Day!","Paid already^Have a nice day!");
         EnableCashcard(false);
         Openbarrier();
         return;
     }
-    //--------
+    //--------check balance
+    if (GfeeFormat(sCardBal) != GfeeFormat(tProcess.gfLastCardBal) && sCardNo == tProcess.gsLastCardNo && tProcess.gbLastPaidStatus.load()  == false ) {
+        tProcess.gfLastCardBal= GfeeFormat(sCardBal);
+        EnableCashcard(false);
+        if (tExit.sPaidAmt == 0){
+            //----Loop A come again
+            Openbarrier();
+        }else {
+            CloseExitOperation(BalanceChange);
+         }
+        return;
+    }
+    //---------
     if (tExit.giDeductionStatus == WaitingCard) {
         //CheckCardOK 
         iRet = m_db->CheckCardOK(sCardNo);
         if (iRet > 0) {
+            if (iRet == 5) {
+                tExit.iTransType = 2;
+                ShowLEDMsg("Master Card!", "Master Card!");
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
+            else {
+                tExit.iTransType = 10;
+                ShowLEDMsg("Complimentary!", "Complimentary!");
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            }
+            tExit.sCardNo = sCardNo;
+            tExit.iCardType = sCardType;
+            tExit.sPaidAmt = 0;
             CloseExitOperation(FreeParking);
             return;
         } 
@@ -3676,40 +3756,25 @@ std::string operation::GetVTypeStr(int iVType)
         }
     }
     else {
-        if  (iDevicetype == 1 || iDevicetype == 4) gsCompareNo = tProcess.gsLastPaidIU;
-        else gsCompareNo = tProcess.gsLastCardNo;
-
+        gsCompareNo = tProcess.gsLastPaidTrans;
         auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - operation::getInstance()->tProcess.getLastTransTime());
-    
         if (sCheckNo == gsCompareNo && sameAsLastIUDuration.count() <= tParas.giMaxTransInterval) {
+            writelog("last trans No: " + gsCompareNo, "OPR");
+            writelog("Same as last IU, duration :" + std::to_string(sameAsLastIUDuration.count()) + " less than Maximum interval: " + std::to_string(operation::getInstance()->tParas.giMaxTransInterval), "OPR");
             if (tProcess.gbLastPaidStatus.load()  == true) {
-                if (iDevicetype == 1) sMsg = "same as last^paid IU" ;
-                else sMsg = "Same as last^paid card";
+                if (iDevicetype == Ant) sMsg = "Same as last^Paid IU" ;
+                else sMsg = "Same as last^Paid Card";
                 //--------
                 ShowLEDMsg(sMsg,sMsg);
                 EnableCashcard(false);
                 Openbarrier();
             }else
             {
-                if (iDevicetype == 1) EnableCashcard(true);
-                else
-                {
-                    // check Balance
-                    if (GfeeFormat(sCardBal) != GfeeFormat(tProcess.gfLastCardBal)) {
-                        if (iDevicetype == 4 and sCardNo != tProcess.gsLastCardNo) {
-                              PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
-                        }else{
-                             // bal change case
-                                tProcess.gfLastCardBal= GfeeFormat(sCardBal);
-                                CloseExitOperation(BalanceChange);
-                                return;
-                        }
-                    }
-                    else {
-                        if (tExit.sPaidAmt > 0)  debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
-                        else PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
-                    }   
-                }
+                if (tExit.sPaidAmt > 0) {
+                    if (iDevicetype == Ant) EnableCashcard(true);
+                    else debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+                } 
+                else PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);   
             }
         } else{
             PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
@@ -3717,7 +3782,7 @@ std::string operation::GetVTypeStr(int iVType)
     }
  }
 
- void operation::PBSExit(string sIU, int iDevicetype, string sCardNo, int sCardType,float sCardBal)
+ void operation::PBSExit(string sIU, DeviceType iDevicetype, string sCardNo, int sCardType,float sCardBal)
 {
     int iRet;
     CE_Time pt,pd,calTime;
@@ -3735,7 +3800,7 @@ std::string operation::GetVTypeStr(int iVType)
     //check block 
     string gsBlockIUPrefix = IniParser::getInstance()->FnGetBlockIUPrefix();
    // writelog ("blockIUprfix =" +gsBlockIUPrefix, "OPR");
-    if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos and sIU.length() == 10)
+    if(gsBlockIUPrefix.find(sIU.substr(0,3)) !=std::string::npos && sIU.length() == 10)
     {
         ShowLEDMsg("Lorry No Exit^Pls Reverse","Lorry No Exit^Pls Reverse");
         SendMsg2Server("90",sIU+",,,,,Block IU");
@@ -3769,19 +3834,29 @@ std::string operation::GetVTypeStr(int iVType)
 
     iRet = CheckSeason(sIU,2);
 
-    if (iRet == 1)
+    if (iRet == 1 || iRet == 12 || iRet == 9)
     {   
-        tExit.iTransType = GetSeasonTransType(tExit.iVehicleType,std::stoi(tSeason.rate_type), tExit.iTransType);
-        tProcess.giShowType = 0;
         if (tParas.giSeasonCharge == 0 || tExit.bNoEntryRecord == 1)  {
+            if (iRet == 9){tExit.iTransType = 10;}
             tExit.sFee = 0;
             tExit.sPaidAmt = 0;
-            tExit.sExitTime =  tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+            tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
             CloseExitOperation(SeasonParking);
             return;
         }
     }
     if (tExit.bNoEntryRecord == 1){
+          //---- complimentary Ticket
+         if(tExit.sRedeemNo != "" && tExit.sRedeemAmt == 0 ){  
+            tExit.iTransType = 10;
+            tExit.sPaidAmt = 0;
+            tExit.sCardNo = tExit.sRedeemNo;
+            ShowLEDMsg("No Entry Record^Compl Ticket","No Entry Record^Compl Ticket");
+            CloseExitOperation(FreeParking);
+            EnableCashcard(false);
+            return;
+        }     
+        //----------------------------
         int iAutoDebit;
 		float sAmt;
         writelog("No Entry, Check Auto Debit.", "OPR");
@@ -3793,6 +3868,7 @@ std::string operation::GetVTypeStr(int iVType)
             tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
         }else{
             SendMsg2Server("07",sIU);
+            ShowLEDMsg("No Entry Record^Press Intercom","No Entry Record^Press Intercom");
             return;
         }
     }else
@@ -3804,7 +3880,7 @@ std::string operation::GetVTypeStr(int iVType)
         pd.SetTime(tExit.sExitTime);
         tExit.lParkedTime = calTime.diffmin(pt.GetUnixTimestamp(), pd.GetUnixTimestamp());
         //-------
-        writelog("parked time: " + std::to_string(tExit.lParkedTime), "OPR");
+        writelog("parked time: " + std::to_string(tExit.lParkedTime) + " Mins", "OPR");
         //---------
         if(iRet == 1)
         {  
@@ -3820,7 +3896,7 @@ std::string operation::GetVTypeStr(int iVType)
                     tExit.sFee = CalFeeRAM(tExit.sEntryTime, tSeason.date_from, tExit.iVehicleType);
                     ShowLEDMsg("Season Start On^" + tSeason.date_from.substr(0,16),"Season Start On^" + tSeason.date_from.substr(0,16));
                     //-----
-                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                   std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 } else
                 {
                     tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
@@ -3833,15 +3909,16 @@ std::string operation::GetVTypeStr(int iVType)
                 writelog ("Season expired. EntryTime early than date to, cal fee for date to ~ exit", "OPR");
                 tExit.sFee = CalFeeRAM(tSeason.date_to, tExit.sExitTime, tExit.iVehicleType);
                 ShowLEDMsg("Season Expire On^" + tSeason.date_to.substr(0,16) ,"Season Expire On^" + tSeason.date_to.substr(0,16));
-                std::this_thread::sleep_for(std::chrono::seconds(2));
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
             } else
             {
                 tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
             }
         }
         //------ whole day season 
-        if (iRet == 1 && std::stoi(tSeason.rate_type) == 0)
+        if ((iRet == 1 && std::stoi(tSeason.rate_type) == 0) || iRet == 9 || iRet == 12)
         {
+            if (iRet == 9) { tExit.iTransType = 10;}
             tExit.sPaidAmt = 0;
             CloseExitOperation(SeasonParking);
             return;
@@ -3858,7 +3935,7 @@ std::string operation::GetVTypeStr(int iVType)
     showFee2User();
     //-------------
    // ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...");
-   if(tExit.sRedeemNo != "" and tExit.sRedeemAmt == 0 ){
+   if(tExit.sRedeemNo != "" && tExit.sRedeemAmt == 0 ){
         //---- complimentary Ticket
         tExit.iTransType = 10;
         tExit.sPaidAmt = 0;
@@ -3870,7 +3947,7 @@ std::string operation::GetVTypeStr(int iVType)
    } 
     if (tExit.sPaidAmt > 0) 
     {
-        if(iDevicetype != 1){
+        if(iDevicetype > Ant){
             if (GfeeFormat(tExit.sPaidAmt) <= GfeeFormat(sCardBal)){
                  debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
             }
@@ -3897,7 +3974,7 @@ std::string operation::GetVTypeStr(int iVType)
 
 }
 
-void operation::debitfromReader(string CardNo, float sFee,int iDevicetype,int sCardType, float sCardBal)
+void operation::debitfromReader(string CardNo, float sFee,DeviceType iDevicetype,int sCardType, float sCardBal)
 {
     long glDebitAmt;
     //---
@@ -3912,7 +3989,7 @@ void operation::debitfromReader(string CardNo, float sFee,int iDevicetype,int sC
 
     //ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Please Wait...");
 
-    if(iDevicetype == 3) {
+    if(iDevicetype == UPOS) {
         writelog("Send deduction Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +  " to UPOS. ", "OPR");
         writelog("UPOS batch number: " + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss(), "OPR");
         Upt::getInstance()->FnUptSendDeviceAutoPaymentRequest(glDebitAmt, Common::getInstance()->FnGetDateTimeFormat_yymmddhhmmss());
@@ -3930,11 +4007,11 @@ void operation::debitfromReader(string CardNo, float sFee,int iDevicetype,int sC
 
 }
 
-float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bCheckGT)
+float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bNoGT)
 {
     
     float parkingfee;
-
+    
     parkingfee = m_db->CalFeeRAM2G(eTime,payTime,iTransType);
    
     return parkingfee;
@@ -3943,16 +4020,25 @@ float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bCh
 void operation::SaveExit()
 {
     int iRet;
+    int giPMSEntryRecord = 0;
     std::string sLPRNo = "";
+    CE_Time pt,pd,calTime;
     
     if (tExit.sIUNo== "") return;
     writelog ("Save Exit trans:"+ tExit.sIUNo, "OPR");
     //----
     if (tExit.sRedeemAmt > (tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt)) tExit.sRedeemAmt = tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt;
     //----
+    if (tExit.bNoEntryRecord == 0 && tExit.lParkedTime <= 0) {
+        if (tExit.lParkedTime == -1 ) giPMSEntryRecord = 1;
+        pt.SetTime(tExit.sEntryTime);
+        pd.SetTime(tExit.sExitTime);
+        tExit.lParkedTime = calTime.diffmin(pt.GetUnixTimestamp(), pd.GetUnixTimestamp());
+    }
+    //----
     iRet = db::getInstance()->insertexittrans(tExit);
     if (iRet == iCentralSuccess){
-        if (tExit.bNoEntryRecord == 0) {
+        if (tExit.bNoEntryRecord == 0 && giPMSEntryRecord == 0 ) {
             iRet = db::getInstance()->updatemovementtrans(tExit);
         }else  {
             iRet = db::getInstance()->insert2movementtrans(tExit);
@@ -3962,6 +4048,7 @@ void operation::SaveExit()
     if (iRet == iCentralSuccess || iRet == iLocalSuccess)
     {
         tProcess.setLastIUNo(tExit.sIUNo);
+        tProcess.setLastPaidTrans(tExit.sIUNo);
         tProcess.setLastTransTime(std::chrono::steady_clock::now());
     }
     //-------
@@ -3988,6 +4075,10 @@ void operation::SaveExit()
     }
     tProcess.gbsavedtrans = true;
     tExit.gbPaid.store(true);
+    if (tExit.sPaidAmt == 0) {
+        tProcess.gsLastCardNo = tExit.sCardNo;
+        tProcess.gbLastPaidStatus.store(true);
+    }
     //-------
     PrintReceipt();
 }
@@ -3997,8 +4088,14 @@ void operation::PrintReceipt()
     // gbflag4Receipt:   0: default   1: button press  2: Receipt printed
 
     if (tExit.iflag4Receipt == 0) return;
+    //--------
+    if (tPBSError[iPrinter].ErrNo != 0) {
+        writelog ("Printer Error while Print Receipt", "OPR");
+        ShowLEDMsg("Printer Error^Press Intercom ", "Printer Error^Press Intercom");
+        return;
+    }
     //-------
-   if (tExit.iflag4Receipt == 1 and tExit.gbPaid.load() == true and tExit.sPaidAmt > 0) {
+   if (tExit.iflag4Receipt == 1 && tExit.gbPaid.load() == true && tExit.sPaidAmt > 0) {
         
         PrintTR(false);
         tExit.iflag4Receipt = 2;
@@ -4057,6 +4154,13 @@ void operation::CloseExitOperation(TransType iStatus)
             tExit.iStatus = 3;
             sLEDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
             sLCDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            break;
+        }
+        case Manualopen:
+        {
+            tExit.iStatus = 4;
+            sLEDMsg = "Please process^ Have A Nice Day!";
+            sLCDMsg = "Please Process^ Have A Nice Day!";
             break;
         }
         default:
@@ -4144,7 +4248,6 @@ void operation::ticketScan(std::string skeyedNo)
     std::string sMsg = "";
     long lParkTime = 0;
     std::string TT = "";
-    int ticketType = 0; // 0 = Invalid, 1 = ticket barcode = 12, 2 = ticket barcode = 9
     bool isRedemptionTicket = false;
 
     //--------
@@ -4166,10 +4269,8 @@ void operation::ticketScan(std::string skeyedNo)
         }
     }
 
-    if (tExit.giDeductionStatus == Doingdeduction ) {
-        if (tProcess.gbUPOSStatus == Enable) EnableUPOS(false);
-        else EnableLCSC(false);
-    } 
+    if (tProcess.gbUPOSStatus == Enable) EnableUPOS(false);
+    else EnableLCSC(false);
     //--------
     if (skeyedNo.length() >= 12)
     {
@@ -4296,10 +4397,8 @@ void operation::ticketScan(std::string skeyedNo)
                 else
                 {
                     ShowLEDMsg(tExitMsg.MsgExit_XNoCard[0], tExitMsg.MsgExit_XNoCard[1]);
-                    if (tExit.giDeductionStatus == Doingdeduction) {
-                        tExit.giDeductionStatus == WaitingCard;
-                        EnableCashcard(true);
-                    }
+                    EnableCashcard(true);
+                    return;
                 }
 
             }
@@ -4333,7 +4432,7 @@ void operation::ticketScan(std::string skeyedNo)
                         ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
                         tExit.sTag = "Complimentary";
                         SendMsg2Server("90", sCardTkNo + ",,,,,Compl. Ticket Wait for Card");
-                       // EnableCashcard(true);
+                        EnableCashcard(true);
                         return;
                     }
                     else
@@ -4396,12 +4495,6 @@ Exit_Sub:
     if (tExit.bPayByEZPay == true)
     {
         ShowLEDMsg("You may scan^Compl Ticket", "");
-        return;
-    }
-
-    if (tExit.giDeductionStatus == Doingdeduction) {
-        tExit.giDeductionStatus = WaitingCard;
-        EnableCashcard(true);
     }
     return;
 }
@@ -4468,4 +4561,35 @@ void operation::showFee2User(bool bPaying)
     SendMsg2Server("90", ss.str());
     //------
     tExit.sPaidAmt = GfeeFormat(sFee2Pay);
+}
+
+void operation::ReceivedEntryRecord()
+{
+    CE_Time pt,pd,calTime;
+
+    tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+
+    writelog("Cal Fee Time: " + tExit.sExitTime, "OPR");
+    
+    tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
+    //--------------
+    if (tExit.iRedeemTime > 0) RedeemTime2Amt();
+    //-----
+    tExit.sPaidAmt = GfeeFormat(tExit.sFee - tExit.sRebateAmt - tExit.sRedeemAmt + tExit.sOweAmt);
+
+    if (tExit.sPaidAmt < 0)  tExit.sPaidAmt = 0;
+    //------
+    writelog("Total paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "OPR");
+    //------
+    showFee2User();
+    //-------------
+    if (tExit.sPaidAmt > 0) 
+    {
+        tExit.giDeductionStatus = WaitingCard;
+        EnableCashcard(true);
+    }
+    else
+    {
+       CloseExitOperation(FreeParking);
+    } 
 }

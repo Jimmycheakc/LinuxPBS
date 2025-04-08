@@ -24,7 +24,7 @@ typedef enum : unsigned int
     CmdDownloadTariff       = 32,
     CmdDownloadHoliday      = 33,
     CmdSetTime              = 35,
-    CmdFeeForNoEntry        = 36,
+    CmdTimeForNoEntry       = 36,
     CmdClearSeason          = 37,
     CmdDownloadtype         = 41,
     CmdCloseBarrier         = 42,

@@ -209,7 +209,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - operation::getInstance()->tProcess.getLastIUEntryTime());
 
         if ((value.length() == 10) && (operation::getInstance()->tProcess.getLastIUNo() == value)
-            && (sameAsLastIUDuration.count() <= operation::getInstance()->tParas.giMaxTransInterval))
+            && (sameAsLastIUDuration.count() <= operation::getInstance()->tParas.giMaxTransInterval) && (operation::getInstance()->gtStation.iType == tientry))
         {
             std::stringstream ss;
             ss << "Same as last IU, duration :" << sameAsLastIUDuration.count() << " less than Maximum interval: " << operation::getInstance()->tParas.giMaxTransInterval;
@@ -671,6 +671,8 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
                 {
                     DIO::getInstance()->FnSetManualOpenBarrierStatusFlag(0);
                     db::getInstance()->AddSysEvent("Barrier up");
+                    //----- add manual open barrier(by operator)
+                    operation::getInstance()->ManualOpenBarrier(false);
                 }
                 break;
             }
@@ -683,7 +685,7 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT");
 
-                operation::getInstance()->ManualOpenBarrier();
+                operation::getInstance()->writelog("Open barrier action(by operator)", "OPR");
                 break;
             }
             case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT:
@@ -1672,6 +1674,30 @@ bool EventHandler::handlePrinterStatus(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << intEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        switch (intEvent->data)
+        {
+            case 0:
+            {
+                operation::getInstance()->HandlePBSError(PrinterNoError);
+                break;
+            }
+            case 1:
+            {
+                operation::getInstance()->HandlePBSError(PrinterNoPaper);
+                break;
+            }
+            case -1:
+            {
+                operation::getInstance()->HandlePBSError(PrinterError);
+                break;
+            }
+            default:
+            {
+                operation::getInstance()->HandlePBSError(PrinterError);
+                break;
+            }
+        }
     }
     else
     {

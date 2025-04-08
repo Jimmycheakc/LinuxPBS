@@ -19,8 +19,19 @@ typedef enum : unsigned int
     GracePeriod        = 2,
     DeductionOK        = 3,
     DeductionFail      = 4,
-    BalanceChange      = 5
+    Manualopen         = 5,
+    BalanceChange      = 6
 } TransType;
+
+typedef enum : unsigned int
+{
+    // device type : 0 = PMS(EntryTime), 1 = Ant, 2 = LCSC, 3 = UPOS, 4 = CHU
+    PMSEntrytime        = 0,
+    Ant                 = 1,
+    LCSC                = 2,
+    UPOS                = 3,
+    CHU                 = 4
+} DeviceType;
 
 class operation
 {
@@ -55,9 +66,9 @@ public:
     void Initdevice(io_context& ioContext);
     void ShowLEDMsg(string LEDMsg, string LCDMsg);
     void PBSEntry(string sIU);
-    void PBSExit(string sIU,int iDevicetype,string sCardNo = "", int sCardType = 0,float sCardBal = 0);
-    void debitfromReader(string CardNo, float sFee,int iDevicetype,int sCardType = 0,float sCardBal = 0);
-    void CheckIUorCardStatus(string sCheckNo, int iDevicetype,string sCardNo = "",int sCardType = 0,float sCardBal = 0);
+    void PBSExit(string sIU,DeviceType iDevicetype,string sCardNo = "", int sCardType = 0,float sCardBal = 0);
+    void debitfromReader(string CardNo, float sFee, DeviceType iDevicetype,int sCardType = 0,float sCardBal = 0);
+    void CheckIUorCardStatus(string sCheckNo, DeviceType iDevicetype,string sCardNo = "",int sCardType = 0,float sCardBal = 0);
     float CalFeeRAM(string eTime, string payTime,int iTransType, bool bCheckGT = false);
     void Setdefaultparameter();
     string getIPAddress(); 
@@ -83,7 +94,7 @@ public:
     void CloseExitOperation(TransType iStatus);
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
-    void ManualOpenBarrier();
+    void ManualOpenBarrier(bool bPMS);
     void ManualCloseBarrier();
     bool LoadParameter();
     bool LoadedparameterOK();
@@ -109,7 +120,7 @@ public:
     void DebitOK(const std::string& sIUNO, const std::string& sCardNo, 
                 const std::string& sPaidAmt = "", const std::string& sBal = "",
                 int iCardType = 0, const std::string& sTopupAmt = "",
-                int iDeviceType = 0, const std::string& sTransTime = "");
+                DeviceType iDevicetype = Ant, const std::string& sTransTime = "");
     std::string GetVTypeStr(int iVType);
     void ticketScan(std::string skeyedNo);
     void ticketOK();
@@ -117,6 +128,7 @@ public:
     
     float GfeeFormat(float value);
     void  RedeemTime2Amt();
+    void  ReceivedEntryRecord();
     
     void Openbarrier();
     void closeBarrier();
@@ -126,6 +138,7 @@ public:
     void FnLoopATimeoutHandler();
 
     void Clearme();
+    void RetryLCSCLastCommand();
 
      /**
      * Singleton opertation should not be cloneable.

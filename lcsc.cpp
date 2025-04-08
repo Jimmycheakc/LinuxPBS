@@ -1767,6 +1767,7 @@ bool LCSCReader::isCurrentCmdResponse(LCSCReader::LCSC_CMD currCmd, uint8_t resp
 
 void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
 {
+    bool isResponse = false;
     std::stringstream receivedRespStream;
     std::stringstream rspEventStream;
 
@@ -1783,6 +1784,7 @@ void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
         // Check command code is response
         if ((msg.getCode() == static_cast<uint8_t>(LCSC_CMD_CODE::RESPONSE)) && isCurrentCmdResponse(getCurrentCmd(), msg.getType()))
         {
+            isResponse = true;
             // Cancel rspTimer_ timer
             rspTimer_.cancel();
             // Handle command response
@@ -1799,6 +1801,13 @@ void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
     {
         Logger::getInstance()->FnLog("Invalid CRC.", logFileName_, "LCSC");
         rspEventStream << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::rCRCError));
+    }
+
+    if (isResponse == false && continueReadFlag_.load() == false && (getCurrentCmd() == LCSC_CMD::GET_CARD_ID || getCurrentCmd() == LCSC_CMD::CARD_BALANCE))
+    {
+        rspEventStream.str("");
+        rspEventStream.clear();
+        Logger::getInstance()->FnLog("No raise event due to stop read.", logFileName_, "LCSC");
     }
 
     // Raise event
@@ -2110,6 +2119,13 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
         {
             bool getCardIDSuccess = false;
 
+            // If received the stop read, no need to proceed the response
+            if (continueReadFlag_.load() == false)
+            {
+                Logger::getInstance()->FnLog("Stop read, no need to process the response.", logFileName_, "LCSC");
+                break;
+            }
+
             switch (payload[0])
             {
                 case 0x00:  // Result cmd success
@@ -2190,6 +2206,12 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
         case 0x21:  // Get Card Balance
         {
             bool getCardBalanceSuccess = false;
+            // If received the stop read, no need to proceed the response
+            if (continueReadFlag_.load() == false)
+            {
+                Logger::getInstance()->FnLog("Stop read, no need to process the response.", logFileName_, "LCSC");
+                break;
+            }
 
             switch (payload[0])
             {
@@ -2860,11 +2882,14 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
             }
             else
             {
+                Logger::getInstance()->FnLog("Timeout but stop read, no need to raise event.", logFileName_, "LCSC");
+                /*
                 std::ostringstream oss;
                 oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
                 EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", oss.str());
+                */
             }
             break;
         }
@@ -2877,11 +2902,14 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
             }
             else
             {
+                Logger::getInstance()->FnLog("Timeout but stop read, no need to raise event.", logFileName_, "LCSC");
+                /*
                 std::ostringstream oss;
                 oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
                 EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", oss.str());
+                */
             }
             break;
         }
@@ -2891,7 +2919,7 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
             oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
-            EventManager::getInstance()->FnEnqueueEvent("handleLcscReaderGetCardDeduct", oss.str());
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardDeduct", oss.str());
             break;
         }
         case LCSC_CMD::CARD_RECORD:
@@ -2900,7 +2928,7 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
             oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
-            EventManager::getInstance()->FnEnqueueEvent("handleLcscReaderGetCardRecord", oss.str());
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardRecord", oss.str());
             break;
         }
         case LCSC_CMD::CARD_FLUSH:
@@ -2909,7 +2937,7 @@ void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::m
             oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
-            EventManager::getInstance()->FnEnqueueEvent("handleLcscReaderGetCardFlush", oss.str());
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardFlush", oss.str());
             break;
         }
         case LCSC_CMD::GET_TIME:

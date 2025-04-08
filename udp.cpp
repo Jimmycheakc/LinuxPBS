@@ -368,7 +368,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 		{
 			operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
 			operation::getInstance()->writelog("open barrier from PMS","UDP");
-			operation::getInstance()->ManualOpenBarrier();
+			operation::getInstance()->ManualOpenBarrier(true);
 			break;
 		}
 		case CmdCloseBarrier:
@@ -464,16 +464,24 @@ void udpclient::processdata (const char* data, std::size_t length)
 			operation::getInstance()->m_db->loadTR();
 			break;
 		}
-		case CmdFeeForNoEntry:
+		case CmdTimeForNoEntry:
 		{
 			operation::getInstance()->writelog("Received data:" + std::string(data, length), "UDP");
-			operation::getInstance()->writelog("Fee For No Entry Record.", "UDP");
-			if (operation::getInstance()->tProcess.gbLoopApresent.load() == false) {
-				operation::getInstance()->writelog("No Vehicle on the Loop.", "DB");
+			
+			if (operation::getInstance()->tProcess.gbLoopApresent.load() == true) {
+				std::vector<std::string> tmpStr;
+				boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
+				//--------
+				operation::getInstance()->tExit.sEntryTime = tmpStr[1];
+				operation::getInstance()->writelog("Received Entry time: " + operation::getInstance()->tExit.sEntryTime + " from PMS.", "UDP");
+				operation::getInstance()->tExit.bNoEntryRecord = 0;
+				operation::getInstance()->ReceivedEntryRecord();
+
 			}else {
+				operation::getInstance()->writelog("No Vehicle on the Loop.", "DB");
 
 			}
-			
+			break;
 		}
 		case CmdSetLotCount:
 			break;

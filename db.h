@@ -86,8 +86,8 @@ public:
     int GetDayTypeWithHE(CE_Time curr_date);
     float HasPaidWithinPeriod(string sTimeFrom, string sTimeTo);
     float RoundIt(float val, int giTariffFeeMode);
-    float CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bCheckGT = false);
-    float CalFeeRAM2G(string eTime, string payTime,int iTransType, bool bCheckGT = false);
+    float CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bNoGT = false);
+    float CalFeeRAM2G(string eTime, string payTime,int iTransType, bool bNoGT = false);
     int GetXTariff(int &iAutoDebit, float &sAmt, int iVType = 0);
     string CalParkedTime(long lpt);
 
@@ -120,7 +120,7 @@ public:
 	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
     int clearseason();
     int IsBlackListIU(string sIU);
-    int CheckCardOK(string sIUNo);
+    int CheckCardOK(string sCardNo);
     int AddRemoteControl(string sTID,string sAction, string sRemarks);
     int AddSysEvent(string sEvent);
 
