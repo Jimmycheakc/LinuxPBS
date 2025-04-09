@@ -358,7 +358,7 @@ void Lpr::handleReceiveRearCameraData(const char* data, std::size_t length)
 /********************************************************************/
 /********************************************************************/
 
-void Lpr::FnSendTransIDToLPR(const std::string& transID)
+void Lpr::FnSendTransIDToLPR(const std::string& transID, bool useFrontCamera)
 {
     std::stringstream sSend;
     std::vector<std::string> tmpStr;
@@ -373,14 +373,19 @@ void Lpr::FnSendTransIDToLPR(const std::string& transID)
 
     sSend << "#LPRS_STX#" << transID << "#" << sDateTime << "#LPRS_ETX#";
 
-    if (frontCameraInitialized_ == true)
+    if (useFrontCamera == true)
     {
-        SendTransIDToLPR_Front(sSend.str());
+        if (frontCameraInitialized_ == true)
+        {
+            SendTransIDToLPR_Front(sSend.str());
+        }
     }
-
-    if (rearCameraInitialized_ == true)
+    else
     {
-        SendTransIDToLPR_Rear(sSend.str());
+        if (rearCameraInitialized_ == true)
+        {
+            SendTransIDToLPR_Rear(sSend.str());
+        }
     }
 }
 

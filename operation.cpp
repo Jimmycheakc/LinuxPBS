@@ -330,8 +330,23 @@ void operation::LoopACome()
     Clearme();
     DIO::getInstance()->FnSetLCDBacklight(1);
     //----
-    tEntry.gsTransID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
-    Lpr::getInstance()->FnSendTransIDToLPR(tEntry.gsTransID);
+    int vechicleType = GetVTypeFromLoop();
+    std::string transID = "";
+    bool useFrontCamera = false;
+    // Motorcycle - use rear camera
+    if (vechicleType == 7)
+    {
+        useFrontCamera = false;
+        transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "B-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+    }
+    // Car or Lorry - use front camera
+    else
+    {
+        useFrontCamera = true;
+        transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "F-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+    }
+    tEntry.gsTransID = transID;
+    Lpr::getInstance()->FnSendTransIDToLPR(tEntry.gsTransID, useFrontCamera);
 
     //----
     if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();

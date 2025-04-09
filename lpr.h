@@ -27,7 +27,7 @@ public:
     static Lpr* getInstance();
 
     void FnLprInit(boost::asio::io_context& mainIOContext);
-    void FnSendTransIDToLPR(const std::string& transID);
+    void FnSendTransIDToLPR(const std::string& transID, bool useFrontCamera);
     struct LPREventData deserializeEventData(const std::string& serializeData);
     void FnLprClose();
 
