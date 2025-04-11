@@ -301,31 +301,27 @@ int LCSCReader::FnLCSCReaderInit(unsigned int baudRate, const std::string& comPo
     }
     catch (const boost::filesystem::filesystem_error& e)
     {
-        std::ostringstream oss;
-        oss << "Boost.Filesystem Exception during creating local LCSC folder: " << e.what();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        Logger::getInstance()->FnLog(oss.str());
+        std::stringstream ss;
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const boost::system::system_error& e)
     {
-        std::ostringstream oss;
-        oss << "Boost.Asio Exception during LCSC Reader Initialization: " << e.what();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        Logger::getInstance()->FnLog(oss.str());
+        std::stringstream ss;
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
-        std::ostringstream oss;
-        oss << "Exception during LCSC Reader Initialization: " << e.what();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        Logger::getInstance()->FnLog(oss.str());
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
-        std::ostringstream oss;
-        oss << "Unknown Exception during LCSC Reader Initialization.";
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        Logger::getInstance()->FnLog(oss.str());
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 
     return ret;
@@ -975,48 +971,63 @@ void LCSCReader::popFromCommandQueueAndEnqueueWrite()
 
 void LCSCReader::popFromChunkCommandQueueAndEnqueueWrite()
 {
-    bool hasCommand = false;
-    struct CommandWithData cmdData(LCSC_CMD::GET_STATUS_CMD);
-
-    std::lock_guard<std::mutex> lock(commandQueueMutex_);
-
-    std::ostringstream oss;
-    oss << "Command queue size: " << commandQueue_.size() << std::endl;
-    if (!commandQueue_.empty())
+    try
     {
-        oss << "Commands in queue: " << std::endl;
-        for (const auto& cmdData : commandQueue_)
-        {
-            oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
-        }
-    }
-    else
-    {
-        oss << "Command queue is empty." << std::endl;
-    }
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        bool hasCommand = false;
+        struct CommandWithData cmdData(LCSC_CMD::GET_STATUS_CMD);
 
-    {
+        std::lock_guard<std::mutex> lock(commandQueueMutex_);
+
+        std::ostringstream oss;
+        oss << "Command queue size: " << commandQueue_.size() << std::endl;
         if (!commandQueue_.empty())
         {
-            hasCommand = true;
-            cmdData = commandQueue_.front();
-            commandQueue_.pop_front();
+            oss << "Commands in queue: " << std::endl;
+            for (const auto& cmdData : commandQueue_)
+            {
+                oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
+            }
+        }
+        else
+        {
+            oss << "Command queue is empty." << std::endl;
+        }
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+        {
+            if (!commandQueue_.empty())
+            {
+                hasCommand = true;
+                cmdData = commandQueue_.front();
+                commandQueue_.pop_front();
+            }
+        }
+
+        if (hasCommand)
+        {
+            setCurrentCmd(cmdData.cmd);
+            auto chunksData = std::static_pointer_cast<std::vector<std::vector<uint8_t>>>(cmdData.data);
+
+            for (const auto& chunk : *chunksData)
+            {
+                std::shared_ptr<void> req_data = std::make_shared<std::vector<uint8_t>>(chunk);
+                enqueueChunkCommand(cmdData.cmd, req_data);
+            }
+
+            sendNextChunkCommandData();
         }
     }
-
-    if (hasCommand)
+    catch (const std::exception& e)
     {
-        setCurrentCmd(cmdData.cmd);
-        auto chunksData = std::static_pointer_cast<std::vector<std::vector<uint8_t>>>(cmdData.data);
-
-        for (const auto& chunk : *chunksData)
-        {
-            std::shared_ptr<void> req_data = std::make_shared<std::vector<uint8_t>>(chunk);
-            enqueueChunkCommand(cmdData.cmd, req_data);
-        }
-
-        sendNextChunkCommandData();
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -1286,11 +1297,15 @@ void LCSCReader::encryptAES256(const std::vector<uint8_t>& key, const std::vecto
     }
     catch (const std::exception& e)
     {
-        Logger::getInstance()->FnLog("AES encryption error: " + std::string(e.what()), logFileName_, "LCSC");
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
-        Logger::getInstance()->FnLog("Unknown error during AES encryption.", logFileName_, "LCSC");
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -1350,7 +1365,9 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             break;
         }
@@ -1421,7 +1438,9 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             break;
         }
@@ -1455,7 +1474,9 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             break;
         }
@@ -1503,7 +1524,9 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             break;
         }
@@ -1529,7 +1552,9 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             break;
         }
@@ -1555,7 +1580,9 @@ std::vector<uint8_t> LCSCReader::prepareCmd(LCSCReader::LCSC_CMD cmd, std::share
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Exception Error: " + std::string(e.what()), logFileName_, "LCSC");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             break;
         }
@@ -1840,11 +1867,11 @@ void LCSCReader::handleUploadLcscFilesCmdResponse(const CscPacket& msg, const st
                 }
             }
         }
-        catch (const std::exception& ex)
+        catch (const std::exception& e)
         {
-            std::ostringstream oss;
-            oss << "Exception : " << ex.what();
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            std::stringstream ss;
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
 
         if ((msg_status == static_cast<int>(mCSCEvents::sBLUploadSuccess))
@@ -1881,11 +1908,11 @@ void LCSCReader::handleUploadLcscGetStatusCmdResponse(const CscPacket& msg, cons
                 }
             }
         }
-        catch (const std::exception& ex)
+        catch (const std::exception& e)
         {
-            std::ostringstream oss;
-            oss << "Exception : " << ex.what();
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            std::stringstream ss;
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
 
         if (msg_status == static_cast<int>(mCSCEvents::sGetStatusOK))
@@ -2331,8 +2358,23 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
                     // Deduct successfully, need to flush card
-                    std::shared_ptr<void> req_data = std::make_shared<uint32_t>(static_cast<uint32_t>(std::stoul(seed, nullptr, 16)));
-                    enqueueCommandToFront(LCSC_CMD::CARD_FLUSH, req_data);
+                    try
+                    {
+                        std::shared_ptr<void> req_data = std::make_shared<uint32_t>(static_cast<uint32_t>(std::stoul(seed, nullptr, 16)));
+                        enqueueCommandToFront(LCSC_CMD::CARD_FLUSH, req_data);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::stringstream ss;
+                        ss << __func__ << ", Exception: " << e.what();
+                        Logger::getInstance()->FnLogExceptionError(ss.str());
+                    }
+                    catch (...)
+                    {
+                        std::stringstream ss;
+                        ss << __func__ << ", Exception: Unknown Exception";
+                        Logger::getInstance()->FnLogExceptionError(ss.str());
+                    }
                     break;
                 }
                 case 0x01:  // Result corrupted cmd
@@ -3069,29 +3111,46 @@ void LCSCReader::FnSendSetTime()
 
 std::vector<uint8_t> LCSCReader::readFile(const std::filesystem::path& filePath)
 {
-    std::ifstream file(filePath.string(), std::ios::binary | std::ios::ate);
-    
-    if (!file.is_open())
+    try
     {
-        std::ostringstream oss;
-        oss << __func__ << " Error opening file: " << filePath;
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LSCS");
+        std::ifstream file(filePath.string(), std::ios::binary | std::ios::ate);
+        
+        if (!file.is_open())
+        {
+            std::ostringstream oss;
+            oss << __func__ << " Error opening file: " << filePath;
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LSCS");
+            return {};
+        }
+
+        std::streamsize fileSize = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        std::vector<uint8_t> fileData(fileSize);
+        if (file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+        {
+            return fileData;
+        }
+        else
+        {
+            std::ostringstream oss;
+            oss << __func__ << " Error reading file: " << filePath;
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            return {};
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", file path: " << filePath.string() << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return {};
     }
-
-    std::streamsize fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    std::vector<uint8_t> fileData(fileSize);
-    if (file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+    catch (...)
     {
-        return fileData;
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << __func__ << " Error reading file: " << filePath;
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        std::stringstream ss;
+        ss << __func__ << ", file path: " << filePath.string() << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return {};
     }
 }
@@ -3113,190 +3172,244 @@ std::vector<std::vector<uint8_t>> LCSCReader::chunkData(const std::vector<uint8_
 
 int LCSCReader::FnSendUploadCFGFile(const std::string& path)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    int ret = -1;
 
-    const std::filesystem::path filePath(path);
-    if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
+    try
     {
-        std::vector<unsigned char> fileData = readFile(filePath);
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
-        if (!fileData.empty() && (fileData.size() > 6))
+        const std::filesystem::path filePath(path);
+        if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
         {
-            std::size_t chunkSize = 512;
-            std::vector<std::vector<uint8_t>> chunks = chunkData(fileData, chunkSize);
-            std::vector<std::vector<uint8_t>> dataChunks;
+            std::vector<unsigned char> fileData = readFile(filePath);
 
-            for (const auto& chunk : chunks)
+            if (!fileData.empty() && (fileData.size() > 6))
             {
-                std::vector<uint8_t> cfgData;
-                std::size_t chunkDataSize = chunk.size();
-                cfgData.push_back(((chunkDataSize >> 8) & 0xFF));
-                cfgData.push_back((chunkDataSize & 0xFF));
-                cfgData.insert(cfgData.end(), chunk.begin(), chunk.end());
-                dataChunks.push_back(cfgData);
-            }
+                std::size_t chunkSize = 512;
+                std::vector<std::vector<uint8_t>> chunks = chunkData(fileData, chunkSize);
+                std::vector<std::vector<uint8_t>> dataChunks;
 
-            std::vector<uint8_t> cfgLastData;
-            cfgLastData.push_back(0x00);
-            cfgLastData.push_back(0x00);
-            dataChunks.push_back(cfgLastData);
-            std::shared_ptr<void> req_data = std::make_shared<std::vector<std::vector<uint8_t>>>(dataChunks);
-            enqueueCommand(LCSC_CMD::UPLOAD_CFG_FILE, req_data);
+                for (const auto& chunk : chunks)
+                {
+                    std::vector<uint8_t> cfgData;
+                    std::size_t chunkDataSize = chunk.size();
+                    cfgData.push_back(((chunkDataSize >> 8) & 0xFF));
+                    cfgData.push_back((chunkDataSize & 0xFF));
+                    cfgData.insert(cfgData.end(), chunk.begin(), chunk.end());
+                    dataChunks.push_back(cfgData);
+                }
+
+                std::vector<uint8_t> cfgLastData;
+                cfgLastData.push_back(0x00);
+                cfgLastData.push_back(0x00);
+                dataChunks.push_back(cfgLastData);
+                std::shared_ptr<void> req_data = std::make_shared<std::vector<std::vector<uint8_t>>>(dataChunks);
+                enqueueCommand(LCSC_CMD::UPLOAD_CFG_FILE, req_data);
+                ret = 0;
+            }
+            else
+            {
+                // Todo: need to raise event - sCFGUploadCorrupt
+                std::ostringstream oss;
+                oss << "File not found or not a regular file :" << filePath;
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            }
         }
         else
         {
-            // Todo: need to raise event - sCFGUploadCorrupt
+            // Todo: need to raise event - sendFailed
             std::ostringstream oss;
-            oss << "File not found or not a regular file :" << filePath;
+            oss << "File not found or not a regular file :" <<filePath;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
         }
     }
-    else
+    catch (const std::exception& e)
     {
-        // Todo: need to raise event - sendFailed
-        std::ostringstream oss;
-        oss << "File not found or not a regular file :" <<filePath;
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
-    return 0;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    return ret;
 }
 
 int LCSCReader::FnSendUploadCILFile(const std::string& path)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    int ret = -1;
 
-    const std::filesystem::path filePath(path);
-    if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
+    try
     {
-        std::vector<unsigned char> fileData = readFile(filePath);
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
-        if (!fileData.empty() && (fileData.size() > 6))
+        const std::filesystem::path filePath(path);
+        if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
         {
-            std::size_t chunkSize = 512;
-            std::vector<std::vector<uint8_t>> chunks = chunkData(fileData, chunkSize);
-            std::vector<std::vector<uint8_t>> dataChunks;
+            std::vector<unsigned char> fileData = readFile(filePath);
 
-            bool first = true;
-            for (const auto& chunk : chunks)
+            if (!fileData.empty() && (fileData.size() > 6))
             {
-                std::vector<uint8_t> cilData;
-                if (first)
-                {
-                    //  Block list issuer type - refer back to 
-                    //  EPS CCS - CPO Interface Spec v1.4 _26012010.pdf (Page 14)
-                    uint8_t BlockListIssuerType = chunk[5] - 143;
-                    std::size_t chunkDataSize = chunk.size();
-                    cilData.push_back(BlockListIssuerType);
-                    cilData.push_back(((chunkDataSize >> 8) & 0xFF));
-                    cilData.push_back((chunkDataSize & 0xFF));
-                    cilData.insert(cilData.end(), chunk.begin(), chunk.end());
-                    first = false;
-                }
-                else
-                {
-                    std::size_t chunkDataSize = chunk.size();
-                    cilData.push_back(0x00);
-                    cilData.push_back(((chunkDataSize >> 8) & 0xFF));
-                    cilData.push_back((chunkDataSize & 0xFF));
-                    cilData.insert(cilData.end(), chunk.begin(), chunk.end());
-                }
-                dataChunks.push_back(cilData);
-            }
+                std::size_t chunkSize = 512;
+                std::vector<std::vector<uint8_t>> chunks = chunkData(fileData, chunkSize);
+                std::vector<std::vector<uint8_t>> dataChunks;
 
-            std::vector<uint8_t> cilLastData;
-            cilLastData.push_back(0x00);
-            cilLastData.push_back(0x00);
-            cilLastData.push_back(0x00);
-            dataChunks.push_back(cilLastData);
-            std::shared_ptr<void> req_data = std::make_shared<std::vector<std::vector<uint8_t>>>(dataChunks);
-            enqueueCommand(LCSC_CMD::UPLOAD_CIL_FILE, req_data);
+                bool first = true;
+                for (const auto& chunk : chunks)
+                {
+                    std::vector<uint8_t> cilData;
+                    if (first)
+                    {
+                        //  Block list issuer type - refer back to 
+                        //  EPS CCS - CPO Interface Spec v1.4 _26012010.pdf (Page 14)
+                        uint8_t BlockListIssuerType = chunk[5] - 143;
+                        std::size_t chunkDataSize = chunk.size();
+                        cilData.push_back(BlockListIssuerType);
+                        cilData.push_back(((chunkDataSize >> 8) & 0xFF));
+                        cilData.push_back((chunkDataSize & 0xFF));
+                        cilData.insert(cilData.end(), chunk.begin(), chunk.end());
+                        first = false;
+                    }
+                    else
+                    {
+                        std::size_t chunkDataSize = chunk.size();
+                        cilData.push_back(0x00);
+                        cilData.push_back(((chunkDataSize >> 8) & 0xFF));
+                        cilData.push_back((chunkDataSize & 0xFF));
+                        cilData.insert(cilData.end(), chunk.begin(), chunk.end());
+                    }
+                    dataChunks.push_back(cilData);
+                }
+
+                std::vector<uint8_t> cilLastData;
+                cilLastData.push_back(0x00);
+                cilLastData.push_back(0x00);
+                cilLastData.push_back(0x00);
+                dataChunks.push_back(cilLastData);
+                std::shared_ptr<void> req_data = std::make_shared<std::vector<std::vector<uint8_t>>>(dataChunks);
+                enqueueCommand(LCSC_CMD::UPLOAD_CIL_FILE, req_data);
+                ret = 0;
+            }
+            else
+            {
+                // Todo: need to raise event - sCILUploadCorrupt
+                std::ostringstream oss;
+                oss << "File not found or not a regular file :" << filePath;
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            }
         }
         else
         {
-            // Todo: need to raise event - sCILUploadCorrupt
+            // Todo: need to raise event - sendFailed
             std::ostringstream oss;
-            oss << "File not found or not a regular file :" << filePath;
+            oss << "File not found or not a regular file :" <<filePath;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
         }
     }
-    else
+    catch (const std::exception& e)
     {
-        // Todo: need to raise event - sendFailed
-        std::ostringstream oss;
-        oss << "File not found or not a regular file :" <<filePath;
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 
-    return 0;
+    return ret;
 }
 
 int LCSCReader::FnSendUploadBLFile(const std::string& path)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    int ret = -1;
 
-    const std::filesystem::path filePath(path);
-    if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
+    try
     {
-        std::vector<unsigned char> fileData = readFile(filePath);
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
-        if (!fileData.empty() && (fileData.size() > 6))
+        const std::filesystem::path filePath(path);
+        if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
         {
-            std::size_t chunkSize = 512;
-            std::vector<std::vector<uint8_t>> chunks = chunkData(fileData, chunkSize);
-            std::vector<std::vector<uint8_t>> dataChunks;
+            std::vector<unsigned char> fileData = readFile(filePath);
 
-            bool first = true;
-            for (const auto& chunk : chunks)
+            if (!fileData.empty() && (fileData.size() > 6))
             {
-                std::vector<uint8_t> blData;
-                if (first)
-                {
-                    //  Block list issuer type - refer back to 
-                    //  EPS CCS - CPO Interface Spec v1.4 _26012010.pdf (Page 15)
-                    uint8_t BlockListIssuerType = chunk[5] - 147;
-                    std::size_t chunkDataSize = chunk.size();
-                    blData.push_back(BlockListIssuerType);
-                    blData.push_back(((chunkDataSize >> 8) & 0xFF));
-                    blData.push_back((chunkDataSize & 0xFF));
-                    blData.insert(blData.end(), chunk.begin(), chunk.end());
-                    first = false;
-                }
-                else
-                {
-                    std::size_t chunkDataSize = chunk.size();
-                    blData.push_back(0x00);
-                    blData.push_back(((chunkDataSize >> 8) & 0xFF));
-                    blData.push_back((chunkDataSize & 0xFF));
-                    blData.insert(blData.end(), chunk.begin(), chunk.end());
-                }
-                dataChunks.push_back(blData);
-            }
+                std::size_t chunkSize = 512;
+                std::vector<std::vector<uint8_t>> chunks = chunkData(fileData, chunkSize);
+                std::vector<std::vector<uint8_t>> dataChunks;
 
-            std::vector<uint8_t> blLastData;
-            blLastData.push_back(0x00);
-            blLastData.push_back(0x00);
-            blLastData.push_back(0x00);
-            dataChunks.push_back(blLastData);
-            std::shared_ptr<void> req_data = std::make_shared<std::vector<std::vector<uint8_t>>>(dataChunks);
-            enqueueCommand(LCSC_CMD::UPLOAD_BL_FILE, req_data);
+                bool first = true;
+                for (const auto& chunk : chunks)
+                {
+                    std::vector<uint8_t> blData;
+                    if (first)
+                    {
+                        //  Block list issuer type - refer back to 
+                        //  EPS CCS - CPO Interface Spec v1.4 _26012010.pdf (Page 15)
+                        uint8_t BlockListIssuerType = chunk[5] - 147;
+                        std::size_t chunkDataSize = chunk.size();
+                        blData.push_back(BlockListIssuerType);
+                        blData.push_back(((chunkDataSize >> 8) & 0xFF));
+                        blData.push_back((chunkDataSize & 0xFF));
+                        blData.insert(blData.end(), chunk.begin(), chunk.end());
+                        first = false;
+                    }
+                    else
+                    {
+                        std::size_t chunkDataSize = chunk.size();
+                        blData.push_back(0x00);
+                        blData.push_back(((chunkDataSize >> 8) & 0xFF));
+                        blData.push_back((chunkDataSize & 0xFF));
+                        blData.insert(blData.end(), chunk.begin(), chunk.end());
+                    }
+                    dataChunks.push_back(blData);
+                }
+
+                std::vector<uint8_t> blLastData;
+                blLastData.push_back(0x00);
+                blLastData.push_back(0x00);
+                blLastData.push_back(0x00);
+                dataChunks.push_back(blLastData);
+                std::shared_ptr<void> req_data = std::make_shared<std::vector<std::vector<uint8_t>>>(dataChunks);
+                enqueueCommand(LCSC_CMD::UPLOAD_BL_FILE, req_data);
+                ret = 0;
+            }
+            else
+            {
+                // Todo: need to raise event - BLuploadCorrupt
+                std::ostringstream oss;
+                oss << "File not found or not a regular file :" << filePath;
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            }
         }
         else
         {
-            // Todo: need to raise event - BLuploadCorrupt
+            // Todo: need to raise event - sendFailed
             std::ostringstream oss;
-            oss << "File not found or not a regular file :" << filePath;
+            oss << "File not found or not a regular file :" <<filePath;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
         }
     }
-    else
+    catch (const std::exception& e)
     {
-        // Todo: need to raise event - sendFailed
-        std::ostringstream oss;
-        oss << "File not found or not a regular file :" <<filePath;
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 
-    return 0;
+    return ret;
 }
 
 bool LCSCReader::FnMoveCDAckFile()
@@ -4045,7 +4158,12 @@ void LCSCReader::FnUploadCDFile2(std::string path)
             Logger::getInstance()->FnLog(ss.str());
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 
-            FnSendUploadCFGFile(CDFPath_);
+            int ret = FnSendUploadCFGFile(CDFPath_);
+            if (ret == -1)
+            {
+                handleCmdErrorOrTimeout(LCSC_CMD::UPLOAD_CFG_FILE, mCSCEvents::sSendcmdfail);
+                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+            }
         }
         else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".sys"))
         {
@@ -4054,7 +4172,12 @@ void LCSCReader::FnUploadCDFile2(std::string path)
             Logger::getInstance()->FnLog(ss.str());
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 
-            FnSendUploadCILFile(CDFPath_);
+            int ret = FnSendUploadCILFile(CDFPath_);
+            if (ret == -1)
+            {
+                handleCmdErrorOrTimeout(LCSC_CMD::UPLOAD_CIL_FILE, mCSCEvents::sSendcmdfail);
+                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+            }
         }
         else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".blk"))
         {
@@ -4063,7 +4186,12 @@ void LCSCReader::FnUploadCDFile2(std::string path)
             Logger::getInstance()->FnLog(ss.str());
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
 
-            FnSendUploadBLFile(CDFPath_);
+            int ret = FnSendUploadBLFile(CDFPath_);
+            if (ret == -1)
+            {
+                handleCmdErrorOrTimeout(LCSC_CMD::UPLOAD_BL_FILE, mCSCEvents::sSendcmdfail);
+                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+            }
         }
         else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".lbs"))
         {
@@ -4181,75 +4309,90 @@ void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
 
 void LCSCReader::writeLCSCTrans(const std::string& data)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
-    std::string settleFile = "";
-    std::string remoteSettleFile = "";
-    std::string detail = "";
-    std::string header = "";
-    std::string fileName = "";
-
-    if (!(boost::filesystem::exists(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
+    try
     {
-        std::ostringstream oss;
-        oss << "Settle folder: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH << " Not Found, Create it.";
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
-        if (!(boost::filesystem::create_directories(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
+        std::string settleFile = "";
+        std::string remoteSettleFile = "";
+        std::string detail = "";
+        std::string header = "";
+        std::string fileName = "";
+
+        if (!(boost::filesystem::exists(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
         {
             std::ostringstream oss;
-            oss << "Failed to create directory: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH;
+            oss << "Settle folder: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH << " Not Found, Create it.";
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+            if (!(boost::filesystem::create_directories(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
+            {
+                std::ostringstream oss;
+                oss << "Failed to create directory: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH;
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            }
         }
-    }
 
-    fileName = operation::getInstance()->tParas.gsCPOID + "_" + operation::getInstance()->tParas.gsCPID + "_"
-                + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd() + "_" + Common::getInstance()->FnPadLeft0(2, operation::getInstance()->gtStation.iSID)
-                + Common::getInstance()->FnGetDateTimeFormat_hh() + ".lcs";
-    settleFile = LOCAL_LCSC_SETTLEMENT_FOLDER_PATH + "/" + fileName;
+        fileName = operation::getInstance()->tParas.gsCPOID + "_" + operation::getInstance()->tParas.gsCPID + "_"
+                    + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd() + "_" + Common::getInstance()->FnPadLeft0(2, operation::getInstance()->gtStation.iSID)
+                    + Common::getInstance()->FnGetDateTimeFormat_hh() + ".lcs";
+        settleFile = LOCAL_LCSC_SETTLEMENT_FOLDER_PATH + "/" + fileName;
 
-    detail = data;
+        detail = data;
 
-    // Write to local
-    Logger::getInstance()->FnLog("Write settlement to local.", logFileName_, "LCSC");
+        // Write to local
+        Logger::getInstance()->FnLog("Write settlement to local.", logFileName_, "LCSC");
 
-    std::fstream file;
-    file.open(settleFile, std::ios::in | std::ios::binary);
-    if (!file.is_open())
-    {
-        // File does not exist, create and write
-        file.clear();
-        file.open(settleFile, std::ios::out | std::ios::binary);
+        std::fstream file;
+        file.open(settleFile, std::ios::in | std::ios::binary);
         if (!file.is_open())
         {
-            Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
-            Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
-            return;
+            // File does not exist, create and write
+            file.clear();
+            file.open(settleFile, std::ios::out | std::ios::binary);
+            if (!file.is_open())
+            {
+                Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
+                Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
+                return;
+            }
+
+            // Create header
+            header = "H" + operation::getInstance()->tParas.gsCPID + Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()) + Common::getInstance()->FnPadLeftSpace(40, fileName);
+            header.append(67, ' '); // Padding with 67 spaces
+
+            // Write the header and detail to the file
+            file.write(header.c_str(), header.size());
+            file.write(detail.c_str(), detail.size());
+        }
+        else
+        {
+            // File exists, append the details
+            file.close();
+            file.open(settleFile, std::ios::out | std::ios::binary | std::ios::app);
+            if (!file.is_open())
+            {
+                Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
+                Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
+                return;
+            }
+
+            // Now to the end of file and append the details
+            file.write(detail.c_str(), detail.size());
         }
 
-        // Create header
-        header = "H" + operation::getInstance()->tParas.gsCPID + Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()) + Common::getInstance()->FnPadLeftSpace(40, fileName);
-        header.append(67, ' '); // Padding with 67 spaces
-
-        // Write the header and detail to the file
-        file.write(header.c_str(), header.size());
-        file.write(detail.c_str(), detail.size());
-    }
-    else
-    {
-        // File exists, append the details
         file.close();
-        file.open(settleFile, std::ios::out | std::ios::binary | std::ios::app);
-        if (!file.is_open())
-        {
-            Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
-            Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
-            return;
-        }
-
-        // Now to the end of file and append the details
-        file.write(detail.c_str(), detail.size());
     }
-
-    file.close();
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
 }

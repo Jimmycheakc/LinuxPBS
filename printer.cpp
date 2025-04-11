@@ -117,17 +117,21 @@ bool Printer::FnPrinterInit(unsigned int baudRate, const std::string& comPortNam
     }
     catch (const boost::system::system_error& e)
     {
-        std::ostringstream oss;
-        oss << "Exception during printer device initialization: " << e.what();
-        Logger::getInstance()->FnLog(oss.str());
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
+        std::stringstream ss;
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
-        std::ostringstream oss;
-        oss << "Exeception during printer initialization: " << e.what();
-        Logger::getInstance()->FnLog(oss.str());
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 
     if (ret)

@@ -41,45 +41,49 @@ std::string ReaderItem::GetDataItem(unsigned long index)
 odbc::odbc(unsigned int ConnTO,unsigned int queryTO, float pingTO,
             std::string IP,string conn)
 {
-  SQLRETURN ret; //return status
-  NumberOfRowsAffected=0;
-  try{
-
-	
-    ConnTimeOutVal=ConnTO;
-	  m_IP=IP;
-	  m_connString=conn;
-	  queryTimeOut=queryTO;
-    pingTimeOut=pingTO;
-
-    ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env); //allocate environment handle
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLAllocHandle", env, SQL_HANDLE_ENV);
-      return;
-    }
-    SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (void *) SQL_OV_ODBC3, 0); // ODBC version 3
-   
-	ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc); // allocate connection handle
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLAllocHandle", dbc, SQL_HANDLE_DBC);
-      return;
-    } 
-
-	ret=SQLSetConnectAttr(dbc, SQL_ATTR_CONNECTION_TIMEOUT, (SQLPOINTER)(intptr_t)ConnTimeOutVal, 0);
-    if (!SQL_SUCCEEDED(ret))
+    SQLRETURN ret; //return status
+    NumberOfRowsAffected=0;
+    try
     {
-      GetError("SQLSetConnectAttr(SQL_CONNECTION_TIMEOUT)", dbc, SQL_HANDLE_DBC);
+        ConnTimeOutVal=ConnTO;
+        m_IP=IP;
+        m_connString=conn;
+        queryTimeOut=queryTO;
+        pingTimeOut=pingTO;
 
-      return;
+        ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env); //allocate environment handle
+        if (!SQL_SUCCEEDED(ret)) {
+          GetError("SQLAllocHandle", env, SQL_HANDLE_ENV);
+          return;
+        }
+        SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (void *) SQL_OV_ODBC3, 0); // ODBC version 3
+      
+        ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc); // allocate connection handle
+        if (!SQL_SUCCEEDED(ret)) {
+          GetError("SQLAllocHandle", dbc, SQL_HANDLE_DBC);
+          return;
+        } 
+
+        ret=SQLSetConnectAttr(dbc, SQL_ATTR_CONNECTION_TIMEOUT, (SQLPOINTER)(intptr_t)ConnTimeOutVal, 0);
+        if (!SQL_SUCCEEDED(ret))
+        {
+          GetError("SQLSetConnectAttr(SQL_CONNECTION_TIMEOUT)", dbc, SQL_HANDLE_DBC);
+
+          return;
+        }
     }
-
-  }
-  catch(...){
-       std::stringstream ss;
-       ss << "Error in constructor ODBC: " ;
-       Logger::getInstance()->FnLog(ss.str(), "", "ODBC");
-	 
-  }  
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
 }
 
 // destructor
@@ -95,36 +99,43 @@ odbc::~odbc()
 
 int odbc::Connect()
 {
-  SQLRETURN ret; //return status
-  SQLCHAR outstr[1024]; // output string
-  SQLSMALLINT outstrlen; // output string length
-  
-  try{
-
-    if (vPing(m_IP,pingTimeOut)==false) return -1;
-    // Connect to a DSN
-    //SQLCHAR* connStr = (SQLCHAR*)"DSN=mssqlserver;DATABASE=RF;UID=sa;PWD=yzhh2007";
-    std::string constr=m_connString;
-    SQLCHAR* connStr = (SQLCHAR*) constr.c_str();
-    ret = SQLDriverConnect(dbc, NULL, 
-      connStr, SQL_NTS,
-      outstr, sizeof(outstr), &outstrlen,
-      SQL_DRIVER_NOPROMPT);
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
-      return -1;
-    }
-    if (ret == SQL_SUCCESS_WITH_INFO) {
-      GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
-    }
+    SQLRETURN ret; //return status
+    SQLCHAR outstr[1024]; // output string
+    SQLSMALLINT outstrlen; // output string length
     
-  }
-  catch(...){
-    std::stringstream ss;
-    ss << "error for connecting ODBC server." ;
-    Logger::getInstance()->FnLog(ss.str(), "", "ODBC");
-    return -1;
-  }
+    try
+    {
+        if (vPing(m_IP,pingTimeOut)==false) return -1;
+        // Connect to a DSN
+        //SQLCHAR* connStr = (SQLCHAR*)"DSN=mssqlserver;DATABASE=RF;UID=sa;PWD=yzhh2007";
+        std::string constr=m_connString;
+        SQLCHAR* connStr = (SQLCHAR*) constr.c_str();
+        ret = SQLDriverConnect(dbc, NULL, 
+          connStr, SQL_NTS,
+          outstr, sizeof(outstr), &outstrlen,
+          SQL_DRIVER_NOPROMPT);
+        if (!SQL_SUCCEEDED(ret)) {
+          GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
+          return -1;
+        }
+        if (ret == SQL_SUCCESS_WITH_INFO) {
+          GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
+        }
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return -1;
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return -1;
+    }
     return 0;  
 }
 
@@ -134,146 +145,194 @@ int odbc::Connect()
     int ret; //return status
     int row=0;
   
-  SQLSMALLINT columns; // number of columns
-  SQLLEN rows; // number of rows
-  //std::vector<std::vector<std::string>> ds;
+    SQLSMALLINT columns; // number of columns
+    SQLLEN rows; // number of rows
+    //std::vector<std::vector<std::string>> ds;
+    SQLHSTMT stmt = SQL_NULL_HSTMT;
 
-   std::vector<ReaderItem> mList;
+    std::vector<ReaderItem> mList;
 
-  try{
-    
-    if (IsConnected()!=1)
+    try
     {
-        Disconnect();
-        if (Connect() != 0) {return -1;}
-    }
-
-    ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt); // allocate statement handle
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLAllocHandle", stmt, SQL_HANDLE_STMT);
-      return -1;
-    }
-
-
-    SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL_IS_UINTEGER);
-
-    ret = SQLExecDirect(stmt, (SQLCHAR*)statement.c_str(), SQL_NTS);
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
-      return -1;
-    }    
-    SQLNumResultCols(stmt, &columns);//get numbers of columns
-    SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
-    //printf("Number of rows affected: %ld \n",(long int)rows);
-    NumberOfRowsAffected=(long int)rows;
-    
-    while (SQL_SUCCEEDED(ret= SQLFetch(stmt))) {
-        //cout<<"Enter..."<<endl;
-        SQLUSMALLINT i;
-        ReaderItem ri;
-
-
-        //printf("Row %d\n", row);
-        row++;
-        //ri.rowNum=row;
-        // Loop through the columns
-        for (i = 1; i <= columns; i++) {
-            //SQLINTEGER indicator;
-			SQLLEN indicator;
-            char buf[512];
-            //retrieve column data as a string
-            ret = SQLGetData(stmt, i, SQL_C_CHAR,buf, sizeof(buf), &indicator);
-
-            if (!(ret==SQL_SUCCESS||ret==SQL_SUCCESS_WITH_INFO))
-            {
-              GetError("SQLGetData", stmt, SQL_HANDLE_STMT);
-
-             return -1;
-             break;
-            }
-            if (SQL_SUCCEEDED(ret)) {
-                // Handle null columns
-                if (indicator == SQL_NULL_DATA) strcpy(buf, "NULL");//strcpy(buf, "NULL");
-                //printf("  Column %u : %s\n", i, buf);
-
-                //ri.data.push_back(buf);
-                ri.appendData(buf);
-            }
+        if (IsConnected()!=1)
+        {
+            Disconnect();
+            if (Connect() != 0) {return -1;}
         }
-       if (columns>=1) mList.push_back(ri);
 
-      if(FullResult==false)  break;
-    }   
+        ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt); // allocate statement handle
+        if (!SQL_SUCCEEDED(ret)) {
+          GetError("SQLAllocHandle", stmt, SQL_HANDLE_STMT);
+          return -1;
+        }
 
-	 *result=mList;
+        SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL_IS_UINTEGER);
 
-    SQLFreeHandle(SQL_HANDLE_STMT, stmt); 
-	return 0;
-  }
-  catch(...){
-    //printf("Error in SQL method\n");
-	
-	return -1;
+        ret = SQLExecDirect(stmt, (SQLCHAR*)statement.c_str(), SQL_NTS);
+        if (!SQL_SUCCEEDED(ret)) {
+          GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
+          SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+          return -1;
+        }    
+        SQLNumResultCols(stmt, &columns);//get numbers of columns
+        SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
+        //printf("Number of rows affected: %ld \n",(long int)rows);
+        NumberOfRowsAffected=(long int)rows;
+        
+        while (SQL_SUCCEEDED(ret= SQLFetch(stmt))) {
+            //cout<<"Enter..."<<endl;
+            SQLUSMALLINT i;
+            ReaderItem ri;
+
+
+            //printf("Row %d\n", row);
+            row++;
+            //ri.rowNum=row;
+            // Loop through the columns
+            for (i = 1; i <= columns; i++) {
+                //SQLINTEGER indicator;
+          SQLLEN indicator;
+                char buf[512];
+                //retrieve column data as a string
+                ret = SQLGetData(stmt, i, SQL_C_CHAR,buf, sizeof(buf), &indicator);
+
+                if (!(ret==SQL_SUCCESS||ret==SQL_SUCCESS_WITH_INFO))
+                {
+                  GetError("SQLGetData", stmt, SQL_HANDLE_STMT);
+
+                return -1;
+                break;
+                }
+                if (SQL_SUCCEEDED(ret)) {
+                    // Handle null columns
+                    if (indicator == SQL_NULL_DATA) strcpy(buf, "NULL");//strcpy(buf, "NULL");
+                    //printf("  Column %u : %s\n", i, buf);
+
+                    //ri.data.push_back(buf);
+                    ri.appendData(buf);
+                }
+            }
+          if (columns>=1) mList.push_back(ri);
+
+          if(FullResult==false)  break;
+        }   
+
+        *result=mList;
+
+        SQLFreeHandle(SQL_HANDLE_STMT, stmt); 
+        return 0;
     }
-  }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
+        }
+        return -1;
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
+        }
+        return -1;
+    }
+}
 
 int odbc::SQLExecutNoneQuery(std::string statement)
 {
+    SQLSMALLINT columns; // number of columns
+    SQLLEN rows; // number of rows
+    int ret=-1;
+    NumberOfRowsAffected=0;
+    SQLHSTMT stmt = SQL_NULL_HSTMT;
 
-  SQLSMALLINT columns; // number of columns
-  SQLLEN rows; // number of rows
-  int ret=-1;
-  NumberOfRowsAffected=0;
- 
-  try{
+  try
+  {
+      if (IsConnected()!=1)
+      {
+          Disconnect();
+          if (Connect() != 0){return ret;}
+      }
 
-    if (IsConnected()!=1)
+      ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt); // allocate statement handle
+      if (!SQL_SUCCEEDED(ret)) {
+        GetError("SQLAllocHandle", stmt, SQL_HANDLE_STMT);
+        return ret;
+      }
+
+      SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t)queryTimeOut, SQL_IS_UINTEGER);
+
+      ret = SQLExecDirect(stmt, (SQLCHAR*)statement.c_str(), SQL_NTS);
+      if (!SQL_SUCCEEDED(ret)) {
+        GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
+        SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+        return ret;
+      }    
+      //SQLNumResultCols(stmt, &columns);//get numbers of columns
+      ret = SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
+      if (!SQL_SUCCEEDED(ret))
+      {
+          GetError("SQLRowCount", stmt, SQL_HANDLE_STMT);
+      }
+    // printf("Number of rows affected: %ld \n",(long int)rows);
+      NumberOfRowsAffected=(long int)rows;
+      ret=0;
+      
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt);    
+    }
+    catch (const std::exception& e)
     {
-        Disconnect();
-        if (Connect() != 0){return ret;}
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
+        }
     }
-
-    ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt); // allocate statement handle
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLAllocHandle", stmt, SQL_HANDLE_STMT);
-      return ret;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
+        }
     }
-
-    SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t)queryTimeOut, SQL_IS_UINTEGER);
-
-    ret = SQLExecDirect(stmt, (SQLCHAR*)statement.c_str(), SQL_NTS);
-    if (!SQL_SUCCEEDED(ret)) {
-      GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
-      return ret;
-    }    
-    //SQLNumResultCols(stmt, &columns);//get numbers of columns
-    SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
-   // printf("Number of rows affected: %ld \n",(long int)rows);
-    NumberOfRowsAffected=(long int)rows;
-    ret=0;
-     
-    SQLFreeHandle(SQL_HANDLE_STMT, stmt);    
-  }
-  catch(...){
-    printf("Error in SQL method\n");
-  }
-
-  return ret;
-
+    return ret;
 }
 
 int odbc::Disconnect()
 {
-  SQLRETURN ret; //return status
-  try{
-    SQLDisconnect(dbc); // disconnect    
-  }
-  catch(...){
-   // printf("Disconnect error\n");
-	
-    return -1;
-  }
-  return 0;
+    SQLRETURN ret; //return status
+    try
+    {
+      SQLDisconnect(dbc); // disconnect    
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return -1;
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return -1;
+    }
+    return 0;
 }
 
 std::vector<std::string> odbc::GetError(char const *fn,SQLHANDLE handle,SQLSMALLINT type)
@@ -368,6 +427,7 @@ int odbc::isValidSeason(const std::string & sSeasonNo,
 
     int nRet=-1;
     bool debugFlag=false;
+    SQLHSTMT stmt = SQL_NULL_HSTMT;
 
 
 try
@@ -815,13 +875,21 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
 /*catch(const std::exception &e){
     m_log->WriteAndPrint("SPisValid Season: exception");
     }*/
-catch(const std::exception &e)//2019.07.22 QC
+catch (const std::exception& e)
 {
+    std::stringstream ss;
+    ss << __func__ << ", Exception: " << e.what();
+    Logger::getInstance()->FnLogExceptionError(ss.str());
     nRet=-1;
-
-    //std::cout << "SQL SP Call exception"<<std::endl;
-     
 }
+catch (...)
+{
+    std::stringstream ss;
+    ss << __func__ << ", Exception: Unknown Exception";
+    Logger::getInstance()->FnLogExceptionError(ss.str());
+    nRet=-1;
+}
+
 
 
 

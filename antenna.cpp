@@ -92,26 +92,23 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
     catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
         std::stringstream ss;
-        ss << "Boost.Asio Exception during Antenna Initialization: " << e.what();
+        ss << __func__ << ", Boost.Asio Exception: " << e.what();
         EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Exception during Antenna Initialization: " << e.what();
+        ss << __func__ << ", Exception: " << e.what();
         EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
         std::stringstream ss;
-        ss << "Unknown Exception during Antenna Initialization.";
+        ss << __func__ << ", Exception: Unknown Exception";
         EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"ANT");
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 

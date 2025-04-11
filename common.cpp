@@ -181,20 +181,30 @@ std::string Common::FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss()
 
 std::string Common::FnFormatDateTime(const std::string& timeString, const std::string& inputFormat, const std::string& outputFormat)
 {
-    std::tm tm = {};
-    std::istringstream ss(timeString);
-
-    // Parse the input string using the provided input format
-    ss >> std::get_time(&tm, inputFormat.c_str());
-    if (ss.fail())
+    try
     {
-        throw std::invalid_argument("Failed to parse time: " + timeString + " with format: " + inputFormat);
-    }
+        std::tm tm = {};
+        std::istringstream ss(timeString);
 
-    // Format the std::tm into desired output format
-    std::ostringstream oss;
-    oss << std::put_time(&tm, outputFormat.c_str());
-    return oss.str();
+        // Parse the input string using the provided input format
+        ss >> std::get_time(&tm, inputFormat.c_str());
+        if (ss.fail())
+        {
+            throw std::invalid_argument("Failed to parse time: " + timeString + " with format: " + inputFormat);
+        }
+
+        // Format the std::tm into desired output format
+        std::ostringstream oss;
+        oss << std::put_time(&tm, outputFormat.c_str());
+        return oss.str();
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return "";
+    }
 }
 
 std::string Common::FnFormatDateTime(const std::tm& timeStruct, const std::string& outputFormat)
@@ -326,37 +336,76 @@ uint64_t Common::FnGetSecondsSince1January0000()
 
 std::string Common::FnConvertSecondsSince1January0000ToDateTime(uint64_t seconds_since_0000)
 {
-    // Define the epoch (January 1, 0000)
-    const uint64_t days_between_0000_and_1970 = 719527;
-    const uint64_t seconds_between_0000_and_1970 = days_between_0000_and_1970 * 24 * 3600;
+    try
+    {
+        // Define the epoch (January 1, 0000)
+        const uint64_t days_between_0000_and_1970 = 719527;
+        const uint64_t seconds_between_0000_and_1970 = days_between_0000_and_1970 * 24 * 3600;
 
-    // Adjust seconds_since_0000 to seconds since epoch (1970)
-    uint64_t seconds_since_epoch = seconds_since_0000 - seconds_between_0000_and_1970;
-    std::chrono::system_clock::time_point date_time = std::chrono::system_clock::time_point(std::chrono::seconds(seconds_since_epoch));
+        // Check for underflow
+        if (seconds_since_0000 < seconds_between_0000_and_1970)
+        {
+            throw std::invalid_argument("Input seconds_since_0000 is invalid (too small).");
+        }
 
-    // Convert to time_t for easier extraction of date and time components
-    std::time_t tt = std::chrono::system_clock::to_time_t(date_time);
-    std::tm* gmt = std::gmtime(&tt);
+        // Adjust seconds_since_0000 to seconds since epoch (1970)
+        uint64_t seconds_since_epoch = seconds_since_0000 - seconds_between_0000_and_1970;
+        std::chrono::system_clock::time_point date_time = std::chrono::system_clock::time_point(std::chrono::seconds(seconds_since_epoch));
 
-    // Format the date-time string
-    char buf[80];
-    strftime(buf, sizeof(buf), "%d %b %Y   %H:%M:%S", gmt);
+        // Convert to time_t for easier extraction of date and time components
+        std::time_t tt = std::chrono::system_clock::to_time_t(date_time);
+        std::tm* gmt = std::gmtime(&tt);
 
-    return std::string(buf);
+        // Check for nullptr from gmtime
+        if (gmt == nullptr)
+        {
+            throw std::runtime_error("Failed to convert time_t to tm structure.");
+        }
+
+        // Format the date-time string
+        char buf[80];
+        strftime(buf, sizeof(buf), "%d %b %Y   %H:%M:%S", gmt);
+
+        return std::string(buf);
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return "";
+    }
 }
 
 std::chrono::system_clock::time_point Common::FnParseDateTime(const std::string& dateTime)
 {
-    std::tm tm = {};
-    std::istringstream ss(dateTime);
-    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
-
-    if (ss.fail())
+    try
     {
-        throw std::runtime_error("Failed to parse datetime string.");
-    }
+        std::tm tm = {};
+        std::istringstream ss(dateTime);
+        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
 
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        if (ss.fail())
+        {
+            throw std::runtime_error("Failed to parse datetime string.");
+        }
+
+        std::time_t tt = std::mktime(&tm);
+        if (tt == -1)
+        {
+            throw std::runtime_error("Invalid datetime components in: " + dateTime);
+        }
+
+        return std::chrono::system_clock::from_time_t(tt);
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        // Return epoch (1970-01-01) as a fallback
+        return std::chrono::system_clock::time_point{};
+    }
 }
 
 int64_t Common::FnGetDateDiffInSeconds(const std::string& dateTime)
@@ -387,28 +436,68 @@ std::string Common::FnGetFileName(const std::string& str)
 
 std::string Common::FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size)
 {
-    std::stringstream ss;
-    ss << std::hex << std::setfill('0');
-
-    for (std::size_t i = pos + size - 1; i >= pos ; i--)
+    try
     {
-        ss << std::setw(2) << static_cast<unsigned int>(array[i]);
-    }
+        // Validate inputs (throw on critical errors)
+        if (array == nullptr)
+        {
+            throw std::invalid_argument("Null pointer passed to array");
+        }
+        if (size == 0)
+        {
+            throw std::invalid_argument("Size cannot be zero");
+        }
 
-    return ss.str();
+        std::stringstream ss;
+        ss << std::hex << std::setfill('0');
+
+        for (std::size_t i = pos + size - 1; i >= pos ; i--)
+        {
+            ss << std::setw(2) << static_cast<unsigned int>(array[i]);
+        }
+
+        return ss.str();
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return "";
+    }
 }
 
 std::string Common::FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size)
 {
-    std::stringstream ss;
-    ss << std::hex << std::setfill('0');
-
-    for (std::size_t i = 0; i < size ; i++)
+    try
     {
-        ss << std::setw(2) << static_cast<unsigned int>(array[i]);
-    }
+        // Validate inputs (throw on critical errors)
+        if (array == nullptr)
+        {
+            throw std::invalid_argument("Null pointer passed to array");
+        }
+        if (size == 0)
+        {
+            throw std::invalid_argument("Size cannot be zero");
+        }
 
-    return ss.str();
+        std::stringstream ss;
+        ss << std::hex << std::setfill('0');
+
+        for (std::size_t i = 0; i < size ; i++)
+        {
+            ss << std::setw(2) << static_cast<unsigned int>(array[i]);
+        }
+
+        return ss.str();
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return "";
+    }
 }
 
 std::string Common::FnGetVectorCharToHexString(const std::vector<char>& data)
@@ -425,14 +514,40 @@ std::string Common::FnGetVectorCharToHexString(const std::vector<char>& data)
 
 std::string Common::FnGetVectorCharToHexString(const std::vector<uint8_t>& data, std::size_t startPos, std::size_t length)
 {
-    std::stringstream hexStream;
-    hexStream << std::hex << std::setfill('0');
+    try
+    {
+        // Validate inputs
+        if (startPos >= data.size())
+        {
+            throw std::out_of_range("startPos exceeds vector size");
+        }
 
-    for (std::size_t i = startPos; i < startPos + length && i < data.size(); ++i) {
-        hexStream << std::setw(2) << static_cast<int>(data[i]);
+        if (length == 0)
+        {
+            return "";  // Empty result for zero length
+        }
+
+        if (startPos + length > data.size())
+        {
+            throw std::out_of_range("startPos + length exceeds vector size");
+        }
+
+        std::stringstream hexStream;
+        hexStream << std::hex << std::setfill('0');
+
+        for (std::size_t i = startPos; i < startPos + length && i < data.size(); ++i) {
+            hexStream << std::setw(2) << static_cast<int>(data[i]);
+        }
+
+        return hexStream.str();
     }
-
-    return hexStream.str();
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return "";
+    }
 }
 
 std::string Common::FnGetDisplayVectorCharToHexString(const std::vector<char>& data)
@@ -473,6 +588,9 @@ bool Common::FnIsNumeric(const std::string& str)
     }
     catch (const std::exception& e)
     {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return false;
     }
 }
@@ -531,14 +649,35 @@ std::vector<uint8_t> Common::FnLittleEndianHexStringToVector(const std::string& 
 {
     std::vector<uint8_t> result;
 
-    for (int i = hexStr.length() - 2; i >= 0; i -= 2)
+    try
     {
-        std::string byteStr = hexStr.substr(i, 2);
-        uint8_t byte = static_cast<uint8_t>(stoul(byteStr, nullptr, 16));
-        result.push_back(byte);
-    }
+        // 1. Input validation
+        if (hexStr.empty())
+        {
+            return result;  // Return empty vector for empty input
+        }
 
-    return result;
+        if (hexStr.length() % 2 != 0)
+        {
+            throw std::invalid_argument("Hex string must have even number of characters");
+        }
+
+        for (int i = static_cast<int>(hexStr.length()) - 2; i >= 0; i -= 2)
+        {
+            std::string byteStr = hexStr.substr(i, 2);
+            uint8_t byte = static_cast<uint8_t>(stoul(byteStr, nullptr, 16));
+            result.push_back(byte);
+        }
+
+        return result;
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return result;
+    }
 }
 
 std::string Common::FnConvertuint8ToString(uint8_t value)
@@ -627,22 +766,37 @@ std::vector<uint8_t> Common::FnConvertHexStringToUint8Vector(const std::string& 
 {
     std::vector<uint8_t> result;
 
-    if (hexStr.length() % 2 != 0)
+    try
     {
-        throw std::invalid_argument("Hex string must have an even length");
-    }
+        if (hexStr.empty())
+        {
+            return result;  // Return empty vector for empty input
+        }
 
-    for (std::size_t i = 0; i < hexStr.length(); i+=2)
+        if (hexStr.length() % 2 != 0)
+        {
+            throw std::invalid_argument("Hex string must have an even length");
+        }
+
+        for (std::size_t i = 0; i < hexStr.length(); i+=2)
+        {
+            // Extract a substring of 2 characters
+            std::string byteString = hexStr.substr(i, 2);
+            // Convert the 2-character string to a uint8_t
+            uint8_t byte = static_cast<uint8_t>(std::stoi(byteString, nullptr, 16));
+            // Add the byte to the result vector
+            result.push_back(byte);
+        }
+
+        return result;
+    }
+    catch (const std::exception& e)
     {
-        // Extract a substring of 2 characters
-        std::string byteString = hexStr.substr(i, 2);
-        // Convert the 2-character string to a uint8_t
-        uint8_t byte = static_cast<uint8_t>(std::stoi(byteString, nullptr, 16));
-        // Add the byte to the result vector
-        result.push_back(byte);
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return result;
     }
-
-    return result;
 }
 
 std::vector<uint8_t> Common::FnExtractSubVector(const std::vector<uint8_t>& source, std::size_t offset, std::size_t length)
@@ -661,65 +815,120 @@ std::vector<uint8_t> Common::FnExtractSubVector(const std::vector<uint8_t>& sour
 
 uint8_t Common::FnConvertToUint8(const std::vector<uint8_t>& vec, std::size_t offset)
 {
-    if (offset + sizeof(uint8_t) > vec.size())
+    try
     {
-        throw std::out_of_range("Offset out of range");
+        if (offset + sizeof(uint8_t) > vec.size())
+        {
+            throw std::out_of_range("Offset out of range");
+        }
+        return vec[offset];
     }
-    return vec[offset];
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return 0;
+    }
 }
 
 uint16_t Common::FnConvertToUint16(const std::vector<uint8_t>& vec, std::size_t offset)
 {
-    if (offset + sizeof(uint16_t) > vec.size())
+    try
     {
-        throw std::out_of_range("Offset out of range");
+        if (offset + sizeof(uint16_t) > vec.size())
+        {
+            throw std::out_of_range("Offset out of range");
+        }
+        uint16_t value;
+        std::memcpy(&value, vec.data() + offset, sizeof(uint16_t));
+        return value;
     }
-    uint16_t value;
-    std::memcpy(&value, vec.data() + offset, sizeof(uint16_t));
-    return value;
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return 0;
+    }
 }
 
 uint32_t Common::FnConvertToUint32(const std::vector<uint8_t>& vec, std::size_t offset)
 {
-    if (offset + sizeof(uint32_t) > vec.size())
+    try
     {
-        throw std::out_of_range("Offset out of range");
-    }
+        if (offset + sizeof(uint32_t) > vec.size())
+        {
+            throw std::out_of_range("Offset out of range");
+        }
 
-    uint32_t value;
-    std::memcpy(&value, vec.data() + offset, sizeof(uint32_t));
-    return value;
+        uint32_t value;
+        std::memcpy(&value, vec.data() + offset, sizeof(uint32_t));
+        return value;
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return 0;
+    }
 }
 
 uint64_t Common::FnConvertToUint64(const std::vector<uint8_t>& vec, std::size_t offset)
 {
-    if (offset + sizeof(uint64_t) > vec.size())
+    try
     {
-        throw std::out_of_range("Offset out of range");
-    }
+        if (offset + sizeof(uint64_t) > vec.size())
+        {
+            throw std::out_of_range("Offset out of range");
+        }
 
-    uint64_t value;
-    std::memcpy(&value, vec.data() + offset, sizeof(uint64_t));
-    return value;
+        uint64_t value;
+        std::memcpy(&value, vec.data() + offset, sizeof(uint64_t));
+        return value;
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return 0;
+    }
 }
 
 std::string Common::FnReverseByPair(std::string hexStr)
 {
-    if (hexStr.length() % 2 != 0)
+    try
     {
-        throw std::invalid_argument("Hex string must be even.");
+        if (hexStr.empty())
+        {
+            return "";  // Return empty vector for empty input
+        }
+    
+        if (hexStr.length() % 2 != 0)
+        {
+            throw std::invalid_argument("Hex string must be even.");
+        }
+
+        std::string reverseHexStr;
+        reverseHexStr.reserve(hexStr.length());
+
+        for (auto it = hexStr.rbegin(); it != hexStr.rend(); it += 2)
+        {
+            reverseHexStr.push_back(*(it + 1));
+            reverseHexStr.push_back(*it);
+        }
+
+        return reverseHexStr;
     }
-
-    std::string reverseHexStr;
-    reverseHexStr.reserve(hexStr.length());
-
-    for (auto it = hexStr.rbegin(); it != hexStr.rend(); it += 2)
+    catch (const std::exception& e)
     {
-        reverseHexStr.push_back(*(it + 1));
-        reverseHexStr.push_back(*it);
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return "";
     }
-
-    return reverseHexStr;
 }
 
 std::string Common::FnUint32ToString(uint32_t value)
@@ -779,19 +988,41 @@ std::string Common::FnConvertBinaryStringToString(const std::string& data)
 {
     std::string sRet;
 
-    // Iterate over the binary string in chunks of 8
-    for (std::size_t i = 0; i < data.length(); i += 8)
+    try
     {
-        std::string byteStr = data.substr(i, 8);
+        // 1. Check for empty input
+        if (data.empty())
+        {
+            return sRet;
+        }
 
-        // Convert the binary string (8 bits) to an unsigned long and then to a character
-        char character = static_cast<char>(std::bitset<8>(byteStr).to_ulong());
+        // 2. Check if length is a multiple of 8 (optional)
+        if (data.length() % 8 != 0)
+        {
+            throw std::invalid_argument("Binary string length must be a multiple of 8");
+        }
 
-        // Append the character to the result string
-        sRet += character;
+        // Iterate over the binary string in chunks of 8
+        for (std::size_t i = 0; i < data.length(); i += 8)
+        {
+            std::string byteStr = data.substr(i, 8);
+
+            // Convert the binary string (8 bits) to an unsigned long and then to a character
+            char character = static_cast<char>(std::bitset<8>(byteStr).to_ulong());
+
+            // Append the character to the result string
+            sRet += character;
+        }
+
+        return sRet;
     }
-
-    return sRet;
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return sRet;
+    }
 }
 
 std::string Common::FnConvertStringToHexString(const std::string& data)
@@ -823,19 +1054,40 @@ std::string Common::FnConvertHexStringToString(const std::string& data)
 {
     std::string result;
 
-    for (std::size_t i = 0; i < data.length(); i += 2)
+    try
     {
-        // Extract two characters (one byte) from hex string
-        std::string byteString = data.substr(i, 2);
+        // 1. Input validation
+        if (data.empty())
+        {
+            return result;  // Return empty string for empty input
+        }
 
-        // Convert the hex byte to an integer
-        char byte = static_cast<char>(std::stoi(byteString, nullptr, 16));
+        if (data.length() % 2 != 0)
+        {
+            throw std::invalid_argument("Hex string must have even length");
+        }
 
-        // Append the corresponding character to the result string
-        result += byte;
+        for (std::size_t i = 0; i < data.length(); i += 2)
+        {
+            // Extract two characters (one byte) from hex string
+            std::string byteString = data.substr(i, 2);
+
+            // Convert the hex byte to an integer
+            char byte = static_cast<char>(std::stoi(byteString, nullptr, 16));
+
+            // Append the corresponding character to the result string
+            result += byte;
+        }
+
+        return result;
     }
-
-    return result;
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return result;
+    }
 }
 
 std::string Common::SetFeeFormat(float fee)
@@ -868,6 +1120,9 @@ std::string Common::FnFormatToFloatString(const std::string& str)
     }
     catch (const std::exception& e)
     {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return "Invalid Input";
     }
 }

@@ -85,7 +85,23 @@ void EventManager::processEventsFromQueue()
             eventQueue.pop_front();
             lock.unlock();
 
-            processEvent(front.first, front.second.get());
+            try
+            {
+                processEvent(front.first, front.second.get());
+            }
+            catch (const std::exception& e)
+            {
+                std::stringstream ss;
+                ss << __func__ << ", Event Name:" << front.first << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
+            }
+            catch (...)
+            {
+                std::stringstream ss;
+                ss << __func__ << ", Event Name:" << front.first << ", Exception: Unknown Exception";
+                Logger::getInstance()->FnLogExceptionError(ss.str());
+            }
+
 
             lock.lock();
         }

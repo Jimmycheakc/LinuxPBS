@@ -104,11 +104,27 @@ void EventHandler::FnHandleEvents(const std::string& eventName, const BaseEvent*
     {
         EventFunction& handler = it->second;
 
-        bool ret = handler(event);
+        bool ret = false;
+        try
+        {
+            ret = handler(event);
 
-        std::stringstream ss;
-        ss << __func__ << " Event handle return : " << ret;
-        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+            std::stringstream ss;
+            ss << __func__ << " Event handle return : " << ret;
+            Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        }
+        catch (const std::exception& e)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
     }
     else
     {

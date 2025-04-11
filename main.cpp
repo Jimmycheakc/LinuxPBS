@@ -229,27 +229,54 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
             }
             catch (const std::filesystem::filesystem_error& e)
             {
-                Logger::getInstance()->FnLog("Filesystem error in dailyLogHandler: " + std::string(e.what()), "", "OPR");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             catch (const std::exception& e)
             {
-                Logger::getInstance()->FnLog("Standard exception in dailyLogHandler: " + std::string(e.what()), "", "OPR");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
             catch (...)
             {
-                Logger::getInstance()->FnLog("Unknown exception in dailyLogHandler.", "", "OPR");
+                std::stringstream ss;
+                ss << __func__ << ", Exception: Unknown Exception";
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
 
-            // Unmount the shared folder
-            std::string unmountCommand = "sudo umount " + mountPoint;
-            int unmountStatus = std::system(unmountCommand.c_str());
-            if (unmountStatus != 0)
+            try
             {
-                Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
+                // Unmount the shared folder
+                std::string unmountCommand = "sudo umount " + mountPoint;
+                int unmountStatus = std::system(unmountCommand.c_str());
+                if (unmountStatus != 0)
+                {
+                    Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
+                }
+                else
+                {
+                    Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+                }
             }
-            else
+            catch (const std::filesystem::filesystem_error& e)
             {
-                Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+                std::stringstream ss;
+                ss << __func__ << ", Unmount Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
+            }
+            catch (const std::exception& e)
+            {
+                std::stringstream ss;
+                ss << __func__ << ", Unmount Exception: " << e.what();
+                Logger::getInstance()->FnLogExceptionError(ss.str());
+            }
+            catch (...)
+            {
+                std::stringstream ss;
+                ss << __func__ << ", Unmount Exception: Unknown Exception";
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
         }
     }
@@ -301,12 +328,13 @@ int main (int agrc, char* argv[])
         signalHandler(ec, signal, ioContext, signals, workGuard);
     });
 
+    IniParser::getInstance()->FnReadIniFile();
+    Logger::getInstance()->FnCreateLogFile();
+
     // Start heartbeat
     HeartbeatUdpServer heartbeatUdpServer_(ioContext, "127.0.0.1", 6000);
     heartbeatUdpServer_.start();
 
-    IniParser::getInstance()->FnReadIniFile();
-    Logger::getInstance();
     Common::getInstance()->FnLogExecutableInfo(argv[0]);
     SystemInfo::getInstance()->FnLogSysInfo();
     EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));

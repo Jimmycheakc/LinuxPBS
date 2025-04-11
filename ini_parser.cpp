@@ -4,6 +4,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/ini_parser.hpp>
 #include "ini_parser.h"
+#include "log.h"
 
 IniParser* IniParser::iniParser_;
 std::mutex IniParser::mutex_;
@@ -33,85 +34,120 @@ void IniParser::FnReadIniFile()
         {
             if (!(boost::filesystem::create_directories(INI_FILE_PATH)))
             {
-                std::cerr << "Failed to create directory: " << INI_FILE_PATH << std::endl;
+                std::stringstream ss;
+                ss << __func__ << ", Failed to create directory: " << INI_FILE_PATH;
+                Logger::getInstance()->FnLogExceptionError(ss.str());
             }
         }
+
+        if (!boost::filesystem::exists(INI_FILE))
+        {
+            Logger::getInstance()->FnLogExceptionError("INI file not found: " + INI_FILE);
+            return; // or throw if you prefer
+        }
+
+        boost::property_tree::ptree pt;
+        boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
+
+        // Temp: Revisit and implement storing to private variable function
+        StationID_                      = pt.get<std::string>("setting.StationID", "");
+        LogFolder_                      = pt.get<std::string>("setting.LogFolder", "");
+        LocalDB_                        = pt.get<std::string>("setting.LocalDB", "");
+        CentralDBName_                  = pt.get<std::string>("setting.CentralDBName", "");
+        CentralDBServer_                = pt.get<std::string>("setting.CentralDBServer", "");
+        CentralUsername_                = pt.get<std::string>("setting.CentralUsername", "");
+        CentralPassword_                = pt.get<std::string>("setting.CentralPassword", "");
+        LocalUDPPort_                   = pt.get<std::string>("setting.LocalUDPPort", "");
+        RemoteUDPPort_                  = pt.get<std::string>("setting.RemoteUDPPort", "");
+        SeasonOnly_                     = pt.get<std::string>("setting.SeasonOnly", "");
+        NotAllowHourly_                 = pt.get<std::string>("setting.NotAllowHourly", "");
+        LPRIP4Front_                    = pt.get<std::string>("setting.LPRIP4Front", "");
+        LPRIP4Rear_                     = pt.get<std::string>("setting.LPRIP4Rear", "");
+        LPRPort_                        = pt.get<std::string>("setting.LPRPort", "");
+        WaitLPRNoTime_                  = pt.get<std::string>("setting.WaitLPRNoTime", "");
+        LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");
+        LPRErrorCount_                  = pt.get<std::string>("setting.LPRErrorCount", "");
+        ShowTime_                       = (std::stoi(pt.get<std::string>("setting.ShowTime", "")) == 1) ? true : false;
+        BlockIUPrefix_                  = pt.get<std::string>("setting.BlockIUPrefix", "");
+
+        // Confirm [DI]
+        LoopA_                          = pt.get<int>("DI.LoopA");
+        LoopC_                          = pt.get<int>("DI.LoopC");
+        LoopB_                          = pt.get<int>("DI.LoopB");
+        Intercom_                       = pt.get<int>("DI.Intercom");
+        StationDooropen_                = pt.get<int>("DI.StationDooropen");
+        BarrierDooropen_                = pt.get<int>("DI.BarrierDooropen");
+        BarrierStatus_                  = pt.get<int>("DI.BarrierStatus");
+        ManualOpenBarrier_              = pt.get<int>("DI.ManualOpenBarrier");
+        Lorrysensor_                    = pt.get<int>("DI.Lorrysensor");
+        Armbroken_                      = pt.get<int>("DI.Armbroken");
+        PrintReceipt_                   = pt.get<int>("DI.PrintReceipt");
+
+        // Confirm [DO]
+        Openbarrier_                    = pt.get<int>("DO.Openbarrier");
+        LCDbacklight_                   = pt.get<int>("DO.LCDbacklight");
+        closebarrier_                   = pt.get<int>("DO.closebarrier");
     }
     catch (const boost::filesystem::filesystem_error& e)
     {
-        std::cerr << "Boost.Filesystem Exception during reading Ini file: " << e.what() << std::endl;
+        std::stringstream ss;
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception &e)
     {
-        std::cerr << "Exception during reading Ini file: " << e.what() << std::endl;
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
-        std::cerr << "Unknown Exception during reading Ini file." << std::endl;
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
-
-    boost::property_tree::ptree pt;
-    boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
-
-    // Temp: Revisit and implement storing to private variable function
-    StationID_                      = pt.get<std::string>("setting.StationID", "");
-    LogFolder_                      = pt.get<std::string>("setting.LogFolder", "");
-    LocalDB_                        = pt.get<std::string>("setting.LocalDB", "");
-    CentralDBName_                  = pt.get<std::string>("setting.CentralDBName", "");
-    CentralDBServer_                = pt.get<std::string>("setting.CentralDBServer", "");
-    CentralUsername_                = pt.get<std::string>("setting.CentralUsername", "");
-    CentralPassword_                = pt.get<std::string>("setting.CentralPassword", "");
-    LocalUDPPort_                   = pt.get<std::string>("setting.LocalUDPPort", "");
-    RemoteUDPPort_                  = pt.get<std::string>("setting.RemoteUDPPort", "");
-    SeasonOnly_                     = pt.get<std::string>("setting.SeasonOnly", "");
-    NotAllowHourly_                 = pt.get<std::string>("setting.NotAllowHourly", "");
-    LPRIP4Front_                    = pt.get<std::string>("setting.LPRIP4Front", "");
-    LPRIP4Rear_                     = pt.get<std::string>("setting.LPRIP4Rear", "");
-    LPRPort_                        = pt.get<std::string>("setting.LPRPort", "");
-    WaitLPRNoTime_                  = pt.get<std::string>("setting.WaitLPRNoTime", "");
-    LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");
-    LPRErrorCount_                  = pt.get<std::string>("setting.LPRErrorCount", "");
-    ShowTime_                       = (std::stoi(pt.get<std::string>("setting.ShowTime", "")) == 1) ? true : false;
-    BlockIUPrefix_                  = pt.get<std::string>("setting.BlockIUPrefix", "");
-
-    // Confirm [DI]
-    LoopA_                          = pt.get<int>("DI.LoopA");
-    LoopC_                          = pt.get<int>("DI.LoopC");
-    LoopB_                          = pt.get<int>("DI.LoopB");
-    Intercom_                       = pt.get<int>("DI.Intercom");
-    StationDooropen_                = pt.get<int>("DI.StationDooropen");
-    BarrierDooropen_                = pt.get<int>("DI.BarrierDooropen");
-    BarrierStatus_                  = pt.get<int>("DI.BarrierStatus");
-    ManualOpenBarrier_              = pt.get<int>("DI.ManualOpenBarrier");
-    Lorrysensor_                    = pt.get<int>("DI.Lorrysensor");
-    Armbroken_                      = pt.get<int>("DI.Armbroken");
-    PrintReceipt_                   = pt.get<int>("DI.PrintReceipt");
-
-    // Confirm [DO]
-    Openbarrier_                    = pt.get<int>("DO.Openbarrier");
-    LCDbacklight_                   = pt.get<int>("DO.LCDbacklight");
-    closebarrier_                   = pt.get<int>("DO.closebarrier");
 }
 
 void IniParser::FnPrintIniFile()
 {
-    boost::property_tree::ptree pt;
-    boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
-
-    for (const auto&section : pt)
+    try
     {
-        const auto& section_name = section.first;
-        const auto& section_properties = section.second;
+        boost::property_tree::ptree pt;
+        boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
 
-        std::cout << "Section: " << section_name << std::endl;
-
-        for (const auto& key : section_properties)
+        for (const auto&section : pt)
         {
-            const auto& key_name = key.first;
-            const auto& key_value = key.second.get_value<std::string>();
+            const auto& section_name = section.first;
+            const auto& section_properties = section.second;
 
-            std::cout << " Key: " << key_name << ", Value: "<< key_value << std::endl;
+            std::cout << "Section: " << section_name << std::endl;
+
+            for (const auto& key : section_properties)
+            {
+                const auto& key_name = key.first;
+                const auto& key_value = key.second.get_value<std::string>();
+
+                std::cout << " Key: " << key_name << ", Value: "<< key_value << std::endl;
+            }
         }
+    }
+    catch (const boost::property_tree::ini_parser_error& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 

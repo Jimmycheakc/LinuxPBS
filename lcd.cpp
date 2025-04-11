@@ -84,6 +84,13 @@ void LCD::startIoContextThread()
 
 void LCD::sendCommandDataToDriver(int fd, char* data, bool value)
 {
+    // Check for null input
+    if (!data)
+    {
+        Logger::getInstance()->FnLog("Null data passed to sendCommandDataToDriver");
+        return;
+    }
+
     std::vector<char> safeData(data, data + strlen(data) + 1);
 
     boost::asio::post(strand_, [this, fd, safeData, value] () mutable {
@@ -124,7 +131,7 @@ void LCD::FnLCDDisplayCharacter(char aChar)
 
 void LCD::FnLCDDisplayString(std::uint8_t row, std::uint8_t col, char* str)
 {
-    if (lcdInitialized_ == false)
+    if (lcdInitialized_ == false || !str)
         return;
 
     std::uint8_t str_size = strlen(str);
@@ -144,7 +151,7 @@ void LCD::FnLCDDisplayString(std::uint8_t row, std::uint8_t col, char* str)
 
 void LCD::FnLCDDisplayStringCentered(std::uint8_t row, char* str)
 {
-    if (lcdInitialized_ == false)
+    if (lcdInitialized_ == false || !str)
         return;
 
     std::uint8_t str_size = strlen(str);
@@ -177,7 +184,7 @@ void LCD::FnLCDClearDisplayRow(std::uint8_t row)
 
 void LCD::FnLCDDisplayRow(std::uint8_t row, char* str)
 {
-    if (lcdInitialized_ == false)
+    if (lcdInitialized_ == false || !str)
         return;
 
     std::uint8_t str_size = strlen(str);
@@ -198,11 +205,11 @@ void LCD::FnLCDDisplayRow(std::uint8_t row, char* str)
 
 void LCD::FnLCDDisplayScreen(char* str)
 {
-    if (lcdInitialized_ == false)
+    if (lcdInitialized_ == false || !str)
         return;
 
-    char sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW + 1];
-    char sub_string_row_2[MAXIMUM_CHARACTER_PER_ROW + 1];
+    char sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW + 1] = {};
+    char sub_string_row_2[MAXIMUM_CHARACTER_PER_ROW + 1] = {};
 
     memset(&sub_string_row_1, 0, sizeof(sub_string_row_1));
     memset(&sub_string_row_2, 0, sizeof(sub_string_row_2));
@@ -221,7 +228,8 @@ void LCD::FnLCDDisplayScreen(char* str)
     }
     else
     {
-        strncpy(sub_string_row_1, str, 20);
+        std::size_t len1 = std::min(text.length(), (size_t)MAXIMUM_CHARACTER_PER_ROW);
+        strncpy(sub_string_row_1, str, len1);
         sub_string_row_1[MAXIMUM_CHARACTER_PER_ROW] = '\0';
         FnLCDDisplayStringCentered(1, sub_string_row_1);
 
@@ -232,66 +240,84 @@ void LCD::FnLCDDisplayScreen(char* str)
 
     if (MAXIMUM_LCD_LINES == 4)
     {
-        char sub_string_row_3[MAXIMUM_CHARACTER_PER_ROW + 1];
-        char sub_string_row_4[MAXIMUM_CHARACTER_PER_ROW + 1];
+        char sub_string_row_3[MAXIMUM_CHARACTER_PER_ROW + 1] = {};
+        char sub_string_row_4[MAXIMUM_CHARACTER_PER_ROW + 1] = {};
 
         memset(&sub_string_row_3, 0, sizeof(sub_string_row_3));
         memset(&sub_string_row_4, 0, sizeof(sub_string_row_4));
 
-        strncpy(sub_string_row_3, (str + 40), 20);
-        sub_string_row_3[MAXIMUM_CHARACTER_PER_ROW] = '\0';
-        FnLCDDisplayStringCentered(3, sub_string_row_3);
+        if (text.length() > 40)
+        {
+            std::size_t len3 = std::min(text.length() - 40, (size_t)MAXIMUM_CHARACTER_PER_ROW);
+            strncpy(sub_string_row_3, (str + 40), len3);
+            sub_string_row_3[MAXIMUM_CHARACTER_PER_ROW] = '\0';
+            FnLCDDisplayStringCentered(3, sub_string_row_3);
+        }
 
-        strncpy(sub_string_row_4, (str + 60), 20);
-        sub_string_row_4[MAXIMUM_CHARACTER_PER_ROW] = '\0';
-        FnLCDDisplayStringCentered(4, sub_string_row_4);
+        if (text.length() > 60)
+        {
+            std::size_t len4 = std::min(text.length() - 60, (size_t)MAXIMUM_CHARACTER_PER_ROW);
+            strncpy(sub_string_row_4, (str + 60), len4);
+            sub_string_row_4[MAXIMUM_CHARACTER_PER_ROW] = '\0';
+            FnLCDDisplayStringCentered(4, sub_string_row_4);
+        }
     }
 }
 
 void LCD::FnLCDWipeOnLR(char* str)
 {
-    if (lcdInitialized_ == false)
+    if (lcdInitialized_ == false || !str)
         return;
+
+    const size_t text_len = strlen(str);
+    constexpr size_t LINE2_OFFSET = 20;
+    constexpr size_t LINE3_OFFSET = 40;
+    constexpr size_t LINE4_OFFSET = 60;
 
     for (int i = 0; i < MAXIMUM_CHARACTER_PER_ROW; i++)
     {
         FnLCDCursor(1, i);
-        FnLCDDisplayCharacter(str[i]);
+        FnLCDDisplayCharacter(i < text_len ? str[i] : ' ');
 
         FnLCDCursor(2, i);
-        FnLCDDisplayCharacter(str[i + 20]);
+        FnLCDDisplayCharacter((i + LINE2_OFFSET) < text_len ? str[i + LINE2_OFFSET] : ' ');
 
         if (MAXIMUM_LCD_LINES == 4)
         {
             FnLCDCursor(3, i);
-            FnLCDDisplayCharacter(str[i + 40]);
+            FnLCDDisplayCharacter((i + LINE3_OFFSET) < text_len ? str[i + LINE3_OFFSET] : ' ');
 
             FnLCDCursor(4, i);
-            FnLCDDisplayCharacter(str[i + 60]);
+            FnLCDDisplayCharacter((i + LINE4_OFFSET) < text_len ? str[i + LINE4_OFFSET] : ' ');
         }
     }
 }
 
 void LCD::FnLCDWipeOnRL(char* str)
 {
-    if (lcdInitialized_ == false)
+    if (lcdInitialized_ == false || !str)
         return;
+
+    const size_t text_len = strlen(str);
+    constexpr size_t LINE2_OFFSET = 20;
+    constexpr size_t LINE3_OFFSET = 40;
+    constexpr size_t LINE4_OFFSET = 60;
 
     for (int i = MAXIMUM_CHARACTER_PER_ROW - 1; i >= 0; i--)
     {
         FnLCDCursor(1, i);
-        FnLCDDisplayCharacter(str[i]);
+        FnLCDDisplayCharacter(i < text_len ? str[i] : ' ');
 
         FnLCDCursor(2, i);
-        FnLCDDisplayCharacter(str[i + 20]);
+        FnLCDDisplayCharacter((i + LINE2_OFFSET) < text_len ? str[i + LINE2_OFFSET] : ' ');
 
         if (MAXIMUM_LCD_LINES == 4)
         {
             FnLCDCursor(3, i);
-            FnLCDDisplayCharacter(str[i + 40]);
+            FnLCDDisplayCharacter((i + LINE3_OFFSET) < text_len ? str[i + LINE3_OFFSET] : ' ');
 
             FnLCDCursor(4, i);
-            FnLCDDisplayCharacter(str[i + 60]);
+            FnLCDDisplayCharacter((i + LINE4_OFFSET) < text_len ? str[i + LINE4_OFFSET] : ' ');
         }
     }
 }

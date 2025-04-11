@@ -39,20 +39,35 @@ Lpr* Lpr::getInstance()
 
 void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
 {
-    cameraNo_ = 2;
-    stdID_ = IniParser::getInstance()->FnGetStationID();
-    lprIp4Front_ = IniParser::getInstance()->FnGetLPRIP4Front();
-    lprIp4Rear_ = IniParser::getInstance()->FnGetLPRIP4Rear();
-    reconnTime_ = 10000;
-    reconnTime2_ = 10000;
-    commErrorTimeCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorTime());
-    transErrorCountCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorCount());
-    lprPort_ = std::stoi(IniParser::getInstance()->FnGetLPRPort());
+    try
+    {
+        cameraNo_ = 2;
+        stdID_ = IniParser::getInstance()->FnGetStationID();
+        lprIp4Front_ = IniParser::getInstance()->FnGetLPRIP4Front();
+        lprIp4Rear_ = IniParser::getInstance()->FnGetLPRIP4Rear();
+        reconnTime_ = 10000;
+        reconnTime2_ = 10000;
+        commErrorTimeCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorTime());
+        transErrorCountCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorCount());
+        lprPort_ = std::stoi(IniParser::getInstance()->FnGetLPRPort());
 
-    Logger::getInstance()->FnCreateLogFile(logFileName_);
+        Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    initFrontCamera (mainIOContext, lprIp4Front_, lprPort_, "CH1");
-    initRearCamera(mainIOContext, lprIp4Rear_, lprPort_, "CH1");
+        initFrontCamera (mainIOContext, lprIp4Front_, lprPort_, "CH1");
+        initRearCamera(mainIOContext, lprIp4Rear_, lprPort_, "CH1");
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
 }
 
 void Lpr::FnLprClose()
@@ -109,23 +124,20 @@ void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
     catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
         std::stringstream ss;
-        ss << "Front camera: TCP init error. Boost.Asio Error Exception: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Front camera: TCP init error. Error Exception: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
         std::stringstream ss;
-        ss << "Front camera: TCP init error. Unknown Exception.";
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -253,23 +265,20 @@ void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
             std::stringstream ss;
-            ss << "Rear camera: TCP init error. Boost.Asio Error Exception: " << e.what();
-            Logger::getInstance()->FnLog(ss.str());
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Boost Asio Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (const std::exception& e)
         {
             std::stringstream ss;
-            ss << "Rear camera: TCP init error. Error Exception: " << e.what();
-            Logger::getInstance()->FnLog(ss.str());
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (...)
         {
             std::stringstream ss;
-            ss << "Rear camera: TCP init error. Unknown Error Exception.";
-            Logger::getInstance()->FnLog(ss.str());
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
     }
 }
@@ -405,20 +414,20 @@ void Lpr::SendTransIDToLPR_Front(const std::string& transID)
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
             std::stringstream ss;
-            ss << "Front camera. " << __func__ << " Boost.Asio Error Exception: " << e.what();
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Boost Asio Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (const std::exception& e)
         {
             std::stringstream ss;
-            ss << "Front camera. " << __func__ << " Error Exception: " << e.what();
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (...)
         {
             std::stringstream ss;
-            ss << "Front camera. " << __func__ << " Unknown Error Exception.";
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
     }
     else
@@ -444,20 +453,20 @@ void Lpr::SendTransIDToLPR_Rear(const std::string& transID)
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
             std::stringstream ss;
-            ss << "Rear camera. " << __func__ << " Boost.Asio Error Exception: " << e.what();
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Boost Asio Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (const std::exception& e)
         {
             std::stringstream ss;
-            ss << "Rear camera. " << __func__ << " Error Exception: " << e.what();
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (...)
         {
             std::stringstream ss;
-            ss << "Rear camera. " << __func__ << " Unknown Error Exception.";
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+            ss << __func__ << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
     }
     else
@@ -469,85 +478,100 @@ void Lpr::SendTransIDToLPR_Rear(const std::string& transID)
 
 void Lpr::processData(const std::string tcpData, CType camType)
 {
-    std::string rcvETX;
-    int dataLen;
-    std::string rcvSTX;
-    std::string STX;
-    std::string ETX;
-    std::vector<std::string> tmpStr;
-
-    std::string m_CType;
-    std::string CameraChannel;
-
-    STX = "CH1";
-    ETX = ".jpg";
-
-    if (camType == CType::FRONT_CAMERA)
+    try
     {
-        m_CType = "Front Camera";
-        CameraChannel = frontCamCH_;
-    }
-    else if (camType == CType::REAR_CAMERA)
-    {
-        m_CType = "Rear Camera";
-        CameraChannel = rearCamCH_;
-    }
+        std::string rcvETX;
+        int dataLen;
+        std::string rcvSTX;
+        std::string STX;
+        std::string ETX;
+        std::vector<std::string> tmpStr;
 
-    dataLen = tcpData.length();
+        std::string m_CType;
+        std::string CameraChannel;
 
-    if (dataLen > 25)
-    {
-        boost::algorithm::split(tmpStr, tcpData, boost::algorithm::is_any_of("#"));
+        STX = "CH1";
+        ETX = ".jpg";
 
-        rcvSTX = extractSTX(tcpData);
-
-        rcvETX = extractETX(tcpData);
-
-        if ((tmpStr.size() >= 5) && (tmpStr[1] == "LPRS_STX") && (tmpStr[5] == "LPRS_ETX"))
+        if (camType == CType::FRONT_CAMERA)
         {
-            extractLPRData(tcpData, camType);
+            m_CType = "Front Camera";
+            CameraChannel = frontCamCH_;
+        }
+        else if (camType == CType::REAR_CAMERA)
+        {
+            m_CType = "Rear Camera";
+            CameraChannel = rearCamCH_;
+        }
+
+        dataLen = tcpData.length();
+
+        if (dataLen > 25)
+        {
+            boost::algorithm::split(tmpStr, tcpData, boost::algorithm::is_any_of("#"));
+
+            rcvSTX = extractSTX(tcpData);
+
+            rcvETX = extractETX(tcpData);
+
+            if ((tmpStr.size() >= 5) && (tmpStr[1] == "LPRS_STX") && (tmpStr[5] == "LPRS_ETX"))
+            {
+                extractLPRData(tcpData, camType);
+            }
+            else
+            {
+                if (boost::algorithm::to_upper_copy(rcvSTX) != STX)
+                {
+                    std::stringstream ss;
+                    ss << "Receive TCP Data @ : " << m_CType << " Wrong STX : " << rcvSTX;
+                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+                }
+
+                if (boost::algorithm::to_lower_copy(rcvETX) != ETX)
+                {
+                    std::stringstream ss;
+                    ss << "Receive TCP Data @ : " << m_CType << " Wrong ETX : " << rcvETX;
+                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+                }
+            }
         }
         else
         {
-            if (boost::algorithm::to_upper_copy(rcvSTX) != STX)
+            if (dataLen == 5)
             {
-                std::stringstream ss;
-                ss << "Receive TCP Data @ : " << m_CType << " Wrong STX : " << rcvSTX;
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+                if (boost::algorithm::to_upper_copy(tcpData) == "LPR_R")
+                {
+                    std::stringstream ss;
+                    ss << "Receive TCP Data @ : " << m_CType << " , NP1400 program currently is running";
+                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+                }
+                else if (boost::algorithm::to_upper_copy(tcpData) == "LPR_N")
+                {
+                    std::stringstream ss;
+                    ss << "Receive TCP Data @ : " << m_CType << " , NP1400 program currently is not running";
+                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+                }
             }
-
-            if (boost::algorithm::to_lower_copy(rcvETX) != ETX)
+            else if (dataLen == 2)
             {
-                std::stringstream ss;
-                ss << "Receive TCP Data @ : " << m_CType << " Wrong ETX : " << rcvETX;
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+                if (boost::algorithm::to_upper_copy(tcpData) == "OK")
+                {
+                    Logger::getInstance()->FnLog("Receive TCP Data @ : OK", logFileName_, "LPR");
+                }
             }
         }
     }
-    else
+    catch (const std::exception& e)
     {
-        if (dataLen == 5)
-        {
-            if (boost::algorithm::to_upper_copy(tcpData) == "LPR_R")
-            {
-                std::stringstream ss;
-                ss << "Receive TCP Data @ : " << m_CType << " , NP1400 program currently is running";
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-            }
-            else if (boost::algorithm::to_upper_copy(tcpData) == "LPR_N")
-            {
-                std::stringstream ss;
-                ss << "Receive TCP Data @ : " << m_CType << " , NP1400 program currently is not running";
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-            }
-        }
-        else if (dataLen == 2)
-        {
-            if (boost::algorithm::to_upper_copy(tcpData) == "OK")
-            {
-                Logger::getInstance()->FnLog("Receive TCP Data @ : OK", logFileName_, "LPR");
-            }
-        }
+        std::stringstream ss;
+        ss << __func__ << ", tcpData: " << tcpData << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", tcpData: " << tcpData << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -729,22 +753,40 @@ std::string Lpr::serializeEventData(const LPREventData& eventData)
 
 struct Lpr::LPREventData Lpr::deserializeEventData(const std::string& serializeData)
 {
-    struct LPREventData eventData;
-    std::stringstream ss(serializeData);
-    std::string token;
+    struct LPREventData eventData{};
 
-    std::getline(ss, token, ',');
-    int camTypeValue = std::stoi(token);
-    eventData.camType = static_cast<Lpr::CType>(camTypeValue);
+    try
+    {
+        std::stringstream ss(serializeData);
+        std::string token;
 
-    std::getline(ss, token, ',');
-    eventData.LPN = token;
+        std::getline(ss, token, ',');
+        int camTypeValue = std::stoi(token);
+        eventData.camType = static_cast<Lpr::CType>(camTypeValue);
 
-    std::getline(ss, token, ',');
-    eventData.TransID = token;
+        std::getline(ss, token, ',');
+        eventData.LPN = token;
 
-    std::getline(ss, token, ',');
-    eventData.imagePath = token;
+        std::getline(ss, token, ',');
+        eventData.TransID = token;
 
-    return eventData;
+        std::getline(ss, token, ',');
+        eventData.imagePath = token;
+
+        return eventData;
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Data: " << serializeData << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return {};
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Data: " << serializeData << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return {};
+    }
 }

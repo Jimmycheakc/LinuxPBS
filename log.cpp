@@ -12,7 +12,7 @@ std::mutex Logger::mutex_;
 
 Logger::Logger()
 {
-    FnCreateLogFile();
+
 }
 
 Logger::~Logger()
@@ -33,10 +33,10 @@ Logger* Logger::getInstance()
 
 void Logger::FnCreateLogFile(std::string filename)
 {
-    const boost::filesystem::path dirPath(LOG_FILE_PATH);
-
     try
     {
+        const boost::filesystem::path dirPath(LOG_FILE_PATH);
+
         if (!(boost::filesystem::exists(dirPath)))
         {
             if (!(boost::filesystem::create_directories(dirPath)))
@@ -156,4 +156,100 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
         }
 #endif
     }
+}
+
+void Logger::FnCreateExceptionLogFile()
+{
+    // Check if the logger has already been initialized
+    if (spdlog::get("EXCEPTION_LOGGER") != nullptr)
+    {
+        // If the logger is already initialized, no need to recreate it
+        return;
+    }
+
+    try
+    {
+        boost::filesystem::path dirPath(LOG_FILE_PATH);
+        if (!boost::filesystem::exists(dirPath))
+        {
+            if (!boost::filesystem::create_directories(dirPath))
+            {
+                std::cerr << "Failed to create exception log directory: " << dirPath << std::endl;
+                return;
+            }
+        }
+
+        time_t timer = time(0);
+        struct tm timeinfo = {};
+        localtime_r(&timer, &timeinfo);
+
+        std::stringstream ssDate;
+        ssDate << std::put_time(&timeinfo, "%y%m%d");
+
+        std::string exceptionFile = LOG_FILE_PATH + "/exception_" + ssDate.str() + ".log";
+
+        // Create async file logger
+        auto exLogger = spdlog::basic_logger_mt<spdlog::async_factory>("EXCEPTION_LOGGER", exceptionFile);
+        exLogger->set_pattern("%v");
+        exLogger->set_level(spdlog::level::err);
+        exLogger->flush_on(spdlog::level::err);
+    }
+    catch (const spdlog::spdlog_ex& e)
+    {
+        std::cerr << "Failed to create exception logger: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create exception log file: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "Unknown Exception during creating exception log file." << std::endl;
+    }
+}
+
+void Logger::FnLogExceptionError(const std::string& errorMsg)
+{
+    try
+    {
+        // Ensure the exception log file is created only once
+        FnCreateExceptionLogFile();
+
+        // Get the current timestamp
+        time_t timer = time(0);
+        struct tm timeinfo = {};
+        localtime_r(&timer, &timeinfo);
+
+        std::stringstream ssDate;
+        ssDate << std::put_time(&timeinfo, "%y%m%d");
+
+        // Create log message with timestamp
+        std::stringstream logMsg;
+        logMsg << "[" << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S") << "] ";
+        logMsg << "Exception: " << errorMsg;
+
+        // Log the exception error message
+        auto exLogger = spdlog::get("EXCEPTION_LOGGER");
+        if (exLogger)
+        {
+            exLogger->error(logMsg.str());
+            exLogger->flush();
+        }
+        else
+        {
+            std::cerr << "Failed to log exception: Logger not initialized" << std::endl;
+        }
+    }
+    catch (const spdlog::spdlog_ex& e)
+    {
+        std::cerr << "Failed to create exception logger: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create exception log file: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "Unknown Exception during creating exception log file." << std::endl;
+    } 
 }

@@ -60,7 +60,7 @@ private:
   float pingTimeOut;
   SQLHENV env; //environment handle
   SQLHDBC dbc; //connection handle
-  SQLHSTMT stmt; // statement handle
+  //SQLHSTMT stmt; // statement handle
   std::vector<std::string> GetError(char const *fn,SQLHANDLE handle,SQLSMALLINT type);
   char* To_CharArray(const std::string &Text);
   unsigned char* To_UnsignCharArray(const std::string &Text);

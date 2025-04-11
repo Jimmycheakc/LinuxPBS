@@ -45,17 +45,23 @@ public:
             }
         }
         catch (const std::filesystem::filesystem_error& e)
-    {
-        Logger::getInstance()->FnLog("Filesystem error in MountManager constructor: " + std::string(e.what()), logFileName_, sOption_);
-    }
-    catch (const std::exception& e)
-    {
-        Logger::getInstance()->FnLog("Standard exception in MountManager constructor: " + std::string(e.what()), logFileName_, sOption_);
-    }
-    catch (...)
-    {
-        Logger::getInstance()->FnLog("Unknown exception in MountManager constructor.", logFileName_, sOption_);
-    }
+        {
+            std::stringstream ss;
+            ss << __func__ << ", Filesystem Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
+        catch (const std::exception& e)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
     }
 
     ~MountManager()
@@ -77,11 +83,15 @@ public:
         }
         catch (const std::exception& e)
         {
-            Logger::getInstance()->FnLog("Exception in MountManager destructor: " + std::string(e.what()), logFileName_, sOption_);
+            std::stringstream ss;
+            ss << __func__ << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
         catch (...)
         {
-            Logger::getInstance()->FnLog("Unknown exception in MountManager destructor." , logFileName_, sOption_);
+            std::stringstream ss;
+            ss << __func__ << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
     }
 

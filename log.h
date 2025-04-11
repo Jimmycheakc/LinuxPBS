@@ -19,6 +19,8 @@ public:
     static Logger* getInstance();
     void FnCreateLogFile(std::string filename="");
     void FnLog(std::string sMsg="", std::string filename="", std::string sOption="PBS");
+    void FnCreateExceptionLogFile();
+    void FnLogExceptionError(const std::string& errorMsg);
 
     /**
      * Singleton Logger should not be cloneable.

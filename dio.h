@@ -105,6 +105,7 @@ private:
     int lcd_backlight_do_;
     int close_barrier_do_;
     bool isDIOMonitoringThreadRunning_;
+    bool isGPIOInitialized_;
     std::thread dioMonitoringThread_;
     int manual_open_barrier_status_flag_;
     std::mutex manual_open_barrier_status_flag_mutex_;

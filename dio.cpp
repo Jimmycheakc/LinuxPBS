@@ -40,7 +40,8 @@ DIO::DIO()
     print_receipt_di_last_val_(0),
     iBarrierOpenTooLongTime_(0),
     bIsBarrierOpenTooLongTime_(false),
-    isDIOMonitoringThreadRunning_(false)
+    isDIOMonitoringThreadRunning_(false),
+    isGPIOInitialized_(false)
 {
     logFileName_ = "dio";
 }
@@ -76,18 +77,36 @@ void DIO::FnDIOInit()
     close_barrier_do_ = getOutputPinNum(IniParser::getInstance()->FnGetclosebarrier());
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
-    Logger::getInstance()->FnLog("DIO initialization completed.");
-    Logger::getInstance()->FnLog("DIO initialization completed.", logFileName_, "DIO");
+
+    if (GPIOManager::getInstance()->FnGPIOInit())
+    {
+        Logger::getInstance()->FnLog("DIO initialization completed.");
+        Logger::getInstance()->FnLog("DIO initialization completed.", logFileName_, "DIO");
+        isGPIOInitialized_ = true;
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("DIO initialization failed.");
+        Logger::getInstance()->FnLog("DIO initialization failed.", logFileName_, "DIO");
+        isGPIOInitialized_ = false;
+    }
 }
 
 void DIO::FnStartDIOMonitoring()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    if (!isDIOMonitoringThreadRunning_)
+    if (isGPIOInitialized_)
     {
-        isDIOMonitoringThreadRunning_ = true;
-        dioMonitoringThread_ = std::thread(&DIO::monitoringDIOChangeThreadFunction, this);
+        if (!isDIOMonitoringThreadRunning_)
+        {
+            isDIOMonitoringThreadRunning_ = true;
+            dioMonitoringThread_ = std::thread(&DIO::monitoringDIOChangeThreadFunction, this);
+        }
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Failed to start DIO monitoring as DIO initialization failed.", logFileName_, "DIO");
     }
 }
 
@@ -343,15 +362,8 @@ void DIO::monitoringDIOChangeThreadFunction()
         if ((iBarrierOpenTooLongTime_ > 0) && (!barrier_open_time_.empty()))
         {
             int64_t duration_sec = 0;
-            try
-            {
-                // Compare with now() to get the differnece in seconds
-                duration_sec = Common::getInstance()->FnGetDateDiffInSeconds(barrier_open_time_);
-            }
-            catch (const std::exception& e)
-            {
-                Logger::getInstance()->FnLog("Exception :" + std::string(e.what()), logFileName_, "DIO");
-            }
+            // Compare with now() to get the differnece in seconds
+            duration_sec = Common::getInstance()->FnGetDateDiffInSeconds(barrier_open_time_);
 
             if (duration_sec > iBarrierOpenTooLongTime_)
             {

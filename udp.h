@@ -180,8 +180,14 @@ private:
         catch (const std::exception& e)
         {
             std::stringstream ss;
-            ss << "Exception while handling timer error: " << e.what();
-            Logger::getInstance()->FnLog(ss.str(), "", "UDP");
+            ss << __func__ << ", Heartbeat Timer Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", Heartbeat Timer Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
         }
     }
 

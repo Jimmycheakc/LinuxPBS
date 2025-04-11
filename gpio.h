@@ -72,7 +72,7 @@ public:
     static const int PIN_DI16              = 421;   // J2 010
 
     static GPIOManager* getInstance();
-    void FnGPIOInit();
+    bool FnGPIOInit();
     SysfsGPIO* FnGetGPIO(int pinNumber);
 
     /**
@@ -91,5 +91,5 @@ private:
     std::unordered_map<int, std::unique_ptr<SysfsGPIO>> gpioPins_;
     GPIOManager();
     ~GPIOManager();
-    void FnInitSetGPIODirection(int pinNumber, const std::string& dir);
+    bool FnInitSetGPIODirection(int pinNumber, const std::string& dir);
 };

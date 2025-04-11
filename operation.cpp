@@ -437,9 +437,9 @@ void operation::Openbarrier()
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
 
     DIO::getInstance()->FnSetOpenBarrier(1);
-    //
+    
     std::this_thread::sleep_for(std::chrono::milliseconds(tParas.gsBarrierPulse));
-    //
+    
     DIO::getInstance()->FnSetOpenBarrier(0);
 }
 
@@ -448,6 +448,9 @@ void operation::closeBarrier()
     writelog ("Close barrier.", "OPR");
     
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
+
+    // Reset the continue open barrier
+    DIO::getInstance()->FnSetOpenBarrier(0);
 
     DIO::getInstance()->FnSetCloseBarrier(1);
     //
@@ -674,7 +677,6 @@ void operation::Initdevice(io_context& ioContext)
         Printer::getInstance()->FnPrinterInit(9600, getSerialPort(std::to_string(tParas.giCommPortPrinter)));
     }
 
-    GPIOManager::getInstance()->FnGPIOInit();
     DIO::getInstance()->FnDIOInit();
     Lpr::getInstance()->FnLprInit(ioContext);
     BARCODE_READER::getInstance()->FnBarcodeReaderInit();
@@ -3351,40 +3353,26 @@ void operation::PrintTR(bool bForSeason)
         }
         else if (gsTR_lowercase == "et")
         {
-            try
+            if (gtStation.iType == tientry)
             {
-                if (gtStation.iType == tientry)
+                entryTime = Common::getInstance()->FnFormatDateTime(tEntry.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
+            }
+            else
+            {
+                if (tExit.sEntryTime == "")
                 {
-                    entryTime = Common::getInstance()->FnFormatDateTime(tEntry.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
+                    entryTime = " N/A";
                 }
                 else
                 {
-                    if (tExit.sEntryTime == "")
-                    {
-                        entryTime = " N/A";
-                    }
-                    else
-                    {
-                        entryTime = Common::getInstance()->FnFormatDateTime(tExit.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
-                    }
+                    entryTime = Common::getInstance()->FnFormatDateTime(tExit.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
                 }
-            }
-            catch (const std::exception& ex)
-            {
-                Logger::getInstance()->FnLog(std::string("Format date time exception error: ") + ex.what(), "", "OPR");
             }
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + entryTime;
         }
         else if (gsTR_lowercase == "pt")
         {
-            try
-            {
-                exitTime = Common::getInstance()->FnFormatDateTime(tExit.sExitTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
-            }
-            catch (const std::exception& ex)
-            {
-                Logger::getInstance()->FnLog(std::string("Format date time exception error: ") + ex.what(), "", "OPR");
-            }
+            exitTime = Common::getInstance()->FnFormatDateTime(tExit.sExitTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + exitTime;
         }
         else if (gsTR_lowercase == "pkt")

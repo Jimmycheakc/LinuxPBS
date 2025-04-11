@@ -64,23 +64,20 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
     catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
         std::stringstream ss;
-        ss << "Boost.Asio Exception during LED Initialization: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Exception during LED Initialization: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
         std::stringstream ss;
-        ss << "Unknown exception caught during LED Initialization.";
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_,"LED");
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -167,9 +164,14 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Exception during LED write : " << e.what() << std::endl;
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LED");
+        ss << __func__ << ", text: " << text << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", text: " << text << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -253,7 +255,23 @@ LEDManager* LEDManager::getInstance()
 
 void LEDManager::createLED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
 {
-    leds_.push_back(std::make_unique<LED>(io_context, baudRate, comPortName, maxCharacterPerRow));
+    try
+    {
+        leds_.push_back(std::make_unique<LED>(io_context, baudRate, comPortName, maxCharacterPerRow));
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", baudRate: " << baudRate << ", comPortName: " << comPortName << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", baudRate: " << baudRate << ", comPortName: " << comPortName << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+
 }
 
 LED* LEDManager::getLED(const std::string& ledComPort)

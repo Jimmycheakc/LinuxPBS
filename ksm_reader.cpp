@@ -91,23 +91,20 @@ int KSM_Reader::FnKSMReaderInit(unsigned int baudRate, const std::string& comPor
     catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
     {
         std::stringstream ss;
-        ss << "Boost.Asio Exception during KSM Reader Initialization: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        ksmLogger(__func__);
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());;
     }
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Exception during KSM Reader Initialization: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        ksmLogger(__func__);
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
         std::stringstream ss;
-        ss << "Unknown Exception during KSM Reader Initialization.";
-        Logger::getInstance()->FnLog(ss.str());
-        ksmLogger(__func__);
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 
     return ret;

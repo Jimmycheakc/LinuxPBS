@@ -1197,16 +1197,20 @@ void Upt::FnUptInit(unsigned int baudRate, const std::string& comPortName)
     catch (const boost::system::system_error& e)
     {
         std::stringstream ss;
-        ss << "Exception during UPOS Terminal initialization: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Exception during UPOS Terminal initialization: " << e.what();
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 

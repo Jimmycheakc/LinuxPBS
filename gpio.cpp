@@ -16,90 +16,175 @@ SysfsGPIO::~SysfsGPIO()
 
 bool SysfsGPIO::FnExportGPIO()
 {
-    std::ofstream exportFile("/sys/class/gpio/export");
-    if (!exportFile.is_open())
+    try
+    {
+        std::ofstream exportFile("/sys/class/gpio/export");
+        if (!exportFile.is_open())
+        {
+            std::stringstream ss;
+            ss << "Failed to export GPIO " << std::to_string(pinNumber_) << std::endl;
+            Logger::getInstance()->FnLog(ss.str());
+            return false;
+        }
+
+        exportFile << pinNumber_;
+        exportFile.close();
+        usleep(50000); // Sleep for 100ms to allow the kernel to export the GPIO
+
+        return true;
+    }
+    catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Failed to export GPIO " << std::to_string(pinNumber_) << std::endl;
-        Logger::getInstance()->FnLog(ss.str());
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return false;
     }
-
-    exportFile << pinNumber_;
-    exportFile.close();
-    usleep(50000); // Sleep for 100ms to allow the kernel to export the GPIO
-
-    return true;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return false;
+    }
 }
 
 bool SysfsGPIO::FnUnexportGPIO()
 {
-    std::ofstream unexportFile("/sys/class/gpio/unexport");
-    if (!unexportFile.is_open())
+    try
+    {
+        std::ofstream unexportFile("/sys/class/gpio/unexport");
+        if (!unexportFile.is_open())
+        {
+            std::stringstream ss;
+            ss << "Failed to unexport GPIO " << std::to_string(pinNumber_) << std::endl;
+            Logger::getInstance()->FnLog(ss.str());
+            return false;
+        }
+
+        unexportFile << pinNumber_;
+        unexportFile.close();
+
+        return true;
+    }
+    catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Failed to unexport GPIO " << std::to_string(pinNumber_) << std::endl;
-        Logger::getInstance()->FnLog(ss.str());
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return false;
     }
-
-    unexportFile << pinNumber_;
-    unexportFile.close();
-
-    return true;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return false;
+    }
 }
 
 bool SysfsGPIO::FnSetDirection(const std::string& direction)
 {
-    std::ofstream directionFile(gpioPath_ + "direction");
-    if (!directionFile.is_open())
+    try
+    {
+        std::ofstream directionFile(gpioPath_ + "direction");
+        if (!directionFile.is_open())
+        {
+            std::stringstream ss;
+            ss << "Failed to set GPIO direction for pin " << std::to_string(pinNumber_) << std::endl;
+            Logger::getInstance()->FnLog(ss.str());
+            return false;
+        }
+
+        directionFile << direction;
+        directionFile.close();
+
+        return true;
+    }
+    catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Failed to set GPIO direction for pin " << std::to_string(pinNumber_) << std::endl;
-        Logger::getInstance()->FnLog(ss.str());
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Direction: " << direction << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return false;
     }
-
-    directionFile << direction;
-    directionFile.close();
-
-    return true;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Direction: " << direction << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return false;
+    }
 }
 
 bool SysfsGPIO::FnSetValue(int value)
 {
-    std::ofstream valueFile(gpioPath_ + "value");
-    if (!valueFile.is_open())
+    try
+    {
+        std::ofstream valueFile(gpioPath_ + "value");
+        if (!valueFile.is_open())
+        {
+            std::stringstream ss;
+            ss << "Failed to set GPIO value for pin " << std::to_string(pinNumber_) << std::endl;
+            Logger::getInstance()->FnLog(ss.str());
+            return false;
+        }
+
+        valueFile << value;
+        valueFile.close();
+
+        return true;
+    }
+    catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Failed to set GPIO value for pin " << std::to_string(pinNumber_) << std::endl;
-        Logger::getInstance()->FnLog(ss.str());
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << " ,Value: " << std::to_string(value) << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
         return false;
     }
-
-    valueFile << value;
-    valueFile.close();
-
-    return true;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << " ,Value: " << std::to_string(value) << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return false;
+    }
 }
 
 int SysfsGPIO::FnGetValue() const
 {
-    std::ifstream valueFile(gpioPath_ + "value");
-    if (!valueFile.is_open())
+    try
+    {
+        std::ifstream valueFile(gpioPath_ + "value");
+        if (!valueFile.is_open())
+        {
+            std::stringstream ss;
+            ss << "Failed to get GPIO value for pin " << std::to_string(pinNumber_) << std::endl;
+            Logger::getInstance()->FnLog(ss.str());
+            return -1;
+        }
+
+        int value;
+        valueFile >> value;
+
+        valueFile.close();
+
+        return value;
+    }
+    catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << "Failed to get GPIO value for pin " << std::to_string(pinNumber_) << std::endl;
-        Logger::getInstance()->FnLog(ss.str());
-        return false;
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return -1;
     }
-
-    int value;
-    valueFile >> value;
-
-    valueFile.close();
-
-    return value;
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", GPIO: " << std::to_string(pinNumber_) << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        return -1;
+    }
 }
 
 std::string SysfsGPIO::FnGetGPIOPath() const
@@ -132,37 +217,43 @@ GPIOManager* GPIOManager::getInstance()
     return GPIOManager_;
 }
 
-void GPIOManager::FnGPIOInit()
+bool GPIOManager::FnGPIOInit()
 {
-    FnInitSetGPIODirection(PIN_DO1, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO2, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO3, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO4, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO5, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO6, GPIO_OUT);
+    // List all output pins
+    const std::vector<int> outputPins = {
+        PIN_DO1, PIN_DO2, PIN_DO3, PIN_DO4, PIN_DO5, PIN_DO6,
+        PIN_DO7, PIN_DO8, PIN_DO9
+        // PIN_DO10 (Disabled: Use for USB Hub Reset)
+    };
 
-    FnInitSetGPIODirection(PIN_DO7, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO8, GPIO_OUT);
-    FnInitSetGPIODirection(PIN_DO9, GPIO_OUT);
-    //FnInitSetGPIODirection(PIN_DO10, GPIO_OUT); (Disabled :Use for USB Hub Reset)
+    // List all input pins
+    const std::vector<int> inputPins = {
+        PIN_DI1, PIN_DI2, PIN_DI3, PIN_DI4, PIN_DI5, PIN_DI6,
+        PIN_DI7, PIN_DI8, PIN_DI9, PIN_DI10, PIN_DI11, PIN_DI12,
+        PIN_DI13, PIN_DI14, PIN_DI15, PIN_DI16
+    };
 
-    FnInitSetGPIODirection(PIN_DI1, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI2, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI3, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI4, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI5, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI6, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI7, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI8, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI9, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI10, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI11, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI12, GPIO_IN);
+    // Initialize output pins
+    for (int pin : outputPins)
+    {
+        if (!FnInitSetGPIODirection(pin, GPIO_OUT))
+        {
+            Logger::getInstance()->FnLog("Failed to initialize output pin: " + std::to_string(pin));
+            return false;
+        }
+    }
 
-    FnInitSetGPIODirection(PIN_DI13, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI14, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI15, GPIO_IN);
-    FnInitSetGPIODirection(PIN_DI16, GPIO_IN);
+    // Initialize input pins
+    for (int pin : inputPins)
+    {
+        if (!FnInitSetGPIODirection(pin, GPIO_IN))
+        {
+            Logger::getInstance()->FnLog("Failed to initialize input pin: " + std::to_string(pin));
+            return false;
+        }
+    }
+
+    return true;
 }
 
 SysfsGPIO* GPIOManager::FnGetGPIO(int pinNumber)
@@ -171,17 +262,29 @@ SysfsGPIO* GPIOManager::FnGetGPIO(int pinNumber)
     return (it != gpioPins_.end()) ? it->second.get() : nullptr;
 }
 
-void GPIOManager::FnInitSetGPIODirection(int pinNumber, const std::string& dir)
+bool GPIOManager::FnInitSetGPIODirection(int pinNumber, const std::string& dir)
 {
+    bool success = false;
     std::unique_ptr<SysfsGPIO> gpio = std::make_unique<SysfsGPIO>(pinNumber);
     if (dir == GPIO_IN)
     {
-        gpio->FnSetDirection(GPIO_IN);
+        success = gpio->FnSetDirection(GPIO_IN);
     }
     else if (dir == GPIO_OUT)
     {
-        gpio->FnSetDirection(GPIO_OUT);
-        gpio->FnSetValue(GPIO_LOW);
+        success = gpio->FnSetDirection(GPIO_OUT) && gpio->FnSetValue(GPIO_LOW);
     }
-    gpioPins_[pinNumber] = std::move(gpio);
+
+    if (success)
+    {
+        gpioPins_[pinNumber] = std::move(gpio);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Failed to configure pin " << std::to_string(pinNumber) + " as " << dir << std::endl;
+        Logger::getInstance()->FnLog(ss.str());
+    }
+
+    return success;
 }

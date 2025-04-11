@@ -180,10 +180,22 @@ bool BARCODE_READER::isDeviceAvailable(const std::string& devicePath)
 
 void BARCODE_READER::monitoringBarcodeThreadFunction()
 {
+    bool isBarcodeNotConnectedLogged = false;  // Flag to log retrying message
+    bool isBarcodeRecovered = false;            // Flag to log recovery message
+
     while (isBarcodeMonitoringThreadRunning_.load())
     {
         if (isDeviceAvailable(barcodeFilePath))
         {
+            // If the barcode device has been unavailable and it is now available
+            if (!isBarcodeRecovered)
+            {
+                // Log the recovery message
+                Logger::getInstance()->FnLog("Barcode device connected", logFileName_, "BCODE");
+                isBarcodeRecovered = true;  // Mark that the barcode has recovered
+                isBarcodeNotConnectedLogged = false;  // Reset the retry flag
+            }
+
             std::string barcode = readBarcode(barcodeFilePath);
             if (!barcode.empty())
             {
@@ -193,8 +205,16 @@ void BARCODE_READER::monitoringBarcodeThreadFunction()
         }
         else
         {
-            Logger::getInstance()->FnLog("Barcode not connected, retrying...", logFileName_, "BCODE");
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            // If the barcode device is unavailable, log retrying message only once
+            if (!isBarcodeNotConnectedLogged)
+            {
+                Logger::getInstance()->FnLog("Barcode not connected, retrying...", logFileName_, "BCODE");
+                isBarcodeNotConnectedLogged = true;  // Set the flag to avoid repeated messages
+                isBarcodeRecovered = false;  // Mark that the barcode has not recovered
+            }
+
+            // Wait before retrying
+            std::this_thread::sleep_for(std::chrono::seconds(5));
         }
     }
 }
