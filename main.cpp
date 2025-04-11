@@ -74,7 +74,7 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
             // Clear expired season
             if (operation::getInstance()->tProcess.giLastHousekeepingDate != Common::getInstance()->FnGetCurrentDay())
             {
-                db::getInstance()->clearexpiredseason();
+                db::getInstance()->HouseKeeping();
                 operation::getInstance()->tProcess.giLastHousekeepingDate = Common::getInstance()->FnGetCurrentDay();
             }
 

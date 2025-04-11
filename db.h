@@ -94,14 +94,16 @@ public:
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
     DBError updatemovementtrans(tExitTrans_Struct& tExit);
+    DBError DeleteBeforeInsertMT(tExitTrans_Struct& tExit); 
     DBError insert2movementtrans(tExitTrans_Struct& tExit); 
-	DBError insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype);
+	DBError insertbroadcasttrans(string sid,string iu_No,string cardno = "",string paidamt = "0.00",string itype = "1");
+    DBError UpdateLocalEntry(string IUTkNo);
 	DBError loadmessage();
     DBError loadExitmessage();
 	DBError loadParam();
     DBError loadparamfromCentral();
 	DBError loadstationsetup();
-    DBError loadcentralDBinfo();
+    DBError loadZoneEntriesfromLocal();
     DBError loadvehicletype();
     DBError loadTR(int iType = 0);
     DBError LoadTariff();
@@ -125,6 +127,7 @@ public:
     int AddSysEvent(string sEvent);
 
     int FnGetDatabaseErrorFlag();
+    int HouseKeeping();
     int clearexpiredseason();
     int updateEntryTrans(string lpn, string sTransID);
     int updateExitTrans(string lpn, string sTransID);

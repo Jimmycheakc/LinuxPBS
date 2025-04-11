@@ -516,6 +516,28 @@ void udpclient::processdata (const char* data, std::size_t length)
 			}
 			break;
 		}
+		case CmdBroadcastSaveTrans:
+		{
+			if (pField.Field(3).find("Entry OK") != std::string::npos) {
+				operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+				string stnid = "," + pField.Field(1) + ",";
+				string gsZoneEntries = operation::getInstance()->tParas.gsZoneEntries;
+				if (gsZoneEntries.find(stnid) != std::string::npos)
+				{
+					std::vector<std::string> tmpStr;
+					boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
+					db::getInstance()->insertbroadcasttrans (pField.Field(1), tmpStr[0]);
+				}
+			}else{
+				if (pField.Field(3).find("Exit OK") != std::string::npos) {
+					operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+					std::vector<std::string> tmpStr;
+					boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
+					db::getInstance()->UpdateLocalEntry(tmpStr[0]);
+				}
+			}
+			break;
+		}
 		default:
 			break;
 	}
@@ -535,8 +557,8 @@ void udpclient::startreceive()
         {
             std::string sender_ip = senderEndpoint_.address().to_string();  
 				
-			//operation::getInstance()->writelog("remove IP:" + sender_ip, "UDP");
-			//operation::getInstance()->writelog("Local IP:"+ operation:: getInstance()->tParas.gsLocalIP, "UDP");  
+		//	operation::getInstance()->writelog("remove IP:" + sender_ip, "UDP");
+		//	operation::getInstance()->writelog("Local IP:"+ operation:: getInstance()->tParas.gsLocalIP, "UDP");  
 				         
             if (sender_ip != operation:: getInstance()->tParas.gsLocalIP) {
                 if (socket_.local_endpoint().port() == 2001)

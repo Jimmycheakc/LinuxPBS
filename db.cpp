@@ -242,7 +242,7 @@ int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
 	return(retcode);
 }
 
-DBError db::insertbroadcasttrans(string sid,string iu_No,string S_cardno,string S_paidamt,string S_itype)
+DBError db::insertbroadcasttrans(string sid,string iu_No,string cardno,string paidamt,string itype)
 {
 
 	std::string sqlStmt;
@@ -250,6 +250,8 @@ DBError db::insertbroadcasttrans(string sid,string iu_No,string S_cardno,string 
 	int r;
 	int sNo;
 
+	r = localdb->SQLExecutNoneQuery("DELETE FROM Entry_Trans where iu_tk_No = '" + iu_No + "'");
+    //------
 	CE_Time dt;
 	string dtStr=dt.DateString()+" "+dt.TimeString();
 
@@ -259,9 +261,11 @@ DBError db::insertbroadcasttrans(string sid,string iu_No,string S_cardno,string 
 	sqlStmt=sqlStmt + ",card_no,paid_amt";
 
 	sqlStmt = sqlStmt + ") Values ('" + sid+ "','" +dtStr+ "','" + iu_No;
-	sqlStmt = sqlStmt +  "','" + S_itype;
-	sqlStmt = sqlStmt + "','" + S_cardno + "','" +S_paidamt+"'";
+	sqlStmt = sqlStmt +  "','" + itype;
+	sqlStmt = sqlStmt + "','" + cardno + "','" + paidamt+"'";
 	sqlStmt = sqlStmt +  ")";
+
+	//operation::getInstance()->writelog (sqlStmt, "DB");
 
 	r=localdb->SQLExecutNoneQuery(sqlStmt);
 
@@ -275,12 +279,35 @@ DBError db::insertbroadcasttrans(string sid,string iu_No,string S_cardno,string 
 	}
 	else
 	{
-		dbss << "Insert Broadcast Entry_trans to Local: success";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		//dbss << "Insert Broadcast Entry_trans to Local: success";
+    	//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 		return iDBSuccess;
 	}
 
-};
+}
+
+DBError db::UpdateLocalEntry(string IUTkNo)
+{
+	int r=0;
+	string sqstr="";
+
+	// insert into Central trans tmp table
+
+	sqstr="UPDATE Entry_Trans set Status = 3 WHERE iu_tk_no = '"+ IUTkNo + "'";
+	
+	r = localdb->SQLExecutNoneQuery(sqstr);
+
+	if (r==0) 
+	{
+		
+	}
+	else {
+		operation::getInstance()->writelog("fail to update Local Entry_Trans","DB");
+		return iLocalFail;
+	}
+	
+	return iDBSuccess;
+}
 
 DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 {
@@ -3028,9 +3055,6 @@ DBError db::loadstationsetup()
 			break;
 		};
 		operation::getInstance()->gtStation.iVirtualID = std::stoi(selResult[0].GetDataItem(10));
-		operation::getInstance()->gtStation.iGroupID = std::stoi(selResult[0].GetDataItem(11));
-		//operation::getInstance()->gtStation.sZoneName= selResult[0].GetDataItem(11);
-		//operation::getInstance()->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
 		operation::getInstance()->tProcess.gbloadedStnSetup = true;
 		return iDBSuccess;
 	}
@@ -3217,14 +3241,15 @@ int db::writetr2local(int tr_type, int line_no, int enabled, std::string line_te
 	return r;
 }
 
-DBError db::loadcentralDBinfo()
+DBError db::loadZoneEntriesfromLocal()
 {
 	vector<ReaderItem> selResult;
 	int r = -1;
-	int giStnid;
-	giStnid = operation::getInstance()->gtStation.iSID;
+	int giStnZoneid;
+	int j = 0;
+	giStnZoneid = operation::getInstance()->gtStation.iZoneID;
 
-	r = localdb->SQLSelect("SELECT * FROM Station_Setup WHERE StationId = '" + std::to_string(giStnid) + "'", &selResult, false);
+	r = localdb->SQLSelect("SELECT StationID FROM Station_Setup WHERE StationType = 1 and ZoneID = '" + std::to_string(giStnZoneid) + "'", &selResult, false);
 
 	if (r != 0)
 	{
@@ -3234,44 +3259,14 @@ DBError db::loadcentralDBinfo()
 
 	if (selResult.size() > 0)
 	{            
-		//Set configuration
-		operation::getInstance()->gtStation.iSID = std::stoi(selResult[0].GetDataItem(0));
-		operation::getInstance()->gtStation.sName = selResult[0].GetDataItem(1);
-		switch(std::stoi(selResult[0].GetDataItem(2)))
-		{
-		case 1:
-			operation::getInstance()->gtStation.iType = tientry;
-			break;
-		case 2:
-			operation::getInstance()->gtStation.iType = tiExit;
-			break;
-		default:
-			break;
-		};
-		operation::getInstance()->gtStation.iStatus = std::stoi(selResult[0].GetDataItem(3));
-		operation::getInstance()->gtStation.sPCName = selResult[0].GetDataItem(4);
-		operation::getInstance()->gtStation.iCHUPort = std::stoi(selResult[0].GetDataItem(5));
-		operation::getInstance()->gtStation.iAntID = std::stoi(selResult[0].GetDataItem(6));
-		operation::getInstance()->gtStation.iZoneID = std::stoi(selResult[0].GetDataItem(7));
-		operation::getInstance()->gtStation.iIsVirtual = std::stoi(selResult[0].GetDataItem(8));
-		switch(std::stoi(selResult[0].GetDataItem(9)))
-		{
-		case 0:
-			operation::getInstance()->gtStation.iSubType = iNormal;
-			break;
-		case 1:
-			operation::getInstance()->gtStation.iSubType = iXwithVENoPay;
-			break;
-		case 2:
-			operation::getInstance()->gtStation.iSubType = iXwithVEPay;
-			break;
-		default:
-			break;
-		};
-		operation::getInstance()->gtStation.iVirtualID = std::stoi(selResult[0].GetDataItem(10));
-		operation::getInstance()->gtStation.iGroupID = std::stoi(selResult[0].GetDataItem(11));
-		//operation::getInstance()->gtStation.sZoneName= selResult[0].GetDataItem(11);
-		//operation::getInstance()->gtStation.iVExitID= std::stoi(selResult[0].GetDataItem(12));
+			operation::getInstance()->tParas.gsZoneEntries = ",";
+			
+			for(j=0;j<selResult.size();j++){
+				
+			 operation::getInstance()->tParas.gsZoneEntries =  operation::getInstance()->tParas.gsZoneEntries + selResult[j].GetDataItem(0) + ",";
+
+			}
+		operation::getInstance()->writelog("Load ZoneEntries from Local: " + operation::getInstance()->tParas.gsZoneEntries , "DB");
 		return iDBSuccess;
 	}
 
@@ -3282,6 +3277,8 @@ DBError db::loadParam()
 {
 	int r = -1;
 	vector<ReaderItem> selResult;
+	//------
+	loadZoneEntriesfromLocal();
 	//------
 	loadparamfromCentral();
 
@@ -5619,6 +5616,7 @@ void db::moveOfflineTransToCentral()
 	tEntryTrans_Struct ter;
 	tExitTrans_Struct tex;
 	int s=-1;
+	int s1=-1;
 	Ctrl_Type ctrl;
 	vector<ReaderItem> selResult;
 	vector<ReaderItem> tResult;
@@ -5691,7 +5689,7 @@ void db::moveOfflineTransToCentral()
 			sqlStmt=sqlStmt + "parked_time,Parking_Fee,Paid_Amt,Receipt_No,";
 			sqlStmt=sqlStmt + "Redeem_amt,Redeem_time,Redeem_no";
 			sqlStmt=sqlStmt +  ",gst_amt,chu_debit_code,Card_Type,Top_Up_Amt";
-			sqlStmt = sqlStmt + ",lpn";
+			sqlStmt = sqlStmt + ",lpn,Entry_ID, entry_time";
 			
 			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Exit_Time desc";
 		}
@@ -5740,18 +5738,27 @@ void db::moveOfflineTransToCentral()
 					tex.sCHUDebitCode=selResult[j].GetDataItem(14);
 					tex.iCardType=std::stoi(selResult[j].GetDataItem(15));
 					tex.sTopupAmt=std::stof(selResult[j].GetDataItem(16));
+					tex.lpn = selResult[j].GetDataItem(17);
+					tex.iEntryID = std::stoi(selResult[j].GetDataItem(18));
+					tex.sEntryTime = selResult[j].GetDataItem(19);
 					
 					s=insertTransToCentralExitTransTmp(tex);
+					
 				}
 				
 				//insert record into central DB
 
 				if (s==0)
 				{
-					if(operation::getInstance()->gtStation.iType==tientry)
-					d=deleteLocalTrans (ter.sIUTKNo,ter.sEntryTime,ctrl);
-					else if(operation::getInstance()->gtStation.iType==tientry)
-					d=deleteLocalTrans (tex.sIUNo,tex.sExitTime,ctrl);
+			
+					if(operation::getInstance()->gtStation.iType==tientry){
+						d=deleteLocalTrans (ter.sIUTKNo,ter.sEntryTime,ctrl);
+					}
+					else{
+						s1=DeleteBeforeInsertMT(tex);
+						s1=insert2movementtrans(tex);
+						d=deleteLocalTrans (tex.sIUNo,tex.sExitTime,ctrl);
+					}
 					if (d==0) m_local_db_err_flag=0;
 					else m_local_db_err_flag=1;
 
@@ -6020,6 +6027,12 @@ int db::FnGetDatabaseErrorFlag()
 	return m_remote_db_err_flag;
 }
 
+int db::HouseKeeping()
+{
+	clearexpiredseason();
+	return 0;
+}
+
 int db::clearexpiredseason()
 {
 	std::string tableNm="season_mst";
@@ -6204,7 +6217,7 @@ processLocal:
 
     sqlStmt = "INSERT INTO Exit_Trans (Station_ID, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
     sqlStmt = sqlStmt + ", Parking_Fee, Paid_Amt, Receipt_No, Status, Redeem_amt, Redeem_time, Redeem_no";
-    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn";
+    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn, Entry_ID,entry_time";
     sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
     sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
     sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
@@ -6225,6 +6238,8 @@ processLocal:
     sqlStmt = sqlStmt + ", '" + tExit.uposbatchno + "'";
     sqlStmt = sqlStmt + ", '" + tExit.feefrom + "'";
     sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
+	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEntryID) ;
+	sqlStmt = sqlStmt + ", '" + tExit.sEntryTime + "'";
     sqlStmt = sqlStmt + ")";
 
     r = localdb->SQLExecutNoneQuery(sqlStmt);
@@ -7696,7 +7711,11 @@ int db::FetchEntryinfo(string sIUNo)
 	}
 	
 processLocal:
-	r=localdb->SQLSelect("Select Entry_time,trans_type,pay_amt From Entry_Trans where iu_tk_no = '"+ sIUNo +"' order by entry_time desc",&selResult2,true);
+	sqlStmt = "Select Entry_time,trans_type,paid_amt, Owe_Amt, Station_id From Entry_Trans where Status = 0 and iu_tk_no = '"+ sIUNo +"' order by entry_time desc";
+	
+	r=localdb->SQLSelect(sqlStmt,&selResult2,true);
+
+	//operation::getInstance()->writelog(sqlStmt, "DB");
 	if (r!=0)
 	{
 		operation::getInstance()->writelog("Fetch local entry time failed.", "DB");
@@ -7706,8 +7725,9 @@ processLocal:
 	if (selResult2.size()>0)
 	{            
 		operation::getInstance()->tExit.sEntryTime=selResult2[0].GetDataItem(0);
-		operation::getInstance()->tExit.sOweAmt=std::stoi(selResult2[0].GetDataItem(2));
-
+		operation::getInstance()->tExit.iTransType=std::stoi(selResult2[0].GetDataItem(1));
+		operation::getInstance()->tExit.sOweAmt=std::stof(selResult2[0].GetDataItem(3));
+		operation::getInstance()->tExit.iEntryID=std::stoi(selResult2[0].GetDataItem(4));	
 	}
 	else
 	{
@@ -7807,16 +7827,15 @@ DBError db::insert2movementtrans(tExitTrans_Struct& tExit)
 {
 	int r;
 	string sqstr="";
-
 	//------
 	sqstr = "INSERT INTO movement_trans_tmp (exit_lpn, exit_station, exit_time, trans_type, card_mc_no, iu_tk_no, parking_fee, paid_amt, Parked_time, receipt_no, redeem_amt, redeem_time, Card_Type, top_up_amt";
 	if (tExit.sEntryTime == "") sqstr = sqstr + ")";
-	else sqstr = sqstr + ", entry_time)";
+	else sqstr = sqstr + ", entry_time, entry_station)";
 	sqstr = sqstr + " VALUES ('" + tExit.lpn + "'," + tExit.xsid + ",'" + tExit.sExitTime + "'," + std::to_string(tExit.iTransType) + ",'" + tExit.sCardNo + "','" + tExit.sIUNo + "'";
 	sqstr = sqstr + "," + std::to_string(tExit.sFee) + "," + std::to_string(tExit.sPaidAmt) + "," + std::to_string(tExit.lParkedTime) + ",'" + tExit.sReceiptNo + "'";
 	sqstr = sqstr + "," + std::to_string(tExit.sRedeemAmt) + "," + std::to_string(tExit.iRedeemTime) + "," + std::to_string(tExit.iCardType) + "," + std::to_string(tExit.sTopupAmt) ;
 	if (tExit.sEntryTime == "") sqstr = sqstr + ")";
-	else sqstr = sqstr + ",'" + tExit.sEntryTime + "')";
+	else sqstr = sqstr + ",'" + tExit.sEntryTime + "'," + std::to_string(tExit.iEntryID) + ")";
 	//------
 
 	//std::cout << __func__ << " : " << sqstr << std::endl;
@@ -7990,5 +8009,22 @@ DBError db::insertUPTFileSummary(const std::string& sSettleDate, const std::stri
 		m_remote_db_err_flag=1;
 	}
 	return iCentralFail;
+}
+
+DBError db::DeleteBeforeInsertMT(tExitTrans_Struct& tExit) 
+{
+	int r;
+	std::string sqstr = "";
+
+	sqstr= "Delete from movement_trans_tmp where iu_tk_no = '" + tExit.sIUNo + "' and entry_time = '"+ tExit.sEntryTime + "' and exit_time is null" ;
+
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	if (r == 0)
+	{
+		return iCentralSuccess;
+	}
+	return iCentralFail;
+	
 }
 

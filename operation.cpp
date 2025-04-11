@@ -4059,6 +4059,8 @@ void operation::SaveExit()
             iRet = db::getInstance()->insert2movementtrans(tExit);
         }
     }
+    //------ delete Local Entry
+    db::getInstance()->UpdateLocalEntry(tExit.sIUNo);
     //----
     if (iRet == iCentralSuccess || iRet == iLocalSuccess)
     {

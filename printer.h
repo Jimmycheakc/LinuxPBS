@@ -234,6 +234,7 @@ private:
     bool isPrinterError_;
     int selfTestInterval_;
     boost::asio::deadline_timer selfTestTimer_;
+    boost::asio::deadline_timer monitorStatusTimer_;
     Printer();
     void startIoContextThread();
     void setPrinterSetting(PRINTER_TYPE type, int align, int font, int siteID, int leftMargin, int milliseconds);
@@ -241,6 +242,8 @@ private:
     void handleSelfTestTimerTimeout(const boost::system::error_code& error);
     void inqStatus();
     void handleCmdResponse(const std::vector<uint8_t>& rsp);
+    void startMonitorStatusTimer();
+    void handleMonitorStatusTimeout(const boost::system::error_code& error);
 
     // Serial read and write
     void startRead();

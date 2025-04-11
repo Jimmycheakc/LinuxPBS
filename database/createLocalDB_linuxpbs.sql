@@ -129,6 +129,8 @@ CREATE TABLE IF NOT EXISTS Exit_Trans (
     lpn VARCHAR(50),
     uposbatchno VARCHAR(20),
     feefrom VARCHAR(10),
+    Entry_ID SMALLINT,
+    entry_time DATETIME,
     Add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

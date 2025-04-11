@@ -26,7 +26,8 @@ Printer::Printer()
     cmdCut_(""),
     isPrinterError_(false),
     selfTestInterval_(0),
-    selfTestTimer_(ioContext_)
+    selfTestTimer_(ioContext_),
+    monitorStatusTimer_(ioContext_)
 {
     // Initialize fronts
     FC_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
@@ -100,6 +101,11 @@ bool Printer::FnPrinterInit(unsigned int baudRate, const std::string& comPortNam
             startIoContextThread();
             startRead();
             setPrinterSetting(printerType_, defaultAlign_, defaultFont_, siteID_, leftMargin_, selfTestInterval_);
+            if (printerType_ != PRINTER_TYPE::FTP)
+            {
+                startSelfTestTimer(selfTestInterval_);
+            }
+            startMonitorStatusTimer();
             ret = true;
         }
         else
@@ -363,6 +369,16 @@ void Printer::writeEnd(const boost::system::error_code& error, std::size_t bytes
 
 void Printer::handleCmdResponse(const std::vector<uint8_t>& rsp)
 {
+    Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
+
+    std::stringstream ss;
+    ss << __func__ << " Response: ";
+    for (uint8_t byte : rsp)
+    {
+        ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
+    }
+    Logger::getInstance()->FnLog(ss.str(), logFileName_, "PRINTER");
+
     if (rsp.size() > 0)
     {
         if (printerType_ != PRINTER_TYPE::FTP)
@@ -378,10 +394,21 @@ void Printer::handleCmdResponse(const std::vector<uint8_t>& rsp)
             }
             else
             {
-                if (isPrinterError_ == false)
+                if ((rsp[0] & (1 << 5)) != 0)
                 {
-                    isPrinterError_ = true;
-                    EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::NO_PAPER));
+                    if (isPrinterError_ == false)
+                    {
+                        isPrinterError_ = true;
+                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::NO_PAPER));
+                    }
+                }
+                else if (((rsp[0] & (1 << 4)) != 0) && ((rsp[0] & (1 << 1)) != 0))
+                {
+                    if (isPrinterError_ == true)
+                    {
+                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::IDLE));
+                        isPrinterError_ = false;
+                    }
                 }
             }
         }
@@ -426,6 +453,37 @@ void Printer::handleCmdResponse(const std::vector<uint8_t>& rsp)
     }
 }
 
+void Printer::startMonitorStatusTimer()
+{
+    monitorStatusTimer_.expires_from_now(boost::posix_time::seconds(10));
+    monitorStatusTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&Printer::handleMonitorStatusTimeout, this, std::placeholders::_1)));
+}
+
+void Printer::handleMonitorStatusTimeout(const boost::system::error_code& error)
+{   
+    if (!error)
+    {
+        if (isPrinterError_ == true)
+        {
+            if (printerType_ != PRINTER_TYPE::FTP)
+            {
+                Logger::getInstance()->FnLog(std::string(__func__) + " ,Send inquire status.", logFileName_, "PRINTER");
+                inqStatus();    // Send inquire status if there's an error
+            }
+        }
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Monitor Status Timer error : " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
+    }
+
+    // Restart the timer to check status again after 10 seconds
+    startMonitorStatusTimer();
+}
+
 void Printer::startSelfTestTimer(int milliseconds)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
@@ -466,7 +524,9 @@ void Printer::handleSelfTestTimerTimeout(const boost::system::error_code& error)
 void Printer::inqStatus()
 {
     std::stringstream outputSS_;
-    outputSS_ << ASCII::ESC << 'v';
+    // This is a command to request the printer status (but not applicable for CBM1000)
+    //outputSS_ << ASCII::ESC << 'v';
+    outputSS_ << ASCII::DLE << ASCII::EOT << ASCII::STX;
     enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
 }
 
