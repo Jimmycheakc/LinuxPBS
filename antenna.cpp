@@ -612,6 +612,7 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
                 if (IUNumberPrev_ != IUNumberStr)
                 {
                     IUNumberPrev_ = IUNumberStr;
+                    successRecvIUCount_ = 1;
                 }
                 else if (IUNumberPrev_ == IUNumberStr)
                 {
@@ -1066,7 +1067,7 @@ void Antenna::handleReadIUTimerExpiration()
 
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
-        startSendReadIUCmdTimer(100);
+        startSendReadIUCmdTimer(50);
         if (antIUCmdSendCount_ > 10) {
             EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 2);
             antIUCmdSendCount_ = 0;
@@ -1117,7 +1118,7 @@ void Antenna::FnAntennaSendReadIUCmd()
 
     antIUCmdSendCount_ = 0;
     continueReadFlag_.store(true);
-    startSendReadIUCmdTimer(100);
+    startSendReadIUCmdTimer(50);
 }
 
 void Antenna::FnAntennaStopRead()
