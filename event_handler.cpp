@@ -151,14 +151,14 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
 
         if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent.load()) 
         { 
-            operation :: getInstance()->writelog("No IU detected!", "OPR");
-           // if (operation::getInstance()->tEntry.sEnableReader == false) 
-           // {
+            if (operation::getInstance()->tProcess.sEnableReader == false)
+           {
+                operation :: getInstance()->writelog("No IU detected!", "OPR");
                 operation::getInstance()->ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
                 operation::getInstance()->EnableCashcard(true);
-                Antenna::getInstance()->FnAntennaStopRead();
+           //     Antenna::getInstance()->FnAntennaStopRead();
 
-           // }
+            }
         }
         else  
         {

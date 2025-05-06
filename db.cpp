@@ -6029,7 +6029,61 @@ int db::FnGetDatabaseErrorFlag()
 
 int db::HouseKeeping()
 {
+	std::string sqlStmt;
+	int r=-1;// success flag
+	//-------
 	clearexpiredseason();
+	//---------
+	if(operation::getInstance()->gtStation.iType==tientry)
+	{
+		try {
+			sqlStmt="Delete FROM Entry_Trans WHERE send_status = true or TIMESTAMPDIFF(HOUR, entry_time, NOW()) >=" + std::to_string(operation::getInstance()->tParas.giDataKeepDays *24);
+
+			r=localdb->SQLExecutNoneQuery(sqlStmt);
+
+			if(r==0) m_local_db_err_flag=0;
+			else m_local_db_err_flag=1;
+		}
+		catch (const std::exception &e)
+		{	
+			operation::getInstance()->writelog("DB: local db error in housekeeping(Entry_Trans): " + std::string(e.what()),"DB");
+			r=-1;
+			m_local_db_err_flag=1;
+		} 
+	}else{
+
+		try {
+			sqlStmt="Delete FROM Exit_Trans WHERE send_status = true or TIMESTAMPDIFF(HOUR, exit_time, NOW()) >= " + std::to_string(operation::getInstance()->tParas.giDataKeepDays *24);
+
+			r=localdb->SQLExecutNoneQuery(sqlStmt);
+
+			if(r==0) m_local_db_err_flag=0;
+			else m_local_db_err_flag=1;
+		}
+		catch (const std::exception &e)
+		{	
+			operation::getInstance()->writelog("DB: local db error in housekeeping(Exit_Trans): " + std::string(e.what()),"DB");
+			r=-1;
+			m_local_db_err_flag=1;
+		} 
+
+		try {
+			sqlStmt="Delete FROM Entry_Trans WHERE TIMESTAMPDIFF(HOUR, entry_time, NOW()) >= " + std::to_string(operation::getInstance()->tParas.giDataKeepDays *24);
+
+			r=localdb->SQLExecutNoneQuery(sqlStmt);
+
+			if(r==0) m_local_db_err_flag=0;
+			else m_local_db_err_flag=1;
+		}
+		catch (const std::exception &e)
+		{	
+			operation::getInstance()->writelog("DB: local db error in housekeeping(XEntry_Trans): " + std::string(e.what()),"DB");
+			r=-1;
+			m_local_db_err_flag=1;
+		} 
+
+	}
+
 	return 0;
 }
 

@@ -301,7 +301,6 @@ struct  tEntryTrans_Struct
 	string sReceiptNo;
 	int iCardType=0;
 	float sOweAmt=0;
-	bool sEnableReader;
 	string sLPN[2];
 	int iVehicleType;
 //	string sGreeting;
@@ -388,6 +387,7 @@ struct  tProcess_Struct
 	int online_status;
 	int offline_status;
 	int giSystemOnline;
+	bool sEnableReader;
 	//------ for fee calculation 
 	string gsLastPaidTrans;
 	string gsLastCardNo;
