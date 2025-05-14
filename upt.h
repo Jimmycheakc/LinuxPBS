@@ -745,7 +745,7 @@ private:
     static Upt* upt_;
     static std::mutex mutex_;
     boost::asio::io_context ioContext_;
-    boost::asio::io_context::work work_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     boost::asio::deadline_timer ackTimer_;

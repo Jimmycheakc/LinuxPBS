@@ -85,6 +85,7 @@ bool SysfsGPIO::FnUnexportGPIO()
 
 bool SysfsGPIO::FnSetDirection(const std::string& direction)
 {
+    std::lock_guard<std::mutex> lock(gpioMutex_);
     try
     {
         std::ofstream directionFile(gpioPath_ + "direction");
@@ -119,6 +120,7 @@ bool SysfsGPIO::FnSetDirection(const std::string& direction)
 
 bool SysfsGPIO::FnSetValue(int value)
 {
+    std::lock_guard<std::mutex> lock(gpioMutex_);
     try
     {
         std::ofstream valueFile(gpioPath_ + "value");
@@ -153,6 +155,7 @@ bool SysfsGPIO::FnSetValue(int value)
 
 int SysfsGPIO::FnGetValue() const
 {
+    std::lock_guard<std::mutex> lock(gpioMutex_);
     try
     {
         std::ifstream valueFile(gpioPath_ + "value");

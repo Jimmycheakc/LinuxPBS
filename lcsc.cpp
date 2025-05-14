@@ -214,7 +214,7 @@ std::mutex LCSCReader::currentCmdMutex_;
 LCSCReader::LCSCReader()
     : ioContext_(),
     strand_(boost::asio::make_strand(ioContext_)),
-    work_(ioContext_),
+    workGuard_(boost::asio::make_work_guard(ioContext_)),
     rspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
     serialWriteTimer_(ioContext_),
@@ -341,6 +341,7 @@ void LCSCReader::FnLCSCReaderClose()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
+    workGuard_.reset();
     ioContext_.stop();
 
     if (ioContextThread_.joinable())

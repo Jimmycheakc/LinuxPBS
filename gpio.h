@@ -21,6 +21,7 @@ public:
 private:
     int pinNumber_;
     std::string gpioPath_;
+    mutable std::mutex gpioMutex_;
 
     bool FnExportGPIO();
     bool FnUnexportGPIO();

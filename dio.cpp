@@ -98,9 +98,9 @@ void DIO::FnStartDIOMonitoring()
 
     if (isGPIOInitialized_)
     {
-        if (!isDIOMonitoringThreadRunning_)
+        if (!isDIOMonitoringThreadRunning_.load())
         {
-            isDIOMonitoringThreadRunning_ = true;
+            isDIOMonitoringThreadRunning_.store(true);
             dioMonitoringThread_ = std::thread(&DIO::monitoringDIOChangeThreadFunction, this);
         }
     }
@@ -114,16 +114,16 @@ void DIO::FnStopDIOMonitoring()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "DIO");
 
-    if (isDIOMonitoringThreadRunning_)
+    if (isDIOMonitoringThreadRunning_.load())
     {
-        isDIOMonitoringThreadRunning_ = false;
+        isDIOMonitoringThreadRunning_.store(false);
         dioMonitoringThread_.join();
     }
 }
 
 void DIO::monitoringDIOChangeThreadFunction()
 {
-    while (isDIOMonitoringThreadRunning_)
+    while (isDIOMonitoringThreadRunning_.load())
     {
         static std::string barrier_open_time_ = "";
 

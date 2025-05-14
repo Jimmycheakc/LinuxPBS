@@ -13,7 +13,7 @@ std::mutex Printer::mutex_;
 Printer::Printer()
     : ioContext_(),
     strand_(boost::asio::make_strand(ioContext_)),
-    work_(ioContext_),
+    workGuard_(boost::asio::make_work_guard(ioContext_)),
     logFileName_("printer"),
     defaultFont_(2),
     defaultAlign_(static_cast<int>(CBM_ALIGN::CBM_LEFT)),
@@ -150,6 +150,7 @@ void Printer::FnPrinterClose()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
 
+    workGuard_.reset();
     ioContext_.stop();
     if (ioContextThread_.joinable())
     {

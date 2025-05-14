@@ -19,7 +19,7 @@ std::mutex KSM_Reader::currentCmdMutex_;
 KSM_Reader::KSM_Reader()
     : ioContext_(),
     strand_(boost::asio::make_strand(ioContext_)),
-    work_(ioContext_),
+    workGuard_(boost::asio::make_work_guard(ioContext_)),
     write_in_progress_(false),
     currentState_(KSM_Reader::STATE::IDLE),
     currentCmd(KSM_Reader::KSMReaderCmdID::INIT_CMD),
@@ -124,6 +124,7 @@ void KSM_Reader::FnKSMReaderClose()
 {
     ksmLogger(__func__);
 
+    workGuard_.reset();
     ioContext_.stop();
     if (ioContextThread_.joinable())
     {

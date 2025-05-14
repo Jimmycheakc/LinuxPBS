@@ -13,7 +13,7 @@ LCD::LCD()
     lcdInitialized_(false),
     ioContext_(),
     strand_(boost::asio::make_strand(ioContext_)),
-    work_(ioContext_)
+    workGuard_(boost::asio::make_work_guard(ioContext_))
 {
 
 }
@@ -486,6 +486,7 @@ void LCD::FnLCDClose()
     if (lcdInitialized_ == false)
         return;
 
+    workGuard_.reset();
     ioContext_.stop();
     if (ioContextThread_.joinable())
     {

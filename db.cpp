@@ -107,7 +107,10 @@ int db::connectlocaldb(string connectstr,int LocalSQLTimeOut,int SP_SQLTimeOut,f
 db::~db()
 {
 	centraldb->Disconnect();
-	//localdb->Disconnect();
+	localdb->Disconnect();
+
+	delete centraldb;
+	delete localdb;
 }
 
 //Return: 0=invalid season, 1=valid, -1=db error

@@ -1136,7 +1136,7 @@ std::mutex Upt::currentCmdMutex_;
 Upt::Upt()
     : ioContext_(),
     strand_(boost::asio::make_strand(ioContext_)),
-    work_(ioContext_),
+    workGuard_(boost::asio::make_work_guard(ioContext_)),
     ackTimer_(ioContext_),
     rspTimer_(ioContext_),
     serialWriteDelayTimer_(ioContext_),
@@ -1218,6 +1218,7 @@ void Upt::FnUptClose()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
 
+    workGuard_.reset();
     ioContext_.stop();
     if (ioContextThread_.joinable())
     {

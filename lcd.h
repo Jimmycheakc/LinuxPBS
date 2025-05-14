@@ -54,7 +54,7 @@ private:
     int lcdFd_;
     bool lcdInitialized_;
     boost::asio::io_context ioContext_;
-    boost::asio::io_context::work work_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
     std::thread ioContextThread_;
     LCD();
