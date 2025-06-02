@@ -36,7 +36,9 @@ KSM_Reader::KSM_Reader()
     cardExpired_(false),
     cardBalance_(0),
     continueReadCardFlag_(false),
-    blockGetStatusCmdLogFlag_(false)
+    blockGetStatusCmdLogFlag_(false),
+    lastSerialReadTime_(std::chrono::steady_clock::now()),
+    serialWriteDelayTimer_(ioContext_)
 {
     logFileName_ = "ksmReader";
     resetRxState();
@@ -523,6 +525,30 @@ void KSM_Reader::startWrite()
     }
 
     write_in_progress_ = true;
+
+    auto now = std::chrono::steady_clock::now();
+    auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
+
+    // Check if less than 100 milliseconds
+    if (timeSinceLastRead < 100)
+    {
+        auto boostTime = boost::posix_time::milliseconds(100 - timeSinceLastRead);
+        serialWriteDelayTimer_.expires_from_now(boostTime);
+
+        // Add debug logging to check if the timer is being set properly
+        std::ostringstream oss;
+        oss << "Setting delay timer for " << (100 - timeSinceLastRead) << " ms";
+        ksmLogger(oss.str());
+
+        serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
+                [this](const boost::system::error_code& /*e*/) {
+                    ksmLogger("Timer expired");
+                    boost::asio::post(strand_, [this]() { startWrite(); });
+            }));
+        
+        return;
+    }
+
     const auto& data = writeQueue_.front();
     std::ostringstream oss;
     oss << "Data sent (" << data.size() << " bytes): " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);
@@ -566,6 +592,8 @@ void KSM_Reader::startRead()
 
 void KSM_Reader::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
+    lastSerialReadTime_ = std::chrono::steady_clock::now();
+
     if (!error)
     {
         std::vector<char> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);

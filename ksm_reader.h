@@ -174,6 +174,8 @@ private:
     boost::asio::deadline_timer serialWriteTimer_;
     std::atomic<bool> continueReadCardFlag_;
     std::atomic<bool> blockGetStatusCmdLogFlag_;
+    std::chrono::steady_clock::time_point lastSerialReadTime_;
+    boost::asio::deadline_timer serialWriteDelayTimer_;
     KSM_Reader();
     void startIoContextThread();
     void sendEnq();

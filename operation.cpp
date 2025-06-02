@@ -297,8 +297,10 @@ bool operation::FnIsOperationInitialized() const
 
 void operation::FnLoopATimeoutHandler()
 {
-  //  Logger::getInstance()->FnLog("Loop A Timeout handler.", "", "OPR");
-  //  LoopACome();
+    Logger::getInstance()->FnLog("Loop A Operation Timeout handler.", "", "OPR");
+    Antenna::getInstance()->FnAntennaStopRead();
+    EnableCashcard(false);
+    LoopACome();
 }
 
 void operation::LoopACome()
@@ -670,7 +672,7 @@ void operation::Initdevice(io_context& ioContext)
         }));
     }
 
-    if (tParas.giCommPortPrinter > 0)
+    if (tParas.giCommPortPrinter > 0 && gtStation.iType == tiExit)
     {
         Printer::getInstance()->FnSetPrintMode(2);
         Printer::getInstance()->FnSetDefaultAlign(Printer::CBM_ALIGN::CBM_LEFT);
@@ -684,7 +686,10 @@ void operation::Initdevice(io_context& ioContext)
 
     DIO::getInstance()->FnDIOInit();
     Lpr::getInstance()->FnLprInit(ioContext);
-    BARCODE_READER::getInstance()->FnBarcodeReaderInit();
+    if (gtStation.iType == tiExit)
+    {
+        BARCODE_READER::getInstance()->FnBarcodeReaderInit();
+    }
 
     // Loop A timer
     pLoopATimer_ = std::make_unique<boost::asio::deadline_timer>(ioContext);

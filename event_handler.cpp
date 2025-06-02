@@ -108,10 +108,6 @@ void EventHandler::FnHandleEvents(const std::string& eventName, const BaseEvent*
         try
         {
             ret = handler(event);
-
-            std::stringstream ss;
-            ss << __func__ << " Event handle return : " << ret;
-            Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         }
         catch (const std::exception& e)
         {
@@ -153,7 +149,7 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         { 
             if (operation::getInstance()->tProcess.sEnableReader == false)
            {
-                operation :: getInstance()->writelog("No IU detected!", "OPR");
+                operation::getInstance()->writelog("No IU detected!", "OPR");
                 operation::getInstance()->ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
                 operation::getInstance()->EnableCashcard(true);
            //     Antenna::getInstance()->FnAntennaStopRead();

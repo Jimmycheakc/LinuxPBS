@@ -52,6 +52,7 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
         Logger::getInstance()->FnCreateLogFile(logFileName_);
 
         pMainIOContext_ = &mainIOContext;
+        periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
         pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
         pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
@@ -336,7 +337,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
 
 Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
 
     std::vector<char> buffer(1024);
     //std::size_t bytes_transferred = 0;
@@ -390,9 +391,9 @@ Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
         {
             if (responseIsComplete(buffer, total_bytes_transferred))
             {
-                std::stringstream ss;
-                ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
+                //std::stringstream ss;
+                //ss << __func__ << "Async Read Timeout Occurred - Rx Completed.";
+                //Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
                 pSerialPort_->cancel();
                 success = true;
             }
@@ -507,11 +508,8 @@ Antenna::AntCmdRetCode Antenna::antennaHandleCmdResponse(AntCmdID cmd, const std
     if (dataBuff.size() >= 8)
     {
         std::stringstream receivedRespStream;
-        receivedRespStream << "Received Buffer Data : " << Common::getInstance()->FnGetVectorCharToHexString(dataBuff);
+        receivedRespStream << "Received Buffer Data : " << Common::getInstance()->FnGetVectorCharToHexString(dataBuff) << ", Received Buffer size : " << getRxNum();
         Logger::getInstance()->FnLog(receivedRespStream.str(), logFileName_, "ANT");
-        std::stringstream receivedRespNumBytesStream;
-        receivedRespNumBytesStream << "Received Buffer size : " << getRxNum();
-        Logger::getInstance()->FnLog(receivedRespNumBytesStream.str(), logFileName_, "ANT");
 
         std::string cmdID = Common::getInstance()->FnGetUCharArrayToHexString(getRxBuf()+2, 2);
 
@@ -994,7 +992,7 @@ unsigned int Antenna::CRC16R_Calculate(unsigned char* s, unsigned char len, unsi
 
 void Antenna::antennaCmdSend(const std::vector<unsigned char>& dataBuff)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
 
     if (!pSerialPort_->is_open())
     {
@@ -1064,8 +1062,11 @@ void Antenna::handleReadIUTimerExpiration()
 
     if (!successRecvIUFlag_ && continueReadFlag_.load())
     {
-        startSendReadIUCmdTimer(50);
+        startSendReadIUCmdTimer(100);
         if (antIUCmdSendCount_ > 20) {
+            std::stringstream count;
+            count << "antIUCmdSendCount_: " << antIUCmdSendCount_;
+            Logger::getInstance()->FnLog(count.str(), logFileName_, "ANT");
             EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 2);
             antIUCmdSendCount_ = 0;
         }
@@ -1089,8 +1090,9 @@ void Antenna::handleReadIUTimerExpiration()
 
 void Antenna::startSendReadIUCmdTimer(int milliseconds)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
+    //Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
 
+    /*
     std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
     std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
         std::unique_ptr<boost::asio::deadline_timer> periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
@@ -1104,6 +1106,15 @@ void Antenna::startSendReadIUCmdTimer(int milliseconds)
         timerIOContext_->run();
     });
     timerThread.detach();
+    */
+    if (!periodicSendReadIUCmdTimer_) return; // safety check
+
+    periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+    periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& ec) {
+        if (!ec && continueReadFlag_.load()) {
+            handleReadIUTimerExpiration();
+        }
+    });
 }
 
 void Antenna::FnAntennaSendReadIUCmd()
@@ -1113,14 +1124,22 @@ void Antenna::FnAntennaSendReadIUCmd()
         return;
     }
 
-    antIUCmdSendCount_ = 0;
+    // To prevent it start again
+    if (continueReadFlag_.load() == false)
+    {
+        antIUCmdSendCount_ = 0;
+        startSendReadIUCmdTimer(100);
+    }
     continueReadFlag_.store(true);
-    startSendReadIUCmdTimer(50);
 }
 
 void Antenna::FnAntennaStopRead()
 {
     continueReadFlag_.store(false);
+    if (periodicSendReadIUCmdTimer_)
+    {
+        periodicSendReadIUCmdTimer_->cancel();
+    }
 }
 
 int Antenna::FnAntennaGetIUCmdSendCount()
