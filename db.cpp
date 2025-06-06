@@ -320,12 +320,15 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 	int r;
 	int sNo;
 	std::stringstream dbss;
+	std::string gsTransID;
 
 	//TK_Serialno is an integer type in DB
 	//make sure the value must be the integer
 	//to avoid exception
 	tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
 	
+	gsTransID = operation::getInstance()->tProcess.gsTransID;
+
 	if (tEntry.sSerialNo=="") tEntry.sSerialNo="0";
 	else{
 
@@ -383,7 +386,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType)+"'";
 	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
-	sqlStmt = sqlStmt + "','" + tEntry.gsTransID +"'";
+	sqlStmt = sqlStmt + "','" + gsTransID +"'";
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
 
 	sqlStmt = sqlStmt +  ")";
@@ -434,7 +437,7 @@ processLocal:
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType) + "'";
 	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
-	sqlStmt = sqlStmt + "','" + tEntry.gsTransID +"'";
+	sqlStmt = sqlStmt + "','" + gsTransID +"'";
 
 	sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
 
@@ -6205,6 +6208,9 @@ DBError db::insertexittrans(tExitTrans_Struct& tExit)
     int r;
     std::stringstream dbss;
 
+	std::string gsTransID;
+	gsTransID = operation::getInstance()->tProcess.gsTransID;
+
     if (centraldb->IsConnected() != -1)
     {
         centraldb->Disconnect();
@@ -6221,7 +6227,7 @@ DBError db::insertexittrans(tExitTrans_Struct& tExit)
 
     sqlStmt = "INSERT INTO exit_trans_tmp (station_id, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
     sqlStmt = sqlStmt + ", parking_fee, paid_amt, receipt_no, status, redeem_amt, redeem_time, redeem_no";
-    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, card_type, top_up_amt, uposbatchno, feefrom, lpn";
+    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, card_type, top_up_amt, uposbatchno, feefrom, lpn, exit_lpn_SID";
     sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
     sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
     sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
@@ -6242,6 +6248,7 @@ DBError db::insertexittrans(tExitTrans_Struct& tExit)
     sqlStmt = sqlStmt + ", '" + tExit.uposbatchno + "'";
     sqlStmt = sqlStmt + ", '" + tExit.feefrom + "'";
     sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
+	sqlStmt = sqlStmt + ", '" + gsTransID + "'";
     sqlStmt = sqlStmt + ")";
 
     r = centraldb->SQLExecutNoneQuery(sqlStmt);
@@ -6274,7 +6281,7 @@ processLocal:
 
     sqlStmt = "INSERT INTO Exit_Trans (Station_ID, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
     sqlStmt = sqlStmt + ", Parking_Fee, Paid_Amt, Receipt_No, Status, Redeem_amt, Redeem_time, Redeem_no";
-    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn, Entry_ID,entry_time";
+    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn, Entry_ID,entry_time, exit_lpn_SID";
     sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
     sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
     sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
@@ -6297,6 +6304,7 @@ processLocal:
     sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
 	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEntryID) ;
 	sqlStmt = sqlStmt + ", '" + tExit.sEntryTime + "'";
+	sqlStmt = sqlStmt + ", '" + gsTransID + "'";
     sqlStmt = sqlStmt + ")";
 
     r = localdb->SQLExecutNoneQuery(sqlStmt);

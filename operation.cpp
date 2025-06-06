@@ -347,8 +347,8 @@ void operation::LoopACome()
         useFrontCamera = true;
         transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "F-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
     }
-    tEntry.gsTransID = transID;
-    Lpr::getInstance()->FnSendTransIDToLPR(tEntry.gsTransID, useFrontCamera);
+    tProcess.gsTransID = transID;
+    Lpr::getInstance()->FnSendTransIDToLPR(tProcess.gsTransID, useFrontCamera);
 
     //----
     if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();
@@ -507,7 +507,7 @@ void operation::Clearme()
         tEntry.sLPN[1] = "";
         tEntry.iVehicleType = 0;
         tEntry.gbEntryOK = false;
-        tEntry.gsTransID = ""; 
+        tProcess.gsTransID = ""; 
     }
     else
     {
@@ -831,7 +831,8 @@ void operation::PBSEntry(string sIU)
         return;
     }
     if (iRet ==1 or iRet == 4 or iRet == 6) {
-        tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
+        // Duplicate due to FormatSeasonMsg() is called by CheckSeason() 
+        //tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
         tProcess.giShowType = 0;
     }
 
@@ -2604,11 +2605,11 @@ bool operation::AntennaOK() {
 void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation)
 {
     writelog ("Received Trans ID: "+sTransid + " LPN: "+ LPN ,"OPR");
-    writelog ("Send Trans ID: "+ tEntry.gsTransID, "OPR");
+    writelog ("Send Trans ID: "+ tProcess.gsTransID, "OPR");
 
     int i = static_cast<int>(CType);
 
-    if (tEntry.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
+    if (tProcess.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
     {
        if (gtStation.iType == tientry) {
             tEntry.sLPN[i]=LPN;

@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS Exit_Trans (
     Card_Type SMALLINT DEFAULT 0,
     Top_Up_Amt DECIMAL(7,2) DEFAULT 0.00,
     lpn VARCHAR(50),
+    exit_lpn_SID VARCHAR(32),
     uposbatchno VARCHAR(20),
     feefrom VARCHAR(10),
     Entry_ID SMALLINT,

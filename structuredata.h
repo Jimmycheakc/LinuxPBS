@@ -307,7 +307,6 @@ struct  tEntryTrans_Struct
 //	string sRPLPN;
 //	string sPaidtime;
 	bool gbEntryOK;
-	string gsTransID;
 	string sTag;
 	string sCHUDebitCode;
 };
@@ -401,6 +400,7 @@ struct  tProcess_Struct
 	string gsDefaultIU; 
 	string gsBroadCastIP;
 	std::atomic<bool> gbLoopApresent;
+	string gsTransID;
 	bool gbLoopAIsOn;
 	bool gbLoopBIsOn;
 	bool gbLoopCIsOn;
