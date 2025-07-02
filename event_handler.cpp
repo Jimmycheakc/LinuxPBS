@@ -342,6 +342,7 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
@@ -679,9 +680,12 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
             {
                 Logger::getInstance()->FnLog("DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT");
-                if (DIO::getInstance()->FnGetManualOpenBarrierStatusFlag() == 1)
+                if (operation::getInstance()->tProcess.gbBarrierOpened == false)
                 {
-                    DIO::getInstance()->FnSetManualOpenBarrierStatusFlag(0);
+                    if (DIO::getInstance()->FnGetManualOpenBarrierStatusFlag() == 1)
+                    {
+                        DIO::getInstance()->FnSetManualOpenBarrierStatusFlag(0);
+                    }
                     db::getInstance()->AddSysEvent("Barrier up");
                     //----- add manual open barrier(by operator)
                     operation::getInstance()->ManualOpenBarrier(false);

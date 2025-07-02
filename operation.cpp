@@ -332,13 +332,23 @@ void operation::LoopACome()
     Clearme();
     DIO::getInstance()->FnSetLCDBacklight(1);
     //----
-    int vechicleType = GetVTypeFromLoop();
+    int vechicleType = 7;
+    for (int i = 0; i < 50; ++i)
+    {
+        if (DIO::getInstance()->FnGetLoopBStatus() && DIO::getInstance()->FnGetLoopAStatus())
+        {
+            vechicleType = 1;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     std::string transID = "";
     bool useFrontCamera = false;
     // Motorcycle - use rear camera
     if (vechicleType == 7)
     {
-        useFrontCamera = false;
+        // For EdgeBox AI
+        useFrontCamera = true;
         transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "B-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
     }
     // Car or Lorry - use front camera
@@ -440,6 +450,7 @@ void operation::Openbarrier()
         return;
     }
     writelog ("Open Barrier","OPR");
+    tProcess.gbBarrierOpened = true;
 
     if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
 
@@ -484,6 +495,7 @@ void operation::Clearme()
     tProcess.giCardIsIn = 0;
     tProcess.gbsavedtrans = false;
     tProcess.sEnableReader = false;
+    tProcess.gbBarrierOpened = false;
     //---
     if (gtStation.iType == tientry)
     {
@@ -1628,20 +1640,23 @@ int operation::GetVTypeFromLoop()
 {
     //car: 1 M/C: 7 Lorry: 4
     int ret = 1;
-    if (operation::getInstance()->tProcess.gbLoopAIsOn == true && operation::getInstance()->tProcess.gbLoopBIsOn == true)
-    {
-        writelog ("Vehicle Type is car.", "OPR");
-        ret = 1;
-    }
-    else if (operation::getInstance()->tProcess.gbLoopAIsOn == true || operation::getInstance()->tProcess.gbLoopBIsOn == true)
-    {
-        writelog ("Vehicle Type is MortorCycle.", "OPR");
-        ret = 7;
-    }
-    else if (operation::getInstance()->tProcess.gbLoopAIsOn == true && operation::getInstance()->tProcess.gbLorrySensorIsOn == true)
+    if (DIO::getInstance()->FnGetLorrySensor())
     {
         writelog ("Vehicle Type is Lorry.", "OPR");
         ret = 4;
+    }
+    else
+    {
+        if (DIO::getInstance()->FnGetLoopBStatus() && DIO::getInstance()->FnGetLoopAStatus())
+        {
+            writelog ("Vehicle Type is car.", "OPR");
+            ret = 1;
+        }
+        else
+        {
+            writelog ("Vehicle Type is M/C.", "OPR");
+            ret = 7;
+        }
     }
     return ret;
 
@@ -2612,9 +2627,12 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
     if (tProcess.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
     {
        if (gtStation.iType == tientry) {
-            tEntry.sLPN[i]=LPN;
+            // For EdgeBox
+            tEntry.sLPN[0]=LPN;
+            tEntry.sLPN[1]=LPN;
        }else {
-             tExit.sLPN[i]=LPN;
+             tExit.sLPN[0]=LPN;
+             tExit.sLPN[1]=LPN;
        }
 
     }

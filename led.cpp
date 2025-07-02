@@ -135,15 +135,29 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
 
                 std::vector<char> msg_line1;
                 FnFormatDisplayMsg(LedId, LED::Line::FIRST, Line1Text, align, msg_line1);
-                boost::asio::post(strand_, [this, msg_line1]() {
-                    boost::asio::write(serialPort_, boost::asio::buffer(msg_line1.data(), msg_line1.size()));
-                });
+                boost::asio::async_write(serialPort_, boost::asio::buffer(msg_line1.data(), msg_line1.size()),
+                    boost::asio::bind_executor(strand_, 
+                        [this](boost::system::error_code ec, std::size_t bytes_transferred) {
+                            if (ec) 
+                            {
+                                std::stringstream ss;
+                                ss << __func__ << "Failed to write LED msg: " << ec.what();
+                                Logger::getInstance()->FnLogExceptionError(ss.str());
+                            }
+                }));
 
                 std::vector<char> msg_line2;
                 FnFormatDisplayMsg(LedId, LED::Line::SECOND, Line2Text, align, msg_line2);
-                boost::asio::post(strand_, [this, msg_line2]() {
-                    boost::asio::write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()));
-                });
+                boost::asio::async_write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()),
+                    boost::asio::bind_executor(strand_, 
+                        [this](boost::system::error_code ec, std::size_t bytes_transferred) {
+                            if (ec) 
+                            {
+                                std::stringstream ss;
+                                ss << __func__ << "Failed to write LED msg: " << ec.what();
+                                Logger::getInstance()->FnLogExceptionError(ss.str());
+                            }
+                }));
 
                 // Send LED Messages to Monitor
                 if (operation::getInstance()->FnIsOperationInitialized())
@@ -155,9 +169,16 @@ void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment al
             {
                 std::vector<char> msg;
                 FnFormatDisplayMsg(LedId, LED::Line::FIRST, text, align, msg);
-                boost::asio::post(strand_, [this, msg]() {
-                    boost::asio::write(serialPort_, boost::asio::buffer(msg.data(), msg.size()));
-                });
+                boost::asio::async_write(serialPort_, boost::asio::buffer(msg.data(), msg.size()),
+                    boost::asio::bind_executor(strand_, 
+                        [this](boost::system::error_code ec, std::size_t bytes_transferred) {
+                            if (ec) 
+                            {
+                                std::stringstream ss;
+                                ss << __func__ << "Failed to write LED msg: " << ec.what();
+                                Logger::getInstance()->FnLogExceptionError(ss.str());
+                            }
+                }));
             }
         }
     }

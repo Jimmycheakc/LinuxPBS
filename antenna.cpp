@@ -1031,7 +1031,21 @@ void Antenna::antennaCmdSend(const std::vector<unsigned char>& dataBuff)
     TxNum_ = i;
 
     /* Send Tx Data buffer via serial */
-    boost::asio::write(*pSerialPort_, boost::asio::buffer(getTxBuf(), getTxNum()));
+    auto tx_buf = getTxBuf();  // Must stay valid until write completes
+    auto tx_size = getTxNum(); // Same for size
+
+    // Wrap the buffer in a shared_ptr to ensure it lives long enough
+    auto tx_data = std::make_shared<std::vector<uint8_t>>(tx_buf, tx_buf + tx_size);
+
+    boost::asio::async_write(*pSerialPort_, boost::asio::buffer(*tx_data),
+        [this, tx_data](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            if (ec) 
+            {
+                std::stringstream ss;
+                ss << "Error send the data to Ant serial port: " << ec.what();
+                Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
+            }
+    });
 }
 
 unsigned char* Antenna::getTxBuf()

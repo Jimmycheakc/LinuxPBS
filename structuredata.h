@@ -431,6 +431,7 @@ struct  tProcess_Struct
 	std::mutex gsLastPaidIUMutex;
 	std::chrono::time_point<std::chrono::steady_clock> lastIUEntryTime;
 	std::mutex lastIUEntryTimeMutex;
+	bool gbBarrierOpened;
 
 	void setIdleMsg(int index, const std::string& msg)
 	{

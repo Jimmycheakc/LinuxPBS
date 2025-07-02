@@ -13,16 +13,24 @@ TcpClient::TcpClient(boost::asio::io_context& io_context, const std::string& ipA
 
 void TcpClient::send(const std::string& message)
 {
-    try
-    {
-        boost::asio::post(strand_, [this, message]() {
-            boost::asio::write(socket_, boost::asio::buffer(message));
-        });
-    }
-    catch (const boost::system::system_error& e)
-    {
-        handleError(e.what());
-    }
+    // Make a copy of the message on the heap to ensure lifetime safety
+    auto message_ptr = std::make_shared<std::string>(message);
+
+    boost::asio::async_write(socket_, boost::asio::buffer(*message_ptr),
+        boost::asio::bind_executor(strand_,
+            [this, message_ptr](boost::system::error_code ec, std::size_t bytes_transferred)
+            {
+                if (ec)
+                {
+                    handleError(ec.message());
+                }
+                else
+                {
+                    // Optional: handle success or log bytes_transferred
+                }
+            }
+        )
+    );
 }
 
 bool TcpClient::isConnected() const
