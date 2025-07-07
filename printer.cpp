@@ -320,7 +320,7 @@ void Printer::readEnd(const boost::system::error_code& error, std::size_t bytesT
 
 void Printer::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    if (pSerialPort_->is_open())
+    if (pSerialPort_ && pSerialPort_->is_open())
     {
         boost::asio::post(strand_, [this, data]() {
             bool write_in_progress_ = !writeQueue_.empty();
@@ -330,6 +330,10 @@ void Printer::enqueueWrite(const std::vector<uint8_t>& data)
                 startWrite();
             }
         });
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Serial port is not initialized or not open.", logFileName_, "PRINTER");
     }
 }
 
@@ -708,7 +712,7 @@ void Printer::FnFullCut(int bottom)
     }
     enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
 
-    if (printerType_ != PRINTER_TYPE::FTP)
+    if (pSerialPort_ && printerType_ != PRINTER_TYPE::FTP)
     {
         startSelfTestTimer(selfTestInterval_);
     }

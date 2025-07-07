@@ -278,7 +278,7 @@ int Antenna::antennaCmd(AntCmdID cmdID)
             }
             case AntCmdID::FORCE_GET_IU_NO_CMD:
             {
-                antennaCmdTimeoutInMs = antennaCmdTimeoutInMillisec_;
+                //antennaCmdTimeoutInMs = antennaCmdTimeoutInMillisec_;
                 dataBuffer = loadForceGetUINo(destID, sourceID, FORCE_GET_IU_CATEGORY, FORCE_GET_IU_COMMAND_NO, SEQUENCE_NO);
                 break;
             }

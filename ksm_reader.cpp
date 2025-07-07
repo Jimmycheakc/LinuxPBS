@@ -1216,7 +1216,7 @@ void KSM_Reader::checkCommandQueue()
 
 void KSM_Reader::enqueueCommand(KSM_Reader::KSMReaderCmdID cmd)
 {
-    if (!pSerialPort_ && (!pSerialPort_->is_open()))
+    if (!pSerialPort_ || (!pSerialPort_->is_open()))
     {
         ksmLogger("Serial Port not open, unable to enqueue command.");
         return;

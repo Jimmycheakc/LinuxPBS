@@ -539,7 +539,7 @@ std::string LCSCReader::getCommandTypeString(uint8_t type)
 
 void LCSCReader::enqueueCommand(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ && !(pSerialPort_->is_open()))
+    if (!pSerialPort_ || !(pSerialPort_->is_open()))
     {
         Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "LCSC");
         return;
@@ -564,7 +564,7 @@ void LCSCReader::enqueueCommand(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> 
 
 void LCSCReader::enqueueCommandToFront(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ && !(pSerialPort_->is_open()))
+    if (!pSerialPort_ || !(pSerialPort_->is_open()))
     {
         Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "LCSC");
         return;
@@ -644,6 +644,19 @@ void LCSCReader::checkCommandQueue()
         }
     }
 }
+
+void LCSCReader::clearChunkCommandQueue()
+{
+    std::lock_guard<std::mutex> lock(chunkCommandQueueMutex_);
+
+    std::ostringstream oss;
+    oss << "Clearing chunkCommandQueue_ | Size before: " << chunkCommandQueue_.size();
+    chunkCommandQueue_.clear();
+    oss << ", Size after: " << chunkCommandQueue_.size();
+
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+}
+
 
 const LCSCReader::StateTransition LCSCReader::stateTransitionTable[static_cast<int>(LCSCReader::STATE::STATE_COUNT)] = 
 {
@@ -1116,11 +1129,13 @@ void LCSCReader::handleSendingChunkCommandRequestAsyncState(EVENT event)
         Logger::getInstance()->FnLog("Write failed.", logFileName_, "LCSC");
         serialWriteTimer_.cancel();
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
+        clearChunkCommandQueue();
     }
     else if (event == EVENT::WRITE_TIMEOUT)
     {
         Logger::getInstance()->FnLog("Received serial write timeout event in Sending Chunk Cmd Request Async State.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
+        clearChunkCommandQueue();
     }
 }
 
@@ -1132,6 +1147,7 @@ void LCSCReader::handleWaitingForChunkCommandResponseState(EVENT event)
     {
         Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sTimeout);
+        clearChunkCommandQueue();
     }
     else if (event == EVENT::RESPONSE_RECEIVED)
     {
@@ -1152,6 +1168,7 @@ void LCSCReader::handleWaitingForChunkCommandResponseState(EVENT event)
     {
         Logger::getInstance()->FnLog("Chunk of command data error.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::rNotRespCmd);
+        clearChunkCommandQueue();
     }
 }
 
@@ -1727,6 +1744,7 @@ void LCSCReader::startWrite()
     auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
 
     // Check if less than 200 milliseconds
+    /* Temp: Disable due to send CD files slow
     if (timeSinceLastRead < 200)
     {
         auto boostTime = boost::posix_time::milliseconds(200 - timeSinceLastRead);
@@ -1738,6 +1756,7 @@ void LCSCReader::startWrite()
         
         return;
     }
+    */
 
     const auto& data = writeQueue_.front();
     std::ostringstream oss;
@@ -1823,12 +1842,32 @@ void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
         {
             Logger::getInstance()->FnLog("Invalid Command Code.", logFileName_, "LCSC");
             rspEventStream << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::rNotRespCmd));
+
+            // Raise internal event with response received by checking its command type
+            if (isChunkedCommandType(static_cast<LCSC_CMD_TYPE>(msg.getType())))
+            {
+                // Display the cmd response when error
+                Logger::getInstance()->FnLog(msg.getMsgCscPacketOutput(), logFileName_, "LCSC");
+
+                processEvent(EVENT::CHUNK_COMMAND_ERROR);
+                handleUploadLcscFilesCmdResponse(msg, rspEventStream.str());
+            }
         }
     }
     else
     {
         Logger::getInstance()->FnLog("Invalid CRC.", logFileName_, "LCSC");
         rspEventStream << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::rCRCError));
+
+        // Raise internal event with response received by checking its command type
+        if (isChunkedCommandType(static_cast<LCSC_CMD_TYPE>(msg.getType())))
+        {
+            // Display the cmd response when error
+            Logger::getInstance()->FnLog(msg.getMsgCscPacketOutput(), logFileName_, "LCSC");
+
+            processEvent(EVENT::CHUNK_COMMAND_ERROR);
+            handleUploadLcscFilesCmdResponse(msg, rspEventStream.str());
+        }
     }
 
     if (isResponse == false && continueReadFlag_.load() == false && (getCurrentCmd() == LCSC_CMD::GET_CARD_ID || getCurrentCmd() == LCSC_CMD::CARD_BALANCE))
@@ -3424,40 +3463,49 @@ bool LCSCReader::FnMoveCDAckFile()
     std::string password = IniParser::getInstance()->FnGetCentralPassword();
     std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
-    MountManager mountManager(sharedFolderPath, mountPoint, username, password, logFileName_, "LCSC");
-    if (!mountManager.isMounted())
+    std::string details;
+    if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
     {
-        return false;
-    }
-
-    // Copy files to mount point
-    std::filesystem::path folder(cdAckFilePath);
-    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        MountManager mountManager(sharedFolderPath, mountPoint, username, password, logFileName_, "LCSC");
+        if (!mountManager.isMounted())
         {
-            std::string filename = entry.path().filename().string();
+            return false;
+        }
 
-            if (std::filesystem::is_regular_file(entry)
-                && (filename.size() >= 6) && (filename.substr(filename.size() - 6) == ".cdack"))
+        // Copy files to mount point
+        std::filesystem::path folder(cdAckFilePath);
+        if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
+        {
+            for (const auto& entry : std::filesystem::directory_iterator(folder))
             {
-                std::filesystem::path dest_file = mountPoint / entry.path().filename();
-                std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
-                std::filesystem::remove(entry.path());
+                std::string filename = entry.path().filename().string();
 
-                std::ostringstream oss;
-                oss << "Move " << entry.path() << " to " << dest_file << " successfully";
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                if (std::filesystem::is_regular_file(entry)
+                    && (filename.size() >= 6) && (filename.substr(filename.size() - 6) == ".cdack"))
+                {
+                    std::filesystem::path dest_file = mountPoint / entry.path().filename();
+                    std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
+                    std::filesystem::remove(entry.path());
+
+                    std::ostringstream oss;
+                    oss << "Move " << entry.path() << " to " << dest_file << " successfully";
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                }
             }
         }
+        else
+        {
+            Logger::getInstance()->FnLog("Folder doesn't exists or is not a directory.", logFileName_, "LCSC");
+            return false;
+        }
+
+        return true;
     }
     else
     {
-        Logger::getInstance()->FnLog("Folder doesn't exists or is not a directory.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("CDACK files failed to upload due to ping failed.", logFileName_, "LCSC");
         return false;
     }
-
-    return true;
 }
 
 std::string LCSCReader::calculateSHA256(const std::string& data)
@@ -3656,82 +3704,91 @@ bool LCSCReader::FnDownloadCDFiles()
     std::string password = IniParser::getInstance()->FnGetCentralPassword();
     std::string outputFolderPath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
 
-    MountManager mountManager(sharedFolderPath, mountPoint, username, password, logFileName_, "LCSC");
-    if (!mountManager.isMounted())
+    std::string details;
+    if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
     {
-        return false;
-    }
-
-    // Check Folder exist or not
-    std::filesystem::path folder(mountPoint);
-    int fileCount = 0;
-    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        MountManager mountManager(sharedFolderPath, mountPoint, username, password, logFileName_, "LCSC");
+        if (!mountManager.isMounted())
         {
-            if (std::filesystem::is_regular_file(entry))
+            return false;
+        }
+
+        // Check Folder exist or not
+        std::filesystem::path folder(mountPoint);
+        int fileCount = 0;
+        if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
+        {
+            for (const auto& entry : std::filesystem::directory_iterator(folder))
             {
-                fileCount++;
+                if (std::filesystem::is_regular_file(entry))
+                {
+                    fileCount++;
+                }
             }
         }
-    }
 
-    if (fileCount == 0)
-    {
-        Logger::getInstance()->FnLog("No CD file to download.", logFileName_, "LCSC");
-        return false;
-    }
-
-    // Create the output folder if it doesn't exist
-    if (!std::filesystem::exists(outputFolderPath))
-    {
-        std::error_code ec;
-        if (!std::filesystem::create_directories(outputFolderPath, ec))
+        if (fileCount == 0)
         {
-            Logger::getInstance()->FnLog("Failed to create " + outputFolderPath + " directory: " + ec.message(), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog("No CD file to download.", logFileName_, "LCSC");
             return false;
+        }
+
+        // Create the output folder if it doesn't exist
+        if (!std::filesystem::exists(outputFolderPath))
+        {
+            std::error_code ec;
+            if (!std::filesystem::create_directories(outputFolderPath, ec))
+            {
+                Logger::getInstance()->FnLog("Failed to create " + outputFolderPath + " directory: " + ec.message(), logFileName_, "LCSC");
+                return false;
+            }
+            else
+            {
+                Logger::getInstance()->FnLog("Successfully to create " + outputFolderPath + " directory.", logFileName_, "LCSC");
+            }
         }
         else
         {
-            Logger::getInstance()->FnLog("Successfully to create " + outputFolderPath + " directory.", logFileName_, "LCSC");
+            Logger::getInstance()->FnLog("Output folder directory: " + outputFolderPath + " exists.", logFileName_, "LCSC");
         }
-    }
-    else
-    {
-        Logger::getInstance()->FnLog("Output folder directory: " + outputFolderPath + " exists.", logFileName_, "LCSC");
-    }
 
-    int downloadTotal = 0;
-    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        int downloadTotal = 0;
+        if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
         {
-            if (std::filesystem::is_regular_file(entry))
+            for (const auto& entry : std::filesystem::directory_iterator(folder))
             {
-                std::filesystem::path dest_file = outputFolderPath / entry.path().filename();
-                std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
-                std::filesystem::remove(entry.path());
-                downloadTotal++;
+                if (std::filesystem::is_regular_file(entry))
+                {
+                    std::filesystem::path dest_file = outputFolderPath / entry.path().filename();
+                    std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
+                    std::filesystem::remove(entry.path());
+                    downloadTotal++;
 
-                std::ostringstream oss;
-                oss << "Download " << entry.path() << " to " << dest_file << " successfully.";
-                Logger::getInstance()->FnLog(oss.str());
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    std::ostringstream oss;
+                    oss << "Download " << entry.path() << " to " << dest_file << " successfully.";
+                    Logger::getInstance()->FnLog(oss.str());
+                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                }
             }
         }
+        else
+        {
+            Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", logFileName_, "LCSC");
+            return false;
+        }
+
+        std::ostringstream oss;
+        oss << "Total " << downloadTotal << " cd files downloaded successfully.";
+        Logger::getInstance()->FnLog(oss.str());
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+        return true;
     }
     else
     {
-        Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("Download CD files failed due to ping failed.", logFileName_, "LCSC");
         return false;
     }
-
-    std::ostringstream oss;
-    oss << "Total " << downloadTotal << " cd files downloaded successfully.";
-    Logger::getInstance()->FnLog(oss.str());
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-    return true;
 }
 
 const LCSCReader::UploadLcscStateTransition LCSCReader::UploadLcscStateTransitionTable[static_cast<int>(LCSCReader::UPLOAD_LCSC_FILES_STATE::STATE_COUNT)] = 

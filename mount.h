@@ -24,7 +24,7 @@ public:
                 }
                 else
                 {
-                    Logger::getInstance()->FnLog("Successfullt to create " + mountPoint + " directory.", logFileName, sOption);
+                    Logger::getInstance()->FnLog("Successfully to create " + mountPoint + " directory.", logFileName, sOption);
                 }
             }
             else
@@ -36,6 +36,7 @@ public:
                                         " -o username=" + username + ",password=" + password;
             if (std::system(mountCommand.c_str()) == 0)
             {
+                Logger::getInstance()->FnLog("Mount cmd: " + mountCommand, logFileName, sOption);
                 Logger::getInstance()->FnLog("Successfully to mount " + mountPoint, logFileName, sOption);
                 isMounted_ = true;
             }

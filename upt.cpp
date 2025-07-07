@@ -1127,7 +1127,7 @@ void Message::clear()
 
 
 // Upos Terminal Class
-Upt* Upt::upt_;
+Upt* Upt::upt_ = nullptr;
 std::mutex Upt::mutex_;
 uint32_t Upt::sequenceNo_ = 0;
 std::mutex Upt::sequenceNoMutex_;
@@ -2911,7 +2911,7 @@ bool Upt::checkCmd(Upt::UPT_CMD cmd)
 
 void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ && !(pSerialPort_->is_open()))
+    if (!pSerialPort_ || !(pSerialPort_->is_open()))
     {
         Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "UPT");
         return;
@@ -2938,7 +2938,7 @@ void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 
 void Upt::enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ && !(pSerialPort_->is_open()))
+    if (!pSerialPort_ || !(pSerialPort_->is_open()))
     {
         Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "UPT");
         return;

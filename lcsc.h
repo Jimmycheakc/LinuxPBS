@@ -365,6 +365,7 @@ private:
     bool isChunkedCommand(LCSC_CMD cmd);
     bool isChunkedCommandType(LCSC_CMD_TYPE cmd);
     void sendNextChunkCommandData();
+    void clearChunkCommandQueue();
     std::vector<uint8_t> prepareCmd(LCSC_CMD cmd, std::shared_ptr<void> payloadData);
     uint16_t CRC16_CCITT(const uint8_t* inStr, size_t length);
     std::string handleCmdResponse(const CscPacket& msg);

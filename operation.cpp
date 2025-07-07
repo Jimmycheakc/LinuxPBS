@@ -35,6 +35,7 @@ operation* operation::operation_ = nullptr;
 std::mutex operation::mutex_;
 
 operation::operation()
+    : m_db(nullptr), m_udp(nullptr), m_Monitorudp(nullptr)
 {
     isOperationInitialized_.store(false);
 }
@@ -60,40 +61,44 @@ void operation::OperationInit(io_context& ioContext)
     iCurrentContext = &ioContext;
     //--- broad cast UDP
     tProcess.gsBroadCastIP = getIPAddress();
-    try
+    if (!tProcess.gsBroadCastIP.empty())
     {
-        m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001, 2001, true);
-    }
-    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
-    {
-        std::string cppString(e.what());
-        writelog ("Boost.Asio Exception during PMS UDP initialization: "+ cppString,"OPR");
-    }
-    catch (const std::exception& e) {
-        std::string cppString(e.what());
-        writelog ("Exception during PMS UDP initialization: "+ cppString,"OPR");
-    }
-    catch (...)
-    {
-        writelog ("Unknown Exception during PMS UDP initialization.","OPR");
-    }
-    // monitor UDP
-    try
-    {
-        m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
-    }
-    catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
-    {
-        std::string cppString1(e.what());
-        writelog ("Boost.Asio Exception during Monitor UDP initialization: "+ cppString1,"OPR");
-    }
-    catch (const std::exception& e) {
-        std::string cppString1(e.what());
-        writelog ("Exception during Monitor UDP initialization: "+ cppString1,"OPR");
-    }
-    catch (...)
-    {
-        writelog ("Unknown Exception during Monitor UDP initialization.","OPR");
+        try
+        {
+            m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001, 2001, true);
+        }
+        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        {
+            std::string cppString(e.what());
+            writelog ("Boost.Asio Exception during PMS UDP initialization: "+ cppString,"OPR");
+        }
+        catch (const std::exception& e) {
+            std::string cppString(e.what());
+            writelog ("Exception during PMS UDP initialization: "+ cppString,"OPR");
+        }
+        catch (...)
+        {
+            writelog ("Unknown Exception during PMS UDP initialization.","OPR");
+        }
+
+        // monitor UDP
+        try
+        {
+            m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
+        }
+        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        {
+            std::string cppString1(e.what());
+            writelog ("Boost.Asio Exception during Monitor UDP initialization: "+ cppString1,"OPR");
+        }
+        catch (const std::exception& e) {
+            std::string cppString1(e.what());
+            writelog ("Exception during Monitor UDP initialization: "+ cppString1,"OPR");
+        }
+        catch (...)
+        {
+            writelog ("Unknown Exception during Monitor UDP initialization.","OPR");
+        }
     }
     //
     int iRet = 0;
@@ -361,9 +366,21 @@ void operation::LoopACome()
     Lpr::getInstance()->FnSendTransIDToLPR(tProcess.gsTransID, useFrontCamera);
 
     //----
-    if (AntennaOK() == true) Antenna::getInstance()->FnAntennaSendReadIUCmd();
-    ShowLEDMsg("Reading IU...^Please wait", "Reading IU...^Please wait");
- //   operation::getInstance()->EnableCashcard(true);
+    if (tParas.giEPS == 0)
+    {
+        operation::getInstance()->EnableCashcard(true);
+        ShowLEDMsg("Insert/Tap Card", "Insert/Tap Card");
+    }
+    else if (AntennaOK() == true)
+    {
+        Antenna::getInstance()->FnAntennaSendReadIUCmd();
+        ShowLEDMsg("Reading IU...^Please wait", "Reading IU...^Please wait");
+    }
+    else
+    {
+        operation::getInstance()->EnableCashcard(true);
+        ShowLEDMsg("Antenna Error!^Insert/Tap Card", "Antenna Error!^Insert/Tap Card");
+    }
 }
 
 void operation::LoopAGone()
@@ -644,7 +661,7 @@ void operation::Initdevice(io_context& ioContext)
         LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
     }
     
-    if (tParas.giCommPortKDEReader > 0)
+    if (tParas.giCommPortKDEReader > 0 && gtStation.iType == tientry)
     {
         int iRet = KSM_Reader::getInstance()->FnKSMReaderInit(9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
         //  -4 KDE comm port error
@@ -945,8 +962,11 @@ string operation:: getIPAddress()
     tParas.gsLocalIP = result;
     writelog ("local IP address: " + result, "OPR");
     //-----
-    size_t lastDotPosition = result.find_last_of('.');
-    result = result.substr(0, lastDotPosition + 1)+ "255";
+    if (result != "")
+    {
+        size_t lastDotPosition = result.find_last_of('.');
+        result = result.substr(0, lastDotPosition + 1)+ "255";
+    }
     // Output the result
     return result;
 
@@ -1004,10 +1024,13 @@ void operation::FnSendDateTimeToMonitor()
 
 void operation::FnSendLogMessageToMonitor(std::string msg)
 {
-    if (m_Monitorudp->FnGetMonitorStatus())
+    if (m_Monitorudp != nullptr)
     {
-        std::string str = "[" + gtStation.sPCName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
-        m_Monitorudp->send(str);
+        if (m_Monitorudp->FnGetMonitorStatus())
+        {
+            std::string str = "[" + gtStation.sPCName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
+            m_Monitorudp->send(str);
+        }
     }
 }
 
@@ -1072,94 +1095,102 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
         }
 
         bool copyFileFail = false;
-        if (foundNo_ > 0)
+        std::string details;
+        if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
         {
-            std::stringstream ss;
-            ss << "Found " << foundNo_ << " log files.";
-            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+            if (foundNo_ > 0)
+            {
+                std::stringstream ss;
+                ss << "Found " << foundNo_ << " log files.";
+                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
 
-            // Create the mount poin directory if doesn't exist
-            std::string mountPoint = "/mnt/logbackup";
-            std::string sharedFolderPath = operation::getInstance()->tParas.gsLogBackFolder;
-            std::replace(sharedFolderPath.begin(), sharedFolderPath.end(), '\\', '/');
-            std::string username = IniParser::getInstance()->FnGetCentralUsername();
-            std::string password = IniParser::getInstance()->FnGetCentralPassword();
+                // Create the mount poin directory if doesn't exist
+                std::string mountPoint = "/mnt/logbackup";
+                std::string sharedFolderPath = operation::getInstance()->tParas.gsLogBackFolder;
+                std::replace(sharedFolderPath.begin(), sharedFolderPath.end(), '\\', '/');
+                std::string username = IniParser::getInstance()->FnGetCentralUsername();
+                std::string password = IniParser::getInstance()->FnGetCentralPassword();
 
-            if (!std::filesystem::exists(mountPoint))
-            {
-                std::error_code ec;
-                if (!std::filesystem::create_directories(mountPoint, ec))
-                {
-                    Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), "", "OPR");
-                    throw std::runtime_error(("Failed to create " + mountPoint + " directory : " + ec.message()));
-                }
-                else
-                {
-                    Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), "", "OPR");
-                }
-            }
-            else
-            {
-                Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), "", "OPR");
-            }
-
-            // Mount the shared folder
-            std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
-                                        " -o username=" + username + ",password=" + password;
-            int mountStatus = std::system(mountCommand.c_str());
-            if (mountStatus != 0)
-            {
-                Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), "", "OPR");
-                throw std::runtime_error("Failed to mount " + mountPoint);
-            }
-            else
-            {
-                Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
-            }
-
-            // Copy files to mount folder
-            for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
-            {
-                if ((entry.path().filename().string().find(todayDateStr) != std::string::npos) &&
-                    (entry.path().extension() == ".log"))
+                if (!std::filesystem::exists(mountPoint))
                 {
                     std::error_code ec;
-                    std::filesystem::copy(entry.path(), mountPoint / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-                    
-                    if (!ec)
+                    if (!std::filesystem::create_directories(mountPoint, ec))
                     {
-                        std::stringstream ss;
-                        ss << "Copy file : " << entry.path() << " successfully.";
-                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), "", "OPR");
+                        throw std::runtime_error(("Failed to create " + mountPoint + " directory : " + ec.message()));
                     }
                     else
                     {
-                        std::stringstream ss;
-                        ss << "Failed to copy log file : " << entry.path();
-                        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                        copyFileFail = true;
-                        break;
+                        Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), "", "OPR");
                     }
                 }
-            }
+                else
+                {
+                    Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), "", "OPR");
+                }
 
-            // Unmount the shared folder
-            std::string unmountCommand = "sudo umount " + mountPoint;
-            int unmountStatus = std::system(unmountCommand.c_str());
-            if (unmountStatus != 0)
-            {
-                Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
-                throw std::runtime_error("Failed to unmount " + mountPoint);
+                // Mount the shared folder
+                std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
+                                            " -o username=" + username + ",password=" + password;
+                int mountStatus = std::system(mountCommand.c_str());
+                if (mountStatus != 0)
+                {
+                    Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), "", "OPR");
+                    throw std::runtime_error("Failed to mount " + mountPoint);
+                }
+                else
+                {
+                    Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
+                }
+
+                // Copy files to mount folder
+                for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
+                {
+                    if ((entry.path().filename().string().find(todayDateStr) != std::string::npos) &&
+                        (entry.path().extension() == ".log"))
+                    {
+                        std::error_code ec;
+                        std::filesystem::copy(entry.path(), mountPoint / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+                        
+                        if (!ec)
+                        {
+                            std::stringstream ss;
+                            ss << "Copy file : " << entry.path() << " successfully.";
+                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                        }
+                        else
+                        {
+                            std::stringstream ss;
+                            ss << "Failed to copy log file : " << entry.path();
+                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                            copyFileFail = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Unmount the shared folder
+                std::string unmountCommand = "sudo umount " + mountPoint;
+                int unmountStatus = std::system(unmountCommand.c_str());
+                if (unmountStatus != 0)
+                {
+                    Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
+                    throw std::runtime_error("Failed to unmount " + mountPoint);
+                }
+                else
+                {
+                    Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+                }
             }
             else
             {
-                Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+                Logger::getInstance()->FnLog("No Log files to upload.", "", "OPR");
+                throw std::runtime_error("No Log files to upload.");
             }
         }
         else
         {
-            Logger::getInstance()->FnLog("No Log files to upload.", "", "OPR");
-            throw std::runtime_error("No Log files to upload.");
+            Logger::getInstance()->FnLog("Log files failed to upload due to ping failed.", "", "OPR");
         }
 
         if (!copyFileFail)
@@ -1298,13 +1329,22 @@ bool operation::CopyIniFile(const std::string& serverIpAddress, const std::strin
 {
     if ((!serverIpAddress.empty()) && (!stationID.empty()))
     {
-        std::string sharedFilePath = "//" + serverIpAddress + "/carpark/LinuxPBS/Ini/Stn" + stationID;
+        std::string details;
+        if (PingWithTimeOut(serverIpAddress, 1, details) == true)
+        {
+            std::string sharedFilePath = "//" + serverIpAddress + "/carpark/LinuxPBS/Ini/Stn" + stationID;
 
-        std::stringstream ss;
-        ss << "Ini Shared File Path : " << sharedFilePath;
-        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+            std::stringstream ss;
+            ss << "Ini Shared File Path : " << sharedFilePath;
+            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
 
-        return copyFiles("/mnt/ini", sharedFilePath, IniParser::getInstance()->FnGetCentralUsername(), IniParser::getInstance()->FnGetCentralPassword(), "/home/root/carpark/Ini");
+            return copyFiles("/mnt/ini", sharedFilePath, IniParser::getInstance()->FnGetCentralUsername(), IniParser::getInstance()->FnGetCentralPassword(), "/home/root/carpark/Ini");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("Failed to ping to Server IP address.", "", "OPR");
+            return false;
+        }
     }
     else
     {
@@ -1315,13 +1355,16 @@ bool operation::CopyIniFile(const std::string& serverIpAddress, const std::strin
 
 void operation::SendMsg2Monitor(string cmdcode,string dstr)
 {
-    if (m_Monitorudp->FnGetMonitorStatus())
+    if (m_Monitorudp != nullptr)
     {
-        string str="["+ gtStation.sPCName +"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
-        str+=dstr+"|]";
-        m_Monitorudp->send(str);
-        //----
-        writelog ("Message to Monitor: " + str,"OPR");
+        if (m_Monitorudp->FnGetMonitorStatus())
+        {
+            string str="["+ gtStation.sPCName +"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
+            str+=dstr+"|]";
+            m_Monitorudp->send(str);
+            //----
+            writelog ("Message to Monitor: " + str,"OPR");
+        }
     }
 }
 
@@ -1329,9 +1372,12 @@ void operation::SendMsg2Server(string cmdcode,string dstr)
 {
 	string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
 	str+=dstr+"|]";
-	m_udp->send(str);
-    //----
-    writelog ("Message to PMS: " + str,"OPR");
+    if (m_udp != nullptr)
+    {
+        m_udp->send(str);
+        //----
+        writelog ("Message to PMS: " + str,"OPR");
+    }
 }
 
 int operation::CheckSeason(string sIU,int iInOut)
@@ -2611,7 +2657,7 @@ bool operation::AntennaOK() {
                 return true;
             } else {
                 writelog("Antenna: Error=" + tPBSError[iAntenna].ErrMsg, "OPR");
-                return false;
+                return true;
             }
         }
     }
