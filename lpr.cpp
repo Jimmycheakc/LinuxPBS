@@ -45,8 +45,12 @@ void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
         stdID_ = IniParser::getInstance()->FnGetStationID();
         lprIp4Front_ = IniParser::getInstance()->FnGetLPRIP4Front();
         lprIp4Rear_ = IniParser::getInstance()->FnGetLPRIP4Rear();
+        /* Temp: Disabled for miniPC
         reconnTime_ = 10000;
         reconnTime2_ = 10000;
+        */
+        reconnTime_ = 2000;
+        reconnTime2_ = 2000;
         commErrorTimeCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorTime());
         transErrorCountCriteria_ = std::stoi(IniParser::getInstance()->FnGetLPRErrorCount());
         lprPort_ = std::stoi(IniParser::getInstance()->FnGetLPRPort());
@@ -185,10 +189,12 @@ void Lpr::handleFrontSocketConnect()
     ss << "Connected to server IP : " << lprIp4Front_;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
+    /* Temp: Disabled for MiniPC
     pFrontCamera_->send("OK");
     std::stringstream okss;
     okss << "Front camera: Send OK";
     Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
+    */
 }
 
 void Lpr::handleFrontSocketClose()
@@ -327,10 +333,12 @@ void Lpr::handleRearSocketConnect()
     ss << "Connected to server IP : " << lprIp4Rear_;
     Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
+    /* Temp: Disabled for MiniPC
     pRearCamera_->send("OK");
     std::stringstream okss;
     okss << "Rear camera: Send OK";
     Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
+    */
 }
 
 void Lpr::handleRearSocketClose()

@@ -349,6 +349,7 @@ void operation::LoopACome()
     }
     std::string transID = "";
     bool useFrontCamera = false;
+    /* Temp: Disable for MiniPC Testing
     // Motorcycle - use rear camera
     if (vechicleType == 7)
     {
@@ -362,6 +363,10 @@ void operation::LoopACome()
         useFrontCamera = true;
         transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "F-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
     }
+    */
+    // For miniPC testing
+    useFrontCamera = true;
+    transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
     tProcess.gsTransID = transID;
     Lpr::getInstance()->FnSendTransIDToLPR(tProcess.gsTransID, useFrontCamera);
 
