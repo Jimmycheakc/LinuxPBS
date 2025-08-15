@@ -9,6 +9,7 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/async.h"
 #include "spdlog/sinks/basic_file_sink.h"
+#include <unordered_map>
 
 
 class Logger
@@ -21,6 +22,7 @@ public:
     void FnLog(std::string sMsg="", std::string filename="", std::string sOption="PBS");
     void FnCreateExceptionLogFile();
     void FnLogExceptionError(const std::string& errorMsg);
+    void PrintActiveLoggerDates();
 
     /**
      * Singleton Logger should not be cloneable.
@@ -37,4 +39,5 @@ private:
     static std::mutex mutex_;
     Logger();
     ~Logger();
+    std::unordered_map<std::string, std::string> activeLoggerDates_; // loggerName -> date
 };

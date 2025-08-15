@@ -136,6 +136,8 @@ public:
 
     void LcdIdleTimerTimeoutHandler();
     void FnLoopATimeoutHandler();
+    void FnSetLastActionTimeAfterLoopA();
+    std::chrono::steady_clock::time_point FnGetLastActionTimeAfterLoopA();
 
     void Clearme();
     void RetryLCSCLastCommand();
@@ -156,8 +158,9 @@ private:
     static operation* operation_;
     static std::mutex mutex_;
     std::unique_ptr<boost::asio::io_context::strand> operationStrand_;
-    std::unique_ptr<boost::asio::deadline_timer> pLCDIdleTimer_;
-    std::unique_ptr<boost::asio::deadline_timer> pLoopATimer_;
+    std::unique_ptr<boost::asio::steady_timer> pLCDIdleTimer_;
+    std::unique_ptr<boost::asio::steady_timer> pLoopATimer_;
+    std::chrono::steady_clock::time_point lastActionTimeAfterLoopA_;
     operation();
     ~operation() {
         delete m_udp;
@@ -167,4 +170,6 @@ private:
     std::string getSerialPort(const std::string& key);
     bool copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
                     const std::string& username, const std::string& password, const std::string& outputFolderPath);
+    void startLoopAPeriodicTimer();
+    void handleLoopAPeriodicTimerTimeout(const boost::system::error_code &ec);
 };

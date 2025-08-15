@@ -464,7 +464,7 @@ void Printer::handleCmdResponse(const std::vector<uint8_t>& rsp)
 
 void Printer::startMonitorStatusTimer()
 {
-    monitorStatusTimer_.expires_from_now(boost::posix_time::seconds(10));
+    monitorStatusTimer_.expires_after(std::chrono::seconds(10));
     monitorStatusTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&Printer::handleMonitorStatusTimeout, this, std::placeholders::_1)));
 }
@@ -499,7 +499,7 @@ void Printer::startSelfTestTimer(int milliseconds)
 
     inqStatus();
 
-    selfTestTimer_.expires_from_now(boost::posix_time::milliseconds(milliseconds));
+    selfTestTimer_.expires_after(std::chrono::milliseconds(milliseconds));
     selfTestTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&Printer::handleSelfTestTimerTimeout, this, std::placeholders::_1)));
 }

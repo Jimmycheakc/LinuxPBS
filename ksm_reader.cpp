@@ -532,8 +532,8 @@ void KSM_Reader::startWrite()
     // Check if less than 100 milliseconds
     if (timeSinceLastRead < 100)
     {
-        auto boostTime = boost::posix_time::milliseconds(100 - timeSinceLastRead);
-        serialWriteDelayTimer_.expires_from_now(boostTime);
+        auto boostTime = std::chrono::milliseconds(100 - timeSinceLastRead);
+        serialWriteDelayTimer_.expires_after(boostTime);
 
         // Add debug logging to check if the timer is being set properly
         std::ostringstream oss;
@@ -1368,7 +1368,7 @@ void KSM_Reader::handleWaitingForResponseState(EVENT event)
 void KSM_Reader::startSerialWriteTimer()
 {
     ksmLogger(__func__);
-    serialWriteTimer_.expires_from_now(boost::posix_time::seconds(5));
+    serialWriteTimer_.expires_after(std::chrono::seconds(5));
     serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&KSM_Reader::handleSerialWriteTimeout, this, std::placeholders::_1)));
 }
@@ -1426,7 +1426,7 @@ void KSM_Reader::handleAckTimeout(const boost::system::error_code& error)
 
 void KSM_Reader::startAckTimer()
 {
-    ackTimer_.expires_from_now(boost::posix_time::seconds(1));
+    ackTimer_.expires_after(std::chrono::seconds(1));
     ackTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&KSM_Reader::handleAckTimeout, this, std::placeholders::_1)));
 }
@@ -1565,7 +1565,7 @@ void KSM_Reader::handleCmdErrorOrTimeout(KSM_Reader::KSMReaderCmdID cmd, KSM_Rea
 
 void KSM_Reader::startResponseTimer()
 {
-    rspTimer_.expires_from_now(boost::posix_time::seconds(2));
+    rspTimer_.expires_after(std::chrono::seconds(2));
     rspTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&KSM_Reader::handleCmdResponseTimeout, this, std::placeholders::_1)));
 }

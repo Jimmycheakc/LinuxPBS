@@ -38,6 +38,7 @@ operation::operation()
     : m_db(nullptr), m_udp(nullptr), m_Monitorudp(nullptr)
 {
     isOperationInitialized_.store(false);
+    lastActionTimeAfterLoopA_ = std::chrono::steady_clock::now();
 }
 
 operation* operation::getInstance()
@@ -300,6 +301,16 @@ bool operation::FnIsOperationInitialized() const
     return isOperationInitialized_.load();
 }
 
+void operation::FnSetLastActionTimeAfterLoopA()
+{
+    lastActionTimeAfterLoopA_ = std::chrono::steady_clock::now();
+}
+
+std::chrono::steady_clock::time_point operation::FnGetLastActionTimeAfterLoopA()
+{
+    return lastActionTimeAfterLoopA_;
+}
+
 void operation::FnLoopATimeoutHandler()
 {
     Logger::getInstance()->FnLog("Loop A Operation Timeout handler.", "", "OPR");
@@ -308,30 +319,57 @@ void operation::FnLoopATimeoutHandler()
     LoopACome();
 }
 
+void operation::handleLoopAPeriodicTimerTimeout(const boost::system::error_code &ec)
+{
+    if (!ec)
+    {
+        auto now = std::chrono::steady_clock::now();
+        auto lastAction = FnGetLastActionTimeAfterLoopA();
+        auto timeout = std::chrono::seconds(tParas.giOperationTO);
+
+        if ((now - lastAction) > timeout)
+        {
+            FnLoopATimeoutHandler();
+            return;
+        }
+
+        pLoopATimer_->expires_after(std::chrono::seconds(1));
+        pLoopATimer_->async_wait(boost::asio::bind_executor(*operationStrand_, std::bind(&operation::handleLoopAPeriodicTimerTimeout, this, std::placeholders::_1)));
+    }
+    else if (ec == boost::asio::error::operation_aborted)
+    {
+        Logger::getInstance()->FnLog("Loop A periodic timer cancelled.", "", "OPR");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Loop A periodic timer timeout error :" << ec.message();
+        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+    }
+}
+
+void operation::startLoopAPeriodicTimer()
+{
+    Logger::getInstance()->FnLog(__func__, "", "OPR");
+    if (pLoopATimer_)
+    {
+        pLoopATimer_->expires_after(std::chrono::seconds(1));
+        pLoopATimer_->async_wait(boost::asio::bind_executor(*operationStrand_, std::bind(&operation::handleLoopAPeriodicTimerTimeout, this, std::placeholders::_1)));
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Unable to start Loop A periodic timer due to pLoopATimer is nullptr.", "", "OPR");
+    }
+}
+
 void operation::LoopACome()
 {
     //--------
     writelog ("Loop A Come","OPR");
 
     // Loop A timer - To prevent loop A hang
-    pLoopATimer_->expires_from_now(boost::posix_time::seconds(operation::getInstance()->tParas.giOperationTO));
-    pLoopATimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
-    {
-        if (!ec)
-        {
-            this->FnLoopATimeoutHandler();
-        }
-        else if (ec == boost::asio::error::operation_aborted)
-        {
-            Logger::getInstance()->FnLog("Loop A timer cancelled.", "", "OPR");
-        }
-        else
-        {
-            std::stringstream ss;
-            ss << "Loop A timer timeout error :" << ec.message();
-            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-        }
-    }));
+    startLoopAPeriodicTimer();
+    FnSetLastActionTimeAfterLoopA();
 
     ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
     Clearme();
@@ -393,7 +431,10 @@ void operation::LoopAGone()
     writelog ("Loop A End","OPR");
 
     // Cancel the loop A timer 
-    pLoopATimer_->cancel();
+    if (pLoopATimer_)
+    {
+        pLoopATimer_->cancel();
+    }
 
     //------
     DIO::getInstance()->FnSetLCDBacklight(0);
@@ -462,6 +503,7 @@ void operation::VehicleCome(string sNo)
 
 void operation::Openbarrier()
 {
+    FnSetLastActionTimeAfterLoopA();
     if (tProcess.giCardIsIn == 1) {
         ShowLEDMsg ("Please Take^CashCard.","Please Take^Cashcard.");
         return;
@@ -684,9 +726,9 @@ void operation::Initdevice(io_context& ioContext)
 
     if (LCD::getInstance()->FnLCDInit())
     {
-        pLCDIdleTimer_ = std::make_unique<boost::asio::deadline_timer>(ioContext);
+        pLCDIdleTimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);
 
-        pLCDIdleTimer_->expires_from_now(boost::posix_time::seconds(1));
+        pLCDIdleTimer_->expires_after(std::chrono::seconds(1));
         pLCDIdleTimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
         {
             if (!ec)
@@ -726,7 +768,7 @@ void operation::Initdevice(io_context& ioContext)
     }
 
     // Loop A timer
-    pLoopATimer_ = std::make_unique<boost::asio::deadline_timer>(ioContext);
+    pLoopATimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);
 }
 
 void operation::LcdIdleTimerTimeoutHandler()
@@ -752,7 +794,7 @@ void operation::LcdIdleTimerTimeoutHandler()
     }
 
     // Restart the lcd idle timer
-    pLCDIdleTimer_->expires_at(pLCDIdleTimer_->expires_at() + boost::posix_time::seconds(1));
+    pLCDIdleTimer_->expires_at(pLCDIdleTimer_->expiry() + std::chrono::seconds(1));
     pLCDIdleTimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
     {
         if (!ec)
@@ -1888,21 +1930,22 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
 
 void operation::ManualOpenBarrier(bool bPMS)
 {
-     if (bPMS == true) writelog ("Manual open barrier by PMS", "OPR");
-     else writelog ("Manual open barrier by operator", "OPR");
-     //------------
-     if (gtStation.iType == tientry){
-	    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-        tEntry.iStatus = 4;
-        //---------
-        m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tEntry.sIUTKNo);
-        SaveEntry();
-        Openbarrier();
-     }else{
-        if (tExit.sExitTime == "") tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-        m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tExit.sIUNo);
-        CloseExitOperation(Manualopen);
-     }
+    FnSetLastActionTimeAfterLoopA();
+    if (bPMS == true) writelog ("Manual open barrier by PMS", "OPR");
+    else writelog ("Manual open barrier by operator", "OPR");
+    //------------
+    if (gtStation.iType == tientry){
+    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+    tEntry.iStatus = 4;
+    //---------
+    m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tEntry.sIUTKNo);
+    SaveEntry();
+    Openbarrier();
+    }else{
+    if (tExit.sExitTime == "") tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+    m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tExit.sIUNo);
+    CloseExitOperation(Manualopen);
+    }
 }
 
 void operation::ManualCloseBarrier()
@@ -2066,11 +2109,13 @@ void operation:: EnableCashcard(bool bEnable)
      EnableKDE(bEnable);
      EnableUPOS(bEnable);
 
-    if (bEnable == true){
-        if (gtStation.iType == tiExit && tExit.sRedeemNo == "")  BARCODE_READER::getInstance()->FnBarcodeStartRead();
-    }else 
+    if (bEnable == true)
     {
-      BARCODE_READER::getInstance()->FnBarcodeStopRead();     
+        BARCODE_READER::getInstance()->FnBarcodeStartRead();
+    }
+    else 
+    {
+        BARCODE_READER::getInstance()->FnBarcodeStopRead();   
     } 
 
 }
@@ -2180,8 +2225,8 @@ void operation::EnableUPOS(bool bEnable)
 
 void operation::ProcessBarcodeData(string sBarcodedata)
 {
-    BARCODE_READER::getInstance()->FnBarcodeStopRead();
     ticketScan(sBarcodedata);
+    FnSetLastActionTimeAfterLoopA();
 }
 
 void operation::ProcessLCSC(const std::string& eventData)
@@ -2262,6 +2307,7 @@ void operation::ProcessLCSC(const std::string& eventData)
 
             writelog ("event LCSC got card ID.","OPR");
             HandlePBSError (LCSCNoError);
+            FnSetLastActionTimeAfterLoopA();
 
             std::string sCardNo = "";
             
@@ -2314,6 +2360,7 @@ void operation::ProcessLCSC(const std::string& eventData)
 
             writelog ("event LCSC got ID and balance.","OPR");
             HandlePBSError (LCSCNoError);
+            FnSetLastActionTimeAfterLoopA();
 
             std::string card_serial_num = "";
             std::string sCardNo = "";
@@ -2379,6 +2426,7 @@ void operation::ProcessLCSC(const std::string& eventData)
 
             writelog ("event LCSC get deduction success.","OPR");
             HandlePBSError (LCSCNoError);
+            FnSetLastActionTimeAfterLoopA();
 
             std::string seed = "";
             std::string card_serial_num = "";
@@ -2540,6 +2588,7 @@ void operation::ProcessLCSC(const std::string& eventData)
             ShowLEDMsg("Card Expired!", "Card Expired!");
             SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Expired");
             EnableCashcard(true);
+            FnSetLastActionTimeAfterLoopA();
             break;
         }
         default:
@@ -2562,7 +2611,6 @@ void operation:: RetryLCSCLastCommand()
         ShowLEDMsg(sMsg, sMsg);
         SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,," + sMsg);
         tExit.giDeductionStatus = WaitingCard;
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
         EnableCashcard(true);
         if (sMsg == "Deduction Error") showFee2User();
     }
@@ -2577,7 +2625,8 @@ void operation:: KSM_CardIn()
 {
     int iRet;
     //--------
-     ShowLEDMsg ("Card In^Please Wait ...", "Card In^Please Wait ...");
+    ShowLEDMsg ("Card In^Please Wait ...", "Card In^Please Wait ...");
+    FnSetLastActionTimeAfterLoopA();
     //--------
     if (tPBSError[iReader].ErrNo != 0) {HandlePBSError(ReaderNoError);}
     //---------
@@ -2608,6 +2657,7 @@ void operation::KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardE
  {  
     
     writelog ("Cashcard: " + sKSMCardNo, "OPR");
+    FnSetLastActionTimeAfterLoopA();
     //------
     tPBSError[iReader].ErrNo = 0;
     if (sKSMCardNo == "" || sKSMCardNo.length()!= 16 || sKSMCardNo.substr(5,4) == "0005") {
@@ -2625,6 +2675,7 @@ void operation::KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardE
  void operation:: KSM_CardTakeAway()
 {
     writelog ("Card Take Away ", "OPR");
+    FnSetLastActionTimeAfterLoopA();
     tProcess.giCardIsIn = 2;
 
     if (tEntry.gbEntryOK == true)
@@ -3061,6 +3112,8 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         EnableLCSC(false);
                         Antenna::getInstance()->FnAntennaStopRead();
                         CheckIUorCardStatus(card_can,UPOS,card_can,std::stoi(card_type) + 6, std::round(card_balance)/100);
+                        FnSetLastActionTimeAfterLoopA();
+
                     }
                     catch (const std::exception& ex)
                     {
@@ -3083,6 +3136,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     writelog("Received Response code = 40000000", "OPR");
                     if (tProcess.gbLoopApresent.load() == true && tExit.gbPaid == false && tExit.sPaidAmt > 0 && tExit.giDeductionStatus == WaitingCard){
                         debitfromReader("", tExit.sPaidAmt , UPOS);
+                        FnSetLastActionTimeAfterLoopA();
                     }
                 }
                 else
@@ -3166,6 +3220,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         oss << " | card type : " << card_type << " | card can : " << card_can << " | card fee : " << std::fixed << std::setprecision(2) << (card_fee / 100.0) << " | card balance : " << std::fixed << std::setprecision(2) << (card_balance / 100.0) << " | card reference no : " << card_reference_no << " | card batch no : " << card_batch_no;
                         writelog(oss.str(), "OPR");
                         operation::getInstance()->DebitOK("", card_can, Common::getInstance()->SetFeeFormat(card_fee / 100.0), Common::getInstance()->SetFeeFormat(card_balance / 100.0), std::stoi(card_type) + 6, "", UPOS, "");
+                        FnSetLastActionTimeAfterLoopA();
                     }
                     catch (const std::exception& ex)
                     {
@@ -3193,6 +3248,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     ShowLEDMsg("Card Expired!", "Card Expired!");
                     SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Expired");
                     EnableCashcard(true);
+                    FnSetLastActionTimeAfterLoopA();
                     break;
                     
                 }
@@ -3204,6 +3260,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         ShowLEDMsg("Card Fault!", "Card Fault!");
                         SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Fault");
                         EnableCashcard(true);
+                        FnSetLastActionTimeAfterLoopA();
                         break;
                 }
                 else {
@@ -3990,8 +4047,6 @@ std::string operation::GetVTypeStr(int iVType)
                     iRet = 8;
                     tExit.sFee = CalFeeRAM(tExit.sEntryTime, tSeason.date_from, tExit.iVehicleType);
                     ShowLEDMsg("Season Start On^" + tSeason.date_from.substr(0,16),"Season Start On^" + tSeason.date_from.substr(0,16));
-                    //-----
-                   std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 } else
                 {
                     tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
@@ -4004,7 +4059,6 @@ std::string operation::GetVTypeStr(int iVType)
                 writelog ("Season expired. EntryTime early than date to, cal fee for date to ~ exit", "OPR");
                 tExit.sFee = CalFeeRAM(tSeason.date_to, tExit.sExitTime, tExit.iVehicleType);
                 ShowLEDMsg("Season Expire On^" + tSeason.date_to.substr(0,16) ,"Season Expire On^" + tSeason.date_to.substr(0,16));
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
             } else
             {
                 tExit.sFee = CalFeeRAM(tExit.sEntryTime, tExit.sExitTime, tExit.iVehicleType);
@@ -4168,7 +4222,7 @@ void operation::SaveExit()
 
     sMsg2Send = tExit.sIUNo + "," + tExit.sCardNo + "," + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "," + sLPRNo + "," + std::to_string(tProcess.giShowType) + "," + sMsg2Send;
 
-    if (tEntry.iStatus == 0) {
+    if (tExit.iStatus == 0) {
         SendMsg2Server("90", sMsg2Send);
     }
     tProcess.gbsavedtrans = true;
@@ -4356,19 +4410,24 @@ void operation::ticketScan(std::string skeyedNo)
             if (tExit.sFee - tExit.sRedeemAmt - tExit.sRebateAmt + tExit.sOweAmt <= 0.00f)
             {
                 ticketOK();
-                return;
             }
             else
             {
                 ShowLEDMsg("Amount Redeem,^Pls Pay Bal!", "Amount Redeem^Pls Pay Bal!");
                 writelog("Amount Redeem, Pls Pay Bal.","OPR");
-                return;
+                showFee2User();
             }
         }
+        else
+        {
+            ShowLEDMsg("Amount Redeem,^Insert/Tap Card", "Amount Redeem^Insert/Tap Card");
+            showFee2User();
+        }
+        return;
     }
 
-    if (tProcess.gbUPOSStatus == Enable) EnableUPOS(false);
-    else EnableLCSC(false);
+    EnableCashcard(false);
+
     //--------
     if (skeyedNo.length() >= 12)
     {
@@ -4382,6 +4441,34 @@ void operation::ticketScan(std::string skeyedNo)
         }
         // Check if ticket barcode is 9 digits
         else
+        {
+            if (skeyedNo.length() == 15)
+            {
+                sCardTkNo = Common::getInstance()->FnToUpper(skeyedNo.substr(0, 15));
+
+                TT = sCardTkNo.substr(7, 1);
+                if ((TT == "V") or (TT == "W") or (TT == "U") or (TT == "Z"))
+                {
+                    if ((TT == "V") or (TT == "W"))
+                    {
+                        isRedemptionTicket = true;
+                    }
+
+                    if (((TT == "V") or (TT == "W")) && (tParas.giExitTicketRedemption == 0))
+                    {
+                        writelog("Redemption ticket but redemption disabled: " + sCardTkNo, "OPR");
+                        ShowLEDMsg(tExitMsg.MsgExit_RedemptionTicket[0], tExitMsg.MsgExit_RedemptionTicket[1]);
+                        goto Exit_Sub;
+                    }
+                }
+
+                ShowLEDMsg(tExitMsg.MsgExit_CardIn[0], tExitMsg.MsgExit_CardIn[1]);
+            }
+        }
+    }
+    else
+    {
+        if (skeyedNo.length() == 9)
         {
             sCardTkNo = Common::getInstance()->FnToUpper(skeyedNo.substr(0, 9));
 
@@ -4405,7 +4492,7 @@ void operation::ticketScan(std::string skeyedNo)
         }
     }
     
-    if (sCardTkNo.length() != 9 && sCardTkNo.length() != 12)
+    if (sCardTkNo.length() != 9 && sCardTkNo.length() != 12 && sCardTkNo.length() != 15)
     {
         writelog("Invalid Ticket (Wrong Len): " + skeyedNo, "OPR");
         SendMsg2Server("90",skeyedNo + ",,,,,Invalid Ticket (Wrong Len)");
@@ -4490,11 +4577,11 @@ void operation::ticketScan(std::string skeyedNo)
                     
                 if (fee <= 0.00f)
                 {
-                        ticketOK();
+                    ticketOK();
+                    return;
                 }
                 else
                 {
-                    ShowLEDMsg(tExitMsg.MsgExit_XNoCard[0], tExitMsg.MsgExit_XNoCard[1]);
                     EnableCashcard(true);
                     return;
                 }
@@ -4548,8 +4635,9 @@ void operation::ticketScan(std::string skeyedNo)
                         ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
                     }
                 }
-               ticketOK();    
-            }   
+               ticketOK();
+               return;
+            }
             break;
         }
         // Used
@@ -4588,12 +4676,15 @@ void operation::ticketScan(std::string skeyedNo)
 
 Exit_Sub:
 
-    // Temp: Possible need to add 2 seconds delay
+    showFee2User();
 
     if (tExit.bPayByEZPay == true)
     {
         ShowLEDMsg("You may scan^Compl Ticket", "");
     }
+
+    EnableCashcard(true);
+
     return;
 }
 
@@ -4637,6 +4728,7 @@ void operation::showFee2User(bool bPaying)
 
     std::string sMsg = sUpp + "^" + sLow;
     
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     ShowLEDMsg(sMsg, sMsg);
 
     std::string exit_entry_time = "00:00";

@@ -1,5 +1,8 @@
 #include "ping.h"
+#include <mutex>
 
+
+std::mutex g_ping_mutex;
 
 /**
  * @brief Convert String to Number
@@ -98,6 +101,7 @@ bool PingWithTimeOut( const std::string& address,
            const float&   max_TimeOutInSeconds,
            std::string&       details )
 {
+    std::lock_guard<std::mutex> lock(g_ping_mutex);
 
     //std::string command = "ping -w " + num2str(max_TimeOutInSeconds) + " " + address + " 2>&1";
 

@@ -48,6 +48,15 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
     {
         if (operation::getInstance()->tProcess.gbLoopApresent.load() == false) 
         {
+            std::string details;
+            if (operation::getInstance()->tProcess.giSystemOnline == 1)
+            {
+                if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
+                {
+                    operation::getInstance()->tProcess.giSystemOnline = 0;
+                }
+            }
+
             if (operation::getInstance()->tProcess.giSystemOnline == 0 && operation::getInstance()->tProcess.glNoofOfflineData > 0)
             {
                 db::getInstance()->moveOfflineTransToCentral();
@@ -60,12 +69,6 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 lastSyncTime = start;
                 //-----
                 operation::getInstance()->CheckReader();
-            }
-
-            // check central DB
-            if (operation::getInstance()->tProcess.giSystemOnline != 0) {
-                
-                
             }
 
             // Check the LCSC CD files- download and upload
@@ -133,6 +136,13 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
     std::tm localToday;
     localtime_r(&todayDate, &localToday);
 
+    static int lastLoggedDayOfYear = localToday.tm_yday;
+    if (localToday.tm_yday != lastLoggedDayOfYear)
+    {
+        SystemInfo::getInstance()->FnLogSysInfo();
+        lastLoggedDayOfYear = localToday.tm_yday;
+    }
+
     // Check if it's past 12 AM (midnight)
     if (localToday.tm_hour == 0 && localToday.tm_min >= 1 && localToday.tm_min < 30)
     {
@@ -156,23 +166,37 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
 
         // Iterate through the files in the log file path
         int foundNo_ = 0;
-        for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
+        if (std::filesystem::exists(logFilePath) && std::filesystem::is_directory(logFilePath))
         {
-            if ((entry.path().filename().string().find(todayDateStr) == std::string::npos) &&
-                (entry.path().extension() == ".log"))
+            for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
             {
-                foundNo_ ++;
+                if ((entry.path().filename().string().find(todayDateStr) == std::string::npos) &&
+                    (entry.path().extension() == ".log"))
+                {
+                    foundNo_ ++;
+                }
             }
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("Log directory does not exist: " + logFilePath, "", "OPR");
         }
 
         int foundLPRDbLog_  = 0;
-        for (const auto& entry : std::filesystem::directory_iterator(LPRDbLogFilePath))
+        if (std::filesystem::exists(LPRDbLogFilePath) && std::filesystem::is_directory(LPRDbLogFilePath))
         {
-            if ((entry.path().filename().string().find(LPRDbFormattedDate) == std::string::npos) &&
-                (entry.path().extension() == ".csv"))
+            for (const auto& entry : std::filesystem::directory_iterator(LPRDbLogFilePath))
             {
-                foundLPRDbLog_ ++;
+                if ((entry.path().filename().string().find(LPRDbFormattedDate) == std::string::npos) &&
+                    (entry.path().extension() == ".csv"))
+                {
+                    foundLPRDbLog_ ++;
+                }
             }
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("LPR DB log directory does not exist: " + LPRDbLogFilePath, "", "OPR");
         }
 
         std::string details;
@@ -309,13 +333,20 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
             {
 
                 std::stringstream ss;
-                ss << "Found " << foundLPRDbLog_ << " log files.";
+                ss << "Found " << foundLPRDbLog_ << " lpn database files.";
                 Logger::getInstance()->FnLog(ss.str(), "", "OPR");
 
                 // Create the mount poin directory if doesn't exist
-                std::string mountPoint = "/mnt/logbackup";
+                std::string mountPoint = "/mnt/dbfilesbackup";
                 std::string sharedFolderPath = operation::getInstance()->tParas.gsLogBackFolder;
                 std::replace(sharedFolderPath.begin(), sharedFolderPath.end(), '\\', '/');
+                // Find the last slash
+                // Replace from "//192.168.2.141/Carpark/Log" to "//192.168.2.141/Carpark"
+                std::size_t pos = sharedFolderPath.find_last_of('/');
+                if (pos != std::string::npos)
+                {
+                    sharedFolderPath = sharedFolderPath.substr(0, pos);
+                }
                 std::string username = IniParser::getInstance()->FnGetCentralUsername();
                 std::string password = IniParser::getInstance()->FnGetCentralPassword();
 
@@ -350,31 +381,84 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
                     {
                         Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
 
+                        // Get current year and and month
+                        auto now = std::chrono::system_clock::now();
+                        std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+                        std::tm localNow;
+                        localtime_r(&nowTime, &localNow);
+
+                        std::ostringstream yearFolderSS, monthFolderSS;
+                        yearFolderSS << std::setw(4) << std::setfill('0') << (localNow.tm_year + 1900);
+                        monthFolderSS << std::setw(2) << std::setfill('0') << (localNow.tm_mon + 1);
+
+                       std::filesystem::path targetFolder = std::filesystem::path(mountPoint) / "Database/LPN" / yearFolderSS.str() / monthFolderSS.str();
+
+                        // Create folder if they do not exist
+                        std::error_code ec;
+                        if (!std::filesystem::exists(targetFolder))
+                        {
+                            if (!std::filesystem::create_directories(targetFolder, ec))
+                            {
+                                Logger::getInstance()->FnLog("Failed to create target folder: " + targetFolder.string() + " | " + ec.message(), "", "OPR");
+                            }
+                            else
+                            {
+                                Logger::getInstance()->FnLog(("Successfully to create " + targetFolder.string() + " directory."), "", "OPR");
+                            }
+                        }
+                        else
+                        {
+                            Logger::getInstance()->FnLog(("Target folder directory: " + targetFolder.string() + " exists."), "", "OPR");
+                        }
+
                         // Copy files to mount folder
                         for (const auto& entry : std::filesystem::directory_iterator(LPRDbLogFilePath))
                         {
                             if ((entry.path().filename().string().find(LPRDbFormattedDate) == std::string::npos) &&
                                 (entry.path().extension() == ".csv"))
                             {
-                                std::error_code ec;
-                                std::filesystem::copy(entry.path(), mountPoint / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+                                std::string filename = entry.path().filename().string();
+                                const char* lastUnderScore = strrchr(filename.c_str(), '_');
 
-                                if (!ec)
+                                if (lastUnderScore)
                                 {
-                                    std::stringstream ss;
-                                    ss << "Copy file : " << entry.path() << " successfully.";
-                                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                                    
-                                    std::filesystem::remove(entry.path());
-                                    ss.str("");
-                                    ss << "Removed log file : " << entry.path() << " successfully";
-                                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                                }
-                                else
-                                {
-                                    std::stringstream ss;
-                                    ss << "Failed to copy log file : " << entry.path();
-                                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                                    int year, month, day;
+                                    if (std::sscanf(lastUnderScore + 1, "%4d-%2d-%2d.csv", &year, &month, &day) == 3)
+                                    {
+                                        std::ostringstream checkYearFolderSS, checkMonthFolderSS;
+                                        checkYearFolderSS << std::setw(4) << std::setfill('0') << year;
+                                        checkMonthFolderSS << std::setw(2) << std::setfill('0') << month;
+
+                                        std::filesystem::path checkTargetFolder = std::filesystem::path(mountPoint) / "Database/LPN" / checkYearFolderSS.str() / checkMonthFolderSS.str();
+
+                                        std::error_code ec;
+                                        std::filesystem::create_directories(checkTargetFolder, ec);
+                                        if (ec)
+                                        {
+                                            Logger::getInstance()->FnLog("Failed to create folder: " + checkTargetFolder.string() + " | " + ec.message(), "", "OPR");
+                                            continue;
+                                        }
+
+                                        std::filesystem::copy(entry.path(), checkTargetFolder / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
+
+                                        if (!ec)
+                                        {
+                                            std::stringstream ss;
+                                            ss << "Copy file : " << entry.path() << " successfully.";
+                                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                                            
+                                            std::filesystem::remove(entry.path());
+                                            ss.str("");
+                                            ss << "Removed log file : " << entry.path() << " successfully";
+                                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                                        }
+                                        else
+                                        {
+                                            std::stringstream ss;
+                                            ss << "Failed to copy log file : " << entry.path();
+                                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                                        }
+                                    }
                                 }
                             }
                         }

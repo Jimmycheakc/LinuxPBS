@@ -140,7 +140,7 @@ private:
     std::string IUNumber_;
     int successRecvIUCount_;
     bool successRecvIUFlag_;
-   std::unique_ptr<boost::asio::deadline_timer> periodicSendReadIUCmdTimer_;
+   std::unique_ptr<boost::asio::steady_timer> periodicSendReadIUCmdTimer_;
     Antenna();
     int antennaInit();
     int antennaCmd(AntCmdID cmdID);

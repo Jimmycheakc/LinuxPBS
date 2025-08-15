@@ -52,7 +52,7 @@ void Antenna::FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int
         Logger::getInstance()->FnCreateLogFile(logFileName_);
 
         pMainIOContext_ = &mainIOContext;
-        periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(mainIOContext);
+        periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::steady_timer>(mainIOContext);
         pStrand_ = std::make_unique<boost::asio::io_context::strand>(io_serial_context);
         pSerialPort_ = std::make_unique<boost::asio::serial_port>(io_serial_context, comPortName);
 
@@ -345,7 +345,7 @@ Antenna::ReadResult Antenna::antennaReadWithTimeout(int milliseconds)
     bool success = false;
 
     io_serial_context.reset();
-    boost::asio::deadline_timer timer(io_serial_context, boost::posix_time::milliseconds(milliseconds));
+    boost::asio::steady_timer timer(io_serial_context, std::chrono::milliseconds(milliseconds));
 
     std::function<void()> initiateRead = [&]() {
         pSerialPort_->async_read_some(boost::asio::buffer(buffer),
@@ -1097,33 +1097,16 @@ void Antenna::handleReadIUTimerExpiration()
         else
         {
             // raise antenna fail
-            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 3);
+            EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaFail", 2);
         }
     }
 }
 
 void Antenna::startSendReadIUCmdTimer(int milliseconds)
 {
-    //Logger::getInstance()->FnLog(__func__, logFileName_, "ANT");
-
-    /*
-    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
-    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
-        std::unique_ptr<boost::asio::deadline_timer> periodicSendReadIUCmdTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
-        periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
-        periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& error) {
-                if (!error) {
-                    handleReadIUTimerExpiration();
-                }
-        });
-
-        timerIOContext_->run();
-    });
-    timerThread.detach();
-    */
     if (!periodicSendReadIUCmdTimer_) return; // safety check
 
-    periodicSendReadIUCmdTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+    periodicSendReadIUCmdTimer_->expires_after(std::chrono::milliseconds(milliseconds));
     periodicSendReadIUCmdTimer_->async_wait([this](const boost::system::error_code& ec) {
         if (!ec && continueReadFlag_.load()) {
             handleReadIUTimerExpiration();

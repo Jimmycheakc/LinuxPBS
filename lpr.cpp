@@ -168,8 +168,8 @@ void Lpr::startReconnectTimer()
     int milliseconds = reconnTime_; 
     std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
     std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
-        std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
-        periodicReconnectTimer_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+        std::unique_ptr<boost::asio::steady_timer> periodicReconnectTimer_ = std::make_unique<boost::asio::steady_timer>(*timerIOContext_);
+        periodicReconnectTimer_->expires_after(std::chrono::milliseconds(milliseconds));
         periodicReconnectTimer_->async_wait([this](const boost::system::error_code& error) {
                 if (!error) {
                     handleReconnectTimerTimeout();
@@ -312,8 +312,8 @@ void Lpr::startReconnectTimer2()
     int milliseconds = reconnTime2_; 
     std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
     std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
-        std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer2_ = std::make_unique<boost::asio::deadline_timer>(*timerIOContext_);
-        periodicReconnectTimer2_->expires_from_now(boost::posix_time::milliseconds(milliseconds));
+        std::unique_ptr<boost::asio::steady_timer> periodicReconnectTimer2_ = std::make_unique<boost::asio::steady_timer>(*timerIOContext_);
+        periodicReconnectTimer2_->expires_after(std::chrono::milliseconds(milliseconds));
         periodicReconnectTimer2_->async_wait([this](const boost::system::error_code& error) {
                 if (!error) {
                     handleReconnectTimer2Timeout();
@@ -522,7 +522,8 @@ void Lpr::processData(const std::string tcpData, CType camType)
 
             rcvETX = extractETX(tcpData);
 
-            if ((tmpStr.size() >= 5) && (tmpStr[1] == "LPRS_STX") && (tmpStr[5] == "LPRS_ETX"))
+            if (((tmpStr.size() == 7) && (tmpStr[1] == "LPRS_STX") && (tmpStr[5] == "LPRS_ETX"))
+                || ((tmpStr.size() == 8) && (tmpStr[1] == "LPRS_STX") && (tmpStr[6] == "LPRS_ETX")))
             {
                 extractLPRData(tcpData, camType);
             }
@@ -636,7 +637,7 @@ void Lpr::extractLPRData(const std::string& tcpData, CType camType)
 
     boost::algorithm::split(tmpStr, tcpData, boost::algorithm::is_any_of("#"));
 
-    if (tmpStr.size() == 7)
+    if ((tmpStr.size() == 7) || (tmpStr.size() == 8))
     {
         TransID = tmpStr[2];
         LPN = tmpStr[3];

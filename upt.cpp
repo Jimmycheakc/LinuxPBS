@@ -3382,7 +3382,7 @@ void Upt::startSerialWriteTimer()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
 
-    serialWriteTimer_.expires_from_now(boost::posix_time::seconds(10));
+    serialWriteTimer_.expires_after(std::chrono::seconds(10));
     serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&Upt::handleSerialWriteTimeout, this, std::placeholders::_1)));
 }
@@ -3415,7 +3415,7 @@ void Upt::handleSerialWriteTimeout(const boost::system::error_code& error)
 
 void Upt::startAckTimer()
 {
-    ackTimer_.expires_from_now(boost::posix_time::seconds(8));
+    ackTimer_.expires_after(std::chrono::seconds(8));
     ackTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&Upt::handleAckTimeout, this, std::placeholders::_1)));
 }
@@ -3447,7 +3447,7 @@ void Upt::handleAckTimeout(const boost::system::error_code& error)
 
 void Upt::startResponseTimer()
 {
-    rspTimer_.expires_from_now(boost::posix_time::seconds(180));
+    rspTimer_.expires_after(std::chrono::seconds(180));
     rspTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&Upt::handleCmdResponseTimeout, this, std::placeholders::_1)));
 }
@@ -4094,8 +4094,8 @@ void Upt::startWrite()
     // Check if less than 2 seconds in milliseconds
     if (timeSinceLastRead < 2000)
     {
-        auto boostTime = boost::posix_time::milliseconds(2000 - timeSinceLastRead);
-        serialWriteDelayTimer_.expires_from_now(boostTime);
+        auto boostTime = std::chrono::milliseconds(2000 - timeSinceLastRead);
+        serialWriteDelayTimer_.expires_after(boostTime);
 
         // Add debug logging to check if the timer is being set properly
         std::ostringstream oss;
@@ -4143,10 +4143,9 @@ void Upt::writeEnd(const boost::system::error_code& error, std::size_t bytesTran
 void Upt::stopSerialWriteDelayTimer()
 {
     // Convert boost::posix_time::ptime to std::chrono::steady_clock::time_point
-    auto timerExpirationTime = serialWriteDelayTimer_.expires_at();
-    auto timerExpirationSteadyClock = std::chrono::steady_clock::time_point(std::chrono::milliseconds(timerExpirationTime.time_of_day().total_milliseconds()));
+    auto timerExpirationTime = serialWriteDelayTimer_.expiry();
 
-    if (timerExpirationSteadyClock > std::chrono::steady_clock::now())
+    if (timerExpirationTime > std::chrono::steady_clock::now())
     {
         serialWriteDelayTimer_.cancel();
         // Log the cancellation

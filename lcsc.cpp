@@ -1176,7 +1176,7 @@ void LCSCReader::startSerialWriteTimer(int seconds)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
-    serialWriteTimer_.expires_from_now(boost::posix_time::seconds(seconds));
+    serialWriteTimer_.expires_after(std::chrono::seconds(seconds));
     serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_, 
         std::bind(&LCSCReader::handleSerialWriteTimeout, this, std::placeholders::_1)));
 }
@@ -1211,7 +1211,7 @@ void LCSCReader::startResponseTimer()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
 
-    rspTimer_.expires_from_now(boost::posix_time::seconds(2));
+    rspTimer_.expires_after(std::chrono::seconds(2));
     rspTimer_.async_wait(boost::asio::bind_executor(strand_, 
         std::bind(&LCSCReader::handleCmdResponseTimeout, this, std::placeholders::_1)));
 }
@@ -1747,8 +1747,8 @@ void LCSCReader::startWrite()
     /* Temp: Disable due to send CD files slow
     if (timeSinceLastRead < 200)
     {
-        auto boostTime = boost::posix_time::milliseconds(200 - timeSinceLastRead);
-        serialWriteDelayTimer_.expires_from_now(boostTime);
+        auto boostTime = std::chrono::milliseconds(200 - timeSinceLastRead);
+        serialWriteDelayTimer_.expires_after(boostTime);
         serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
                 [this](const boost::system::error_code&) {
                     boost::asio::post(strand_, [this]() { startWrite(); });

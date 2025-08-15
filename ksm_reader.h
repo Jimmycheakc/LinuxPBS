@@ -13,7 +13,7 @@
 #include <cstdint>
 #include "boost/asio.hpp"
 #include "boost/asio/serial_port.hpp"
-#include "boost/asio/deadline_timer.hpp"
+#include "boost/asio/steady_timer.hpp"
 
 class KSM_Reader
 {
@@ -169,13 +169,13 @@ private:
     KSMReaderCmdID currentCmd;
     std::atomic<bool> ackRecv_;
     std::atomic<bool> rspRecv_;
-    boost::asio::deadline_timer ackTimer_;
-    boost::asio::deadline_timer rspTimer_;
-    boost::asio::deadline_timer serialWriteTimer_;
+    boost::asio::steady_timer ackTimer_;
+    boost::asio::steady_timer rspTimer_;
+    boost::asio::steady_timer serialWriteTimer_;
     std::atomic<bool> continueReadCardFlag_;
     std::atomic<bool> blockGetStatusCmdLogFlag_;
     std::chrono::steady_clock::time_point lastSerialReadTime_;
-    boost::asio::deadline_timer serialWriteDelayTimer_;
+    boost::asio::steady_timer serialWriteDelayTimer_;
     KSM_Reader();
     void startIoContextThread();
     void sendEnq();

@@ -231,6 +231,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
             std::stringstream ss;
             ss << "Same as last IU, duration :" << sameAsLastIUDuration.count() << " less than Maximum interval: " << operation::getInstance()->tParas.giMaxTransInterval;
             Logger::getInstance()->FnLog(ss.str());
+            operation::getInstance()->ShowLEDMsg("Same as last IU^Please Proceed","Same as last IU^Please Proceed");
             operation::getInstance()->Openbarrier();
         }
         else

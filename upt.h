@@ -748,10 +748,10 @@ private:
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
-    boost::asio::deadline_timer ackTimer_;
-    boost::asio::deadline_timer rspTimer_;
-    boost::asio::deadline_timer serialWriteDelayTimer_;
-    boost::asio::deadline_timer serialWriteTimer_;
+    boost::asio::steady_timer ackTimer_;
+    boost::asio::steady_timer rspTimer_;
+    boost::asio::steady_timer serialWriteDelayTimer_;
+    boost::asio::steady_timer serialWriteTimer_;
     std::atomic<bool> ackRecv_;
     std::atomic<bool> rspRecv_;
     std::atomic<bool> pendingRspRecv_;

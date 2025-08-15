@@ -58,10 +58,10 @@ private:
     std::unique_ptr<TcpClient> pFrontCamera_;
     std::unique_ptr<TcpClient> pRearCamera_;
     int lprPort_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicReconnectTimer2_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicStatusTimer_;
-    std::unique_ptr<boost::asio::deadline_timer> periodicStatusTimer2_;
+    std::unique_ptr<boost::asio::steady_timer> periodicReconnectTimer_;
+    std::unique_ptr<boost::asio::steady_timer> periodicReconnectTimer2_;
+    std::unique_ptr<boost::asio::steady_timer> periodicStatusTimer_;
+    std::unique_ptr<boost::asio::steady_timer> periodicStatusTimer2_;
     bool frontCameraInitialized_;
     bool rearCameraInitialized_;
     Lpr();

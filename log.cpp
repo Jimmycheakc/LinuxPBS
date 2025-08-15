@@ -70,9 +70,10 @@ void Logger::FnCreateLogFile(std::string filename)
 
     std::stringstream ssYearMonthDay;
     ssYearMonthDay << std::put_time(&timeinfo, "%y%m%d");
+    std::string dateStr = ssYearMonthDay.str();
 
-    std::string absoluteFilePath = LOG_FILE_PATH + std::string("/") + sStationID + filename + ssYearMonthDay.str() + std::string(".log");
-    std::string logger = (filename == "") ? sStationID : filename;
+    std::string absoluteFilePath = LOG_FILE_PATH + std::string("/") + sStationID + filename + dateStr + std::string(".log");
+    std::string logger = (filename == "") ? sStationID + dateStr : filename + dateStr;
 
     try
     {
@@ -108,42 +109,77 @@ void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
 
     std::stringstream ssYearMonthDay;
     ssYearMonthDay << std::put_time(&timeinfo, "%y%m%d");
+    std::string dateStr = ssYearMonthDay.str();
 
-    std::string loggerName  = (filename == "") ? sStationID : filename;
-    std::string absoluteFilePath = LOG_FILE_PATH + std::string("/") + sStationID + filename + ssYearMonthDay.str() + std::string(".log");
-    std::string absoluteMainFilePath = LOG_FILE_PATH + std::string("/") + sStationID + ssYearMonthDay.str() + std::string(".log");
+    // Build log file names
+    std::string loggerNameMain = sStationID + dateStr;
+    std::string loggerNameExtra = filename + dateStr;
 
-    if (!(boost::filesystem::exists(absoluteFilePath)))
-    {
-        spdlog::drop(loggerName);
-        FnCreateLogFile(filename);
-    }
+    std::string absoluteMainFilePath = LOG_FILE_PATH + "/" + loggerNameMain + ".log";
+    std::string absoluteExtraFilePath = LOG_FILE_PATH + "/" + sStationID + filename + dateStr + ".log";
 
-    if (!(boost::filesystem::exists(absoluteMainFilePath)))
-    {
-        spdlog::drop(sStationID);
-        FnCreateLogFile();
-    }
+    // Lambda to check and drop outdated logger
+    auto checkAndDropOldLogger = [&](const std::string& baseName, const std::string& currentDate) {
+        auto it = activeLoggerDates_.find(baseName);
+        if (it != activeLoggerDates_.end() && it->second != currentDate) {
+            std::string oldLoggerName = baseName + it->second;
+            spdlog::drop(oldLoggerName);
+            activeLoggerDates_.erase(it);
+        }
+    };
 
+    // Check and create extra log file if needed
     if (!filename.empty())
     {
-        auto logger = spdlog::get(loggerName);
-        if (logger)
-        {
-            logger->info(sLogMsg.str());
-            logger->flush();
+        checkAndDropOldLogger(filename, dateStr);
 
+        if (!boost::filesystem::exists(absoluteExtraFilePath))
+        {
+            spdlog::drop(loggerNameExtra);
+            FnCreateLogFile(filename);
+        }
+
+        auto extraLogger = spdlog::get(loggerNameExtra);
+        if (!extraLogger)
+        {
+            FnCreateLogFile(filename);
+            extraLogger = spdlog::get(loggerNameExtra);
+        }
+
+        if (extraLogger)
+        {
+            extraLogger->info(sLogMsg.str());
+            extraLogger->flush();
+
+            // Update active date
+            activeLoggerDates_[filename] = dateStr;
         }
     }
     else
     {
-        auto mainLogger = spdlog::get(sStationID);
+        checkAndDropOldLogger(sStationID, dateStr);
+
+        if (!boost::filesystem::exists(absoluteMainFilePath))
+        {
+            spdlog::drop(loggerNameMain);
+            FnCreateLogFile();
+        }
+
+        auto mainLogger = spdlog::get(loggerNameMain);
+        if (!mainLogger)
+        {
+            FnCreateLogFile();
+            mainLogger = spdlog::get(loggerNameMain);
+        }
+
         if (mainLogger)
         {
             mainLogger->info(sLogMsg.str());
             mainLogger->flush();
 
-            // Send to Log Message to Monitor
+            // Update active date
+            activeLoggerDates_[sStationID] = dateStr;
+
             if (operation::getInstance()->FnIsOperationInitialized())
             {
                 operation::getInstance()->FnSendLogMessageToMonitor(sLogMsg.str());
@@ -252,4 +288,14 @@ void Logger::FnLogExceptionError(const std::string& errorMsg)
     {
         std::cerr << "Unknown Exception during creating exception log file." << std::endl;
     } 
+}
+
+void Logger::PrintActiveLoggerDates()
+{
+    std::cout << "[Active Logger Dates]" << std::endl;
+    for (const auto& entry : activeLoggerDates_)
+    {
+        std::cout << "  Logger Name: " << entry.first
+                  << " | Date: " << entry.second << std::endl;
+    }
 }
