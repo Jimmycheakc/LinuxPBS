@@ -90,6 +90,18 @@ public:
     std::string FnFormatToFloatString(const std::string& str);
     std::string FnToUpper(const std::string& str);
     std::string FnTrim(const std::string& str);
+    void FnAppendUint16LE(std::vector<uint8_t>& buffer, uint16_t value);
+    void FnAppendUint32LE(std::vector<uint8_t>& buffer, uint32_t value);
+    uint16_t FnReadUint16LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint32_t FnReadUint24LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint32_t FnReadUint32LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint64_t FnReadUint40BE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint64_t FnReadUint40LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint64_t FnReadUint56LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint64_t FnReadUint64LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    bool FnConvertDecimalStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian = false);
+    bool FnDecimalStringToTwoBytes(const std::string& decimalString, uint8_t output[2], bool littleEndian = false);
+    bool FnParseDateTimeString(const std::string& dateTimeStr, std::tm& outTm);
 
     /**
      * Singleton Common should not be cloneable.

@@ -30,6 +30,7 @@
 #include "upt.h"
 #include "barcode_reader.h"
 #include "boost/algorithm/string.hpp"
+#include "eep_client.h"
 
 operation* operation::operation_ = nullptr;
 std::mutex operation::mutex_;
@@ -766,6 +767,8 @@ void operation::Initdevice(io_context& ioContext)
     {
         BARCODE_READER::getInstance()->FnBarcodeReaderInit();
     }
+
+    EEPClient::getInstance()->FnEEPClientInit(IniParser::getInstance()->FnGetEEPClientIp(), IniParser::getInstance()->FnGetEEPClientPort(), IniParser::getInstance()->FnGetStationID());
 
     // Loop A timer
     pLoopATimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);

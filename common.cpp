@@ -1146,3 +1146,153 @@ std::string Common::FnTrim(const std::string& str)
 
     return (start < end) ? std::string(start, end) : "";
 }
+
+void Common::FnAppendUint16LE(std::vector<uint8_t>& buffer, uint16_t value)
+{
+    buffer.push_back(static_cast<uint8_t>(value & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+}
+
+void Common::FnAppendUint32LE(std::vector<uint8_t>& buffer, uint32_t value)
+{
+    buffer.push_back(static_cast<uint8_t>(value & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+}
+
+uint16_t Common::FnReadUint16LE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint16_t>(buffer[offset]) |
+        (static_cast<uint16_t>(buffer[offset + 1]) << 8);
+}
+
+uint32_t Common::FnReadUint24LE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint32_t>(buffer[offset]) |
+        (static_cast<uint32_t>(buffer[offset + 1]) << 8) |
+        (static_cast<uint32_t>(buffer[offset + 2]) << 16);
+}
+
+uint32_t Common::FnReadUint32LE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint32_t>(buffer[offset]) |
+        (static_cast<uint32_t>(buffer[offset + 1]) << 8) |
+        (static_cast<uint32_t>(buffer[offset + 2]) << 16) |
+        (static_cast<uint32_t>(buffer[offset + 3]) << 24);
+}
+
+uint64_t Common::FnReadUint40BE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return (static_cast<uint64_t>(buffer[offset]) << 32) |
+        (static_cast<uint64_t>(buffer[offset + 1]) << 24) |
+        (static_cast<uint64_t>(buffer[offset + 2]) << 16) |
+        (static_cast<uint64_t>(buffer[offset + 3]) << 8) |
+        static_cast<uint64_t>(buffer[offset + 4]);
+}
+
+uint64_t Common::FnReadUint40LE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint64_t>(buffer[offset]) |
+        (static_cast<uint64_t>(buffer[offset + 1]) << 8) |
+        (static_cast<uint64_t>(buffer[offset + 2]) << 16) |
+        (static_cast<uint64_t>(buffer[offset + 3]) << 24) |
+        (static_cast<uint64_t>(buffer[offset + 4]) << 32);
+}
+
+uint64_t Common::FnReadUint56LE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint64_t>(buffer[offset]) |
+        (static_cast<uint64_t>(buffer[offset + 1]) << 8) |
+        (static_cast<uint64_t>(buffer[offset + 2]) << 16) |
+        (static_cast<uint64_t>(buffer[offset + 3]) << 24) |
+        (static_cast<uint64_t>(buffer[offset + 4]) << 32) |
+        (static_cast<uint64_t>(buffer[offset + 5]) << 40) |
+        (static_cast<uint64_t>(buffer[offset + 6]) << 48);
+}
+
+uint64_t Common::FnReadUint64LE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint64_t>(buffer[offset]) |
+        (static_cast<uint64_t>(buffer[offset + 1]) << 8) |
+        (static_cast<uint64_t>(buffer[offset + 2]) << 16) |
+        (static_cast<uint64_t>(buffer[offset + 3]) << 24) |
+        (static_cast<uint64_t>(buffer[offset + 4]) << 32) |
+        (static_cast<uint64_t>(buffer[offset + 5]) << 40) |
+        (static_cast<uint64_t>(buffer[offset + 6]) << 48) |
+        (static_cast<uint64_t>(buffer[offset + 7]) << 56);
+}
+
+bool Common::FnConvertDecimalStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian)
+{
+    try
+    {
+        // Convert the decimal string to an unsigned 64-bit integer
+        uint64_t value = std::stoull(input);
+
+        // Fill the byte array from the least significant byte
+        for (std::size_t i = 0; i < outputSize; ++i)
+        {
+            outputArray[outputSize - 1 - i] = static_cast<uint8_t>(value & 0xFF);
+            value >>= 8;
+        }
+
+        // Check if the value fits in the given output size
+        if (value != 0)
+        {
+            return false; // overflow, number too large
+        }
+
+        // Reverse for little-endian if required
+        if (littleEndian)
+        {
+            std::reverse(outputArray, outputArray + outputSize);
+        }
+
+        return true;
+    }
+    catch (...)
+    {
+        return false; // invalid string
+    }
+}
+
+bool Common::FnDecimalStringToTwoBytes(const std::string& decimalString, uint8_t output[2], bool littleEndian)
+{
+    try
+    {
+        int value = std::stoul(decimalString);
+        if (value < 0 || value > 0xFFFF)
+        {
+            return false;
+        }
+
+        if (littleEndian)
+        {
+            output[0] = static_cast<uint8_t>(value & 0xFF);        // LSB
+            output[1] = static_cast<uint8_t>((value >> 8) & 0xFF); // MSB
+        }
+        else
+        {
+            output[0] = static_cast<uint8_t>((value >> 8) & 0xFF); // MSB
+            output[1] = static_cast<uint8_t>(value & 0xFF);
+        }
+
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+bool Common::FnParseDateTimeString(const std::string& dateTimeStr, std::tm& outTm)
+{
+    std::istringstream iss(dateTimeStr);
+    iss >> std::get_time(&outTm, "%Y-%m-%d %H:%M:%S");
+    if (iss.fail())
+    {
+        return false;
+    }
+    return true;
+}

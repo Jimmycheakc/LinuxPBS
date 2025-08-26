@@ -26,6 +26,7 @@
 #include "printer.h"
 #include "udp.h"
 #include "ksm_reader.h"
+#include "eep_client.h"
 
 
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
@@ -621,6 +622,7 @@ int main (int agrc, char* argv[])
     LCSCReader::getInstance()->FnLCSCReaderClose();
     Printer::getInstance()->FnPrinterClose();
     Lpr::getInstance()->FnLprClose();
+    EEPClient::getInstance()->FnEEPClientClose();
 
     return 0;
 }
