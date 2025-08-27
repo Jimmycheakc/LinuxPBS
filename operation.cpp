@@ -701,12 +701,12 @@ void operation::Initdevice(io_context& ioContext)
         {
             max_char_per_row =  LED::LED226_MAX_CHAR_PER_ROW;
         }
-        LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommPortLED)), max_char_per_row);
+        LEDManager::getInstance()->createLED(9600, getSerialPort(std::to_string(tParas.giCommPortLED)), max_char_per_row);
     }
 
     if (tParas.giCommportLED401 > 0)
     {
-        LEDManager::getInstance()->createLED(ioContext, 9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
+        LEDManager::getInstance()->createLED(9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
     }
     
     if (tParas.giCommPortKDEReader > 0 && gtStation.iType == tientry)
@@ -762,7 +762,7 @@ void operation::Initdevice(io_context& ioContext)
     }
 
     DIO::getInstance()->FnDIOInit();
-    Lpr::getInstance()->FnLprInit(ioContext);
+    Lpr::getInstance()->FnLprInit();
     if (gtStation.iType == tiExit)
     {
         BARCODE_READER::getInstance()->FnBarcodeReaderInit();

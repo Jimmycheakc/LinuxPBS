@@ -59,12 +59,11 @@ set(SOURCE_FILES
     db.cpp
     dio.cpp
     operation.cpp
-    tcp.cpp
+    tcp_client.cpp
     lpr.cpp
     ksm_reader.cpp
     printer.cpp
     barcode_reader.cpp
-    tcp_client.cpp
     eep_client.cpp
     main.cpp
 )

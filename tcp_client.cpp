@@ -52,7 +52,7 @@ void AppTcpClient::close()
 
     // Cancel any ongoing async operations
     boost::system::error_code ec;
-    socket_.cancel(ec); // This ensures that any pending operations are aborted.
+    socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     socket_.close(ec);  // Handle any error that occurs while canceling.
 
     isConnected_.store(false);

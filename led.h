@@ -38,22 +38,26 @@ public:
         CENTER
     };
 
-    LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow);
+    LED(unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow);
     ~LED();
-    void FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment align);
+    void FnLEDSendLEDMsg(const std::string& LedId, const std::string& text, LED::Alignment align);
     unsigned int FnGetLEDBaudRate() const;
     std::string FnGetLEDComPortName() const;
     int FnGetLEDMaxCharPerRow() const;
 
 private:
+    boost::asio::io_context ioContext_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    std::thread ioContextThread_;
     boost::asio::serial_port serialPort_;
     unsigned int baudRate_;
     std::string comPortName_;
     int maxCharPerRow_;
     std::string logFileName_;
 
-    void FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string text, LED::Alignment align, std::vector<char>& result);
+    void startIoContextThread();
+    void FnFormatDisplayMsg(const std::string& LedId, LED::Line lineNo, const std::string& text, LED::Alignment align, std::vector<char>& result);
 };
 
 
@@ -64,7 +68,7 @@ class LEDManager
 public:
     static LEDManager* getInstance();
     static std::mutex mutex_;
-    void createLED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow);
+    void createLED(unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow);
     LED* getLED(const std::string& ledComPort);
 
     /**

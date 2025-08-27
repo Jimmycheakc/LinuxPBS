@@ -12,7 +12,12 @@ Lpr* Lpr::lpr_ = nullptr;
 std::mutex Lpr::mutex_;
 
 Lpr::Lpr()
-    : cameraNo_(0),
+    : ioContext_(),
+    strand_(boost::asio::make_strand(ioContext_)),
+    workGuard_(boost::asio::make_work_guard(ioContext_)),
+    periodicReconnectTimer_(ioContext_),
+    periodicReconnectTimer2_(ioContext_),
+    cameraNo_(0),
     lprIp4Front_(""),
     lprIp4Rear_(""),
     lprPort_(0),
@@ -37,7 +42,7 @@ Lpr* Lpr::getInstance()
     return lpr_;
 }
 
-void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
+void Lpr::FnLprInit()
 {
     try
     {
@@ -57,8 +62,9 @@ void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
 
         Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-        initFrontCamera (mainIOContext, lprIp4Front_, lprPort_, "CH1");
-        initRearCamera(mainIOContext, lprIp4Rear_, lprPort_, "CH1");
+        startIoContextThread();
+        initFrontCamera(lprIp4Front_, lprPort_, "CH1");
+        initRearCamera(lprIp4Rear_, lprPort_, "CH1");
     }
     catch (const std::exception& e)
     {
@@ -71,6 +77,16 @@ void Lpr::FnLprInit(boost::asio::io_context& mainIOContext)
         std::stringstream ss;
         ss << __func__ << ", Exception: Unknown Exception";
         Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+}
+
+void Lpr::startIoContextThread()
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+
+    if (!ioContextThread_.joinable())
+    {
+        ioContextThread_ = std::thread([this] { ioContext_.run(); });
     }
 }
 
@@ -89,9 +105,16 @@ void Lpr::FnLprClose()
         pRearCamera_->close();
         pRearCamera_.reset();
     }
+
+    workGuard_.reset();
+    ioContext_.stop();
+    if (ioContextThread_.joinable())
+    {
+        ioContextThread_.join();
+    }
 }
 
-void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH)
+void Lpr::initFrontCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH)
 {
     if (cameraIP.empty())
     {
@@ -112,11 +135,11 @@ void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
     try
     {
         frontCamCH_ = cameraCH;
-        pFrontCamera_ = std::make_unique<TcpClient>(mainIOContext, cameraIP, tcpPort);
-        pFrontCamera_->setConnectHandler([this]() { handleFrontSocketConnect(); });
-        pFrontCamera_->setCloseHandler([this]() { handleFrontSocketClose(); });
-        pFrontCamera_->setReceiveHandler([this](const char* data, std::size_t length) { handleReceiveFrontCameraData(data, length); });
-        pFrontCamera_->setErrorHandler([this](std::string error_message) { handleFrontSocketError(error_message); });
+        pFrontCamera_ = std::make_unique<AppTcpClient>(ioContext_, cameraIP, tcpPort);
+        pFrontCamera_->setConnectHandler([this](bool success, const std::string& message) { handleFrontSocketConnect(success, message); });
+        pFrontCamera_->setCloseHandler([this](bool success, const std::string& message) { handleFrontSocketClose(success, message); });
+        pFrontCamera_->setReceiveHandler([this](bool success, const std::vector<uint8_t>& data) { handleReceiveFrontCameraData(success, data); });
+        pFrontCamera_->setSendHandler([this](bool success, const std::string& message) { handleFrontSocketSend(success, message); });
         pFrontCamera_->connect();
 
         startReconnectTimer();
@@ -145,14 +168,19 @@ void Lpr::initFrontCamera(boost::asio::io_context& mainIOContext, const std::str
     }
 }
 
-void Lpr::handleReconnectTimerTimeout()
+void Lpr::handleReconnectTimerTimeout(const boost::system::error_code& error)
 {
-    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    if (error)
+    {
+        std::ostringstream oss;
+        oss << "Reconnect Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LPR");
+    }
 
-    if (!pFrontCamera_->isStatusGood())
+    if (!pFrontCamera_->isConnected())
     {
         std::stringstream ss;
-        ss << "Reconnect to server IP : " << lprIp4Front_;
+        ss << "Reconnect to Server @ Front Camera IP: " << lprIp4Front_ << ", Port: " << lprPort_;
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
         pFrontCamera_->connect();
@@ -163,75 +191,90 @@ void Lpr::handleReconnectTimerTimeout()
 
 void Lpr::startReconnectTimer()
 {
-    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
-
-    int milliseconds = reconnTime_; 
-    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
-    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
-        std::unique_ptr<boost::asio::steady_timer> periodicReconnectTimer_ = std::make_unique<boost::asio::steady_timer>(*timerIOContext_);
-        periodicReconnectTimer_->expires_after(std::chrono::milliseconds(milliseconds));
-        periodicReconnectTimer_->async_wait([this](const boost::system::error_code& error) {
-                if (!error) {
-                    handleReconnectTimerTimeout();
-                }
-        });
-
-        timerIOContext_->run();
-    });
-    timerThread.detach();
+    periodicReconnectTimer_.expires_after(std::chrono::milliseconds(reconnTime_));
+    periodicReconnectTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&Lpr::handleReconnectTimerTimeout, this, std::placeholders::_1)));
 }
 
-void Lpr::handleFrontSocketConnect()
+void Lpr::handleFrontSocketConnect(bool success, const std::string& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    if (success)
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Successfully connected to Server @ Front Camera IP : " << lprIp4Front_ << ", Port: " << lprPort_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
-    std::stringstream ss;
-    ss << "Connected to server IP : " << lprIp4Front_;
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
-
-    /* Temp: Disabled for MiniPC
-    pFrontCamera_->send("OK");
-    std::stringstream okss;
-    okss << "Front camera: Send OK";
-    Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
-    */
+        /* Temp: Disabled for MiniPC
+        pFrontCamera_->send("OK");
+        std::stringstream okss;
+        okss << "Front camera: Send OK";
+        Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
+        */
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Failed to connect to Server @ Front Camera IP: " << lprIp4Front_ << ", Port: " << lprPort_ << ", Error: " << message;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
 }
 
-void Lpr::handleFrontSocketClose()
+void Lpr::handleFrontSocketClose(bool success, const std::string& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
-
-    std::stringstream ss;
-    ss << "Server @ Front Camera IP : " << lprIp4Front_ << " close connection.";
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    if (success)
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Sucessfully closed the Server @ Front Camera IP : " << lprIp4Front_ << ", Port: " << lprPort_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Failed to close the Server @ Front Camera IP : " << lprIp4Front_ << ", Port: " << lprPort_ << ", Error: " << message;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
 }
 
-void Lpr::handleFrontSocketError(std::string error_msg)
+void Lpr::handleFrontSocketSend(bool success, const std::string& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
-
-    std::stringstream ss;
-    ss << "Front camera: TCP Socket Error: " << error_msg;
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    if (success)
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Successfully sent to Server @ Front Camera IP : " << lprIp4Front_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Failed to send to Server @ Front Camera IP : " << lprIp4Front_ << ", Error: " << message;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
 }
 
-void Lpr::handleReceiveFrontCameraData(const char* data, std::size_t length)
+void Lpr::handleReceiveFrontCameraData(bool success, const std::vector<uint8_t>& data)
 {
-    std::stringstream ss;
-    ss << "Receive TCP Data @ Front Camera, IP : " << lprIp4Front_ << " Data : ";
-    ss.write(data, length);
-    ss << " , Length : " << length;
-    Logger::getInstance()->FnLog(ss.str());
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    if (success)
+    {
+        std::stringstream ss;
+        ss << "Receive TCP Data @ Front Camera, IP : " << lprIp4Front_ << " Data : ";
+        ss.write(reinterpret_cast<const char*>(data.data()), data.size());
+        ss << " , Length : " << data.size();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
-    std::string receiveDataStr(data, length);
-    processData(receiveDataStr, CType::FRONT_CAMERA);
+        std::string receiveDataStr(reinterpret_cast<const char*>(data.data()), data.size());
+        processData(receiveDataStr, CType::FRONT_CAMERA);
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Failed to receive TCP Data @ Front Camera. Likely socket read error.", logFileName_, "LPR");
+    }
 }
 
 /********************************************************************/
 /********************************************************************/
 
-void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::string& cameraIP, int tcpPort, const std::string cameraCH)
+void Lpr::initRearCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH)
 {
     if (cameraNo_ == 2)
     {
@@ -254,11 +297,11 @@ void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
         try
         {
             rearCamCH_ = cameraCH;
-            pRearCamera_ = std::make_unique<TcpClient>(mainIOContext, cameraIP, tcpPort);
-            pRearCamera_->setConnectHandler([this]() { handleRearSocketConnect(); });
-            pRearCamera_->setCloseHandler([this]() { handleRearSocketClose(); });
-            pRearCamera_->setReceiveHandler([this](const char* data, std::size_t length) { handleReceiveRearCameraData(data, length); });
-            pRearCamera_->setErrorHandler([this](std::string error_message) { handleRearSocketError(error_message); });
+            pRearCamera_ = std::make_unique<AppTcpClient>(ioContext_, cameraIP, tcpPort);
+            pRearCamera_->setConnectHandler([this](bool success, const std::string& message) { handleRearSocketConnect(success, message); });
+            pRearCamera_->setCloseHandler([this](bool success, const std::string& message) { handleRearSocketClose(success, message); });
+            pRearCamera_->setReceiveHandler([this](bool success, const std::vector<uint8_t>& data) { handleReceiveRearCameraData(success, data); });
+            pRearCamera_->setSendHandler([this](bool success, const std::string& message) { handleRearSocketSend(success, message); });
             pRearCamera_->connect();
 
             startReconnectTimer2();
@@ -289,14 +332,19 @@ void Lpr::initRearCamera(boost::asio::io_context& mainIOContext, const std::stri
     }
 }
 
-void Lpr::handleReconnectTimer2Timeout()
+void Lpr::handleReconnectTimer2Timeout(const boost::system::error_code& error)
 {
-    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    if (error)
+    {
+        std::ostringstream oss;
+        oss << "Reconnect Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LPR");
+    }
 
-    if (!pRearCamera_->isStatusGood())
+    if (!pRearCamera_->isConnected())
     {
         std::stringstream ss;
-        ss << "Reconnect to server IP : " << lprIp4Rear_;
+        ss << "Reconnect to Server @ Rear Camera IP: " << lprIp4Rear_ << ", Port: " << lprPort_;
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
         pRearCamera_->connect();
@@ -307,69 +355,90 @@ void Lpr::handleReconnectTimer2Timeout()
 
 void Lpr::startReconnectTimer2()
 {
-    //Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
-
-    int milliseconds = reconnTime2_; 
-    std::unique_ptr<boost::asio::io_context> timerIOContext_ = std::make_unique<boost::asio::io_context>();
-    std::thread timerThread([this, milliseconds, timerIOContext_ = std::move(timerIOContext_)]() mutable {
-        std::unique_ptr<boost::asio::steady_timer> periodicReconnectTimer2_ = std::make_unique<boost::asio::steady_timer>(*timerIOContext_);
-        periodicReconnectTimer2_->expires_after(std::chrono::milliseconds(milliseconds));
-        periodicReconnectTimer2_->async_wait([this](const boost::system::error_code& error) {
-                if (!error) {
-                    handleReconnectTimer2Timeout();
-                }
-        });
-
-        timerIOContext_->run();
-    });
-    timerThread.detach();
+    periodicReconnectTimer2_.expires_after(std::chrono::milliseconds(reconnTime2_));
+    periodicReconnectTimer2_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&Lpr::handleReconnectTimer2Timeout, this, std::placeholders::_1)));
 }
 
-void Lpr::handleRearSocketConnect()
+void Lpr::handleRearSocketConnect(bool success, const std::string& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    if (success)
+    {
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
-    std::stringstream ss;
-    ss << "Connected to server IP : " << lprIp4Rear_;
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        std::stringstream ss;
+        ss << __func__ << "() Successfully connected to Server @ Rear Camera IP : " << lprIp4Rear_ << ", Port: " << lprPort_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
-    /* Temp: Disabled for MiniPC
-    pRearCamera_->send("OK");
-    std::stringstream okss;
-    okss << "Rear camera: Send OK";
-    Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
-    */
+        /* Temp: Disabled for MiniPC
+        pRearCamera_->send("OK");
+        std::stringstream okss;
+        okss << "Rear camera: Send OK";
+        Logger::getInstance()->FnLog(okss.str(), logFileName_, "LPR");
+        */
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Failed to connect to Server @ Rear Camera IP: " << lprIp4Rear_ << ", Port: " << lprPort_ << ", Error: " << message;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
 }
 
-void Lpr::handleRearSocketClose()
+void Lpr::handleRearSocketClose(bool success, const std::string& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    if (success)
+    {
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
-    std::stringstream ss;
-    ss << "Server @ Rear Camera IP : " << lprIp4Rear_ << " close connection.";
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        std::stringstream ss;
+        ss << __func__ << "() Sucessfully closed the Server @ Rear Camera IP : " << lprIp4Rear_ << ", Port: " << lprPort_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Failed to close the Server @ Rear Camera IP : " << lprIp4Rear_ << ", Port: " << lprPort_ << ", Error: " << message;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
 }
 
-void Lpr::handleRearSocketError(std::string error_msg)
+void Lpr::handleRearSocketSend(bool success, const std::string& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
+    if (success)
+    {
+        Logger::getInstance()->FnLog(__func__, logFileName_, "LPR");
 
-    std::stringstream ss;
-    ss << "Rear camera: TCP Socket Error: " << error_msg;
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+        std::stringstream ss;
+        ss << __func__ << "() Successfully sent to Server @ Rear Camera IP : " << lprIp4Rear_;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << "() Failed to send to Server @ Rear Camera IP : " << lprIp4Rear_ << ", Error: " << message;
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    }
 }
 
-void Lpr::handleReceiveRearCameraData(const char* data, std::size_t length)
+void Lpr::handleReceiveRearCameraData(bool success, const std::vector<uint8_t>& data)
 {
-    std::stringstream ss;
-    ss << "Receive TCP Data @ Rear Camera, IP : " << lprIp4Rear_ << " Data : ";
-    ss.write(data, length);
-    ss << " , Length : " << length;
-    Logger::getInstance()->FnLog(ss.str());
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
+    if (success)
+    {
+        std::stringstream ss;
+        ss << "Receive TCP Data @ Rear Camera, IP : " << lprIp4Rear_ << " Data : ";
+        ss.write(reinterpret_cast<const char*>(data.data()), data.size());
+        ss << " , Length : " << data.size();
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
-    std::string receiveDataStr(data, length);
-    processData(receiveDataStr, CType::REAR_CAMERA);
+        std::string receiveDataStr(reinterpret_cast<const char*>(data.data()), data.size());
+        processData(receiveDataStr, CType::REAR_CAMERA);
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Failed to receive TCP Data @ Rear Camera. Likely socket read error.", logFileName_, "LPR");
+    }
 }
 
 /********************************************************************/
@@ -408,7 +477,7 @@ void Lpr::FnSendTransIDToLPR(const std::string& transID, bool useFrontCamera)
 
 void Lpr::SendTransIDToLPR_Front(const std::string& transID)
 {
-    if (pFrontCamera_->isConnected() && pFrontCamera_->isStatusGood())
+    if (pFrontCamera_->isConnected())
     {
         try
         {
@@ -417,7 +486,8 @@ void Lpr::SendTransIDToLPR_Front(const std::string& transID)
             Logger::getInstance()->FnLog(ss.str());
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
-            pFrontCamera_->send(transID);
+            std::vector<uint8_t> data(transID.begin(), transID.end());
+            pFrontCamera_->send(data);
         }
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
@@ -447,7 +517,7 @@ void Lpr::SendTransIDToLPR_Front(const std::string& transID)
 
 void Lpr::SendTransIDToLPR_Rear(const std::string& transID)
 {
-    if (pRearCamera_->isConnected() && pRearCamera_->isStatusGood())
+    if (pRearCamera_->isConnected())
     {
         try
         {
@@ -456,7 +526,8 @@ void Lpr::SendTransIDToLPR_Rear(const std::string& transID)
             Logger::getInstance()->FnLog(ss.str());
             Logger::getInstance()->FnLog(ss.str(), logFileName_, "LPR");
 
-            pRearCamera_->send(transID);
+            std::vector<uint8_t> data(transID.begin(), transID.end());
+            pRearCamera_->send(data);
         }
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
@@ -484,7 +555,7 @@ void Lpr::SendTransIDToLPR_Rear(const std::string& transID)
     }
 }
 
-void Lpr::processData(const std::string tcpData, CType camType)
+void Lpr::processData(const std::string& tcpData, CType camType)
 {
     try
     {

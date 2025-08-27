@@ -6,12 +6,14 @@ const char LED::STX1 = 0x02;
 const char LED::ETX1 = 0x0D;
 const char LED::ETX2 = 0x0A;
 
-LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
-    : strand_(boost::asio::make_strand(io_context)),
-      serialPort_(io_context),
-      baudRate_(baudRate),
-      comPortName_(comPortName),
-      maxCharPerRow_(maxCharacterPerRow)
+LED::LED(unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
+    : ioContext_(),
+    workGuard_(boost::asio::make_work_guard(ioContext_)),
+    strand_(boost::asio::make_strand(ioContext_)),
+    serialPort_(ioContext_),
+    baudRate_(baudRate),
+    comPortName_(comPortName),
+    maxCharPerRow_(maxCharacterPerRow)
 {
     std::string ledType = "";
     logFileName_ = "led";
@@ -41,6 +43,8 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
         serialPort_.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         serialPort_.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         serialPort_.set_option(boost::asio::serial_port_base::character_size(8));
+
+        startIoContextThread();
 
         if (serialPort_.is_open())
         {
@@ -83,7 +87,30 @@ LED::LED(boost::asio::io_context& io_context, unsigned int baudRate, const std::
 
 LED::~LED()
 {
-    serialPort_.close();
+    boost::system::error_code ec;
+    if (serialPort_.is_open())
+    {
+        serialPort_.cancel(ec);
+        serialPort_.close(ec);
+    }
+
+    // Stop io_context and join the thread
+    workGuard_.reset();
+    ioContext_.stop();
+    if (ioContextThread_.joinable())
+    {
+        ioContextThread_.join();
+    }
+}
+
+void LED::startIoContextThread()
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "LED");
+
+    if (!ioContextThread_.joinable())
+    {
+        ioContextThread_ = std::thread([this] { ioContext_.run(); });
+    }
 }
 
 unsigned int LED::FnGetLEDBaudRate() const
@@ -101,104 +128,105 @@ int LED::FnGetLEDMaxCharPerRow() const
     return maxCharPerRow_;
 }
 
-void LED::FnLEDSendLEDMsg(std::string LedId, std::string text, LED::Alignment align)
+void LED::FnLEDSendLEDMsg(const std::string& LedId, const std::string& text, LED::Alignment align)
 {
-    if (!serialPort_.is_open())
+    boost::asio::post(strand_, [this, LedId, text, align]()
     {
-        return;
-    }
-
-    try
-    {
-        if (LedId.empty())
+        if (!serialPort_.is_open())
         {
-            LedId = "***";
+            return;
         }
 
-        if (LedId.length() == 3)
+        try
         {
-            if (maxCharPerRow_ == LED216_MAX_CHAR_PER_ROW || maxCharPerRow_ == LED226_MAX_CHAR_PER_ROW)
+            std::string actualLedId = LedId.empty() ? "***" : LedId;
+
+            if (actualLedId.length() == 3)
             {
-                std::string Line1Text, Line2Text;
-
-                std::size_t found = text.find("^");
-                if (found != std::string::npos)
+                if (maxCharPerRow_ == LED216_MAX_CHAR_PER_ROW || maxCharPerRow_ == LED226_MAX_CHAR_PER_ROW)
                 {
-                    Line1Text = text.substr(0, found);
-                    Line2Text = text.substr(found + 1, (text.length() - found - 1));
+                    std::string Line1Text, Line2Text;
+
+                    std::size_t found = text.find("^");
+                    if (found != std::string::npos)
+                    {
+                        Line1Text = text.substr(0, found);
+                        Line2Text = text.substr(found + 1, (text.length() - found - 1));
+                    }
+                    else
+                    {
+                        Line1Text = text;
+                        Line2Text = "";
+                    }
+
+                    std::vector<char> msg_line1;
+                    FnFormatDisplayMsg(actualLedId, LED::Line::FIRST, Line1Text, align, msg_line1);
+                    boost::asio::async_write(serialPort_, boost::asio::buffer(msg_line1.data(), msg_line1.size()),
+                        boost::asio::bind_executor(strand_, 
+                            [this](boost::system::error_code ec, std::size_t bytes_transferred) {
+                                if (ec) 
+                                {
+                                    std::stringstream ss;
+                                    ss << __func__ << "Failed to write LED msg: " << ec.what();
+                                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                                }
+                    }));
+
+                    std::vector<char> msg_line2;
+                    FnFormatDisplayMsg(actualLedId, LED::Line::SECOND, Line2Text, align, msg_line2);
+                    boost::asio::async_write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()),
+                        boost::asio::bind_executor(strand_, 
+                            [this](boost::system::error_code ec, std::size_t bytes_transferred) {
+                                if (ec) 
+                                {
+                                    std::stringstream ss;
+                                    ss << __func__ << "Failed to write LED msg: " << ec.what();
+                                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                                }
+                    }));
+
+                    // Send LED Messages to Monitor
+                    if (operation::getInstance()->FnIsOperationInitialized())
+                    {
+                        operation::getInstance()->FnSendLEDMessageToMonitor(Line1Text, Line2Text);
+                    }
                 }
-                else
+                else if (maxCharPerRow_ == LED614_MAX_CHAR_PER_ROW)
                 {
-                    Line1Text = text;
-                    Line2Text = "";
+                    std::vector<char> msg;
+                    FnFormatDisplayMsg(actualLedId, LED::Line::FIRST, text, align, msg);
+                    boost::asio::async_write(serialPort_, boost::asio::buffer(msg.data(), msg.size()),
+                        boost::asio::bind_executor(strand_, 
+                            [this](boost::system::error_code ec, std::size_t bytes_transferred) {
+                                if (ec) 
+                                {
+                                    std::stringstream ss;
+                                    ss << __func__ << "Failed to write LED msg: " << ec.what();
+                                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                                }
+                    }));
                 }
-
-                std::vector<char> msg_line1;
-                FnFormatDisplayMsg(LedId, LED::Line::FIRST, Line1Text, align, msg_line1);
-                boost::asio::async_write(serialPort_, boost::asio::buffer(msg_line1.data(), msg_line1.size()),
-                    boost::asio::bind_executor(strand_, 
-                        [this](boost::system::error_code ec, std::size_t bytes_transferred) {
-                            if (ec) 
-                            {
-                                std::stringstream ss;
-                                ss << __func__ << "Failed to write LED msg: " << ec.what();
-                                Logger::getInstance()->FnLogExceptionError(ss.str());
-                            }
-                }));
-
-                std::vector<char> msg_line2;
-                FnFormatDisplayMsg(LedId, LED::Line::SECOND, Line2Text, align, msg_line2);
-                boost::asio::async_write(serialPort_, boost::asio::buffer(msg_line2.data(), msg_line2.size()),
-                    boost::asio::bind_executor(strand_, 
-                        [this](boost::system::error_code ec, std::size_t bytes_transferred) {
-                            if (ec) 
-                            {
-                                std::stringstream ss;
-                                ss << __func__ << "Failed to write LED msg: " << ec.what();
-                                Logger::getInstance()->FnLogExceptionError(ss.str());
-                            }
-                }));
-
-                // Send LED Messages to Monitor
-                if (operation::getInstance()->FnIsOperationInitialized())
-                {
-                    operation::getInstance()->FnSendLEDMessageToMonitor(Line1Text, Line2Text);
-                }
-            }
-            else if (maxCharPerRow_ == LED614_MAX_CHAR_PER_ROW)
-            {
-                std::vector<char> msg;
-                FnFormatDisplayMsg(LedId, LED::Line::FIRST, text, align, msg);
-                boost::asio::async_write(serialPort_, boost::asio::buffer(msg.data(), msg.size()),
-                    boost::asio::bind_executor(strand_, 
-                        [this](boost::system::error_code ec, std::size_t bytes_transferred) {
-                            if (ec) 
-                            {
-                                std::stringstream ss;
-                                ss << __func__ << "Failed to write LED msg: " << ec.what();
-                                Logger::getInstance()->FnLogExceptionError(ss.str());
-                            }
-                }));
             }
         }
-    }
-    catch (const std::exception& e)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", text: " << text << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-    }
-    catch (...)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", text: " << text << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-    }
+        catch (const std::exception& e)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", text: " << text << ", Exception: " << e.what();
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
+        catch (...)
+        {
+            std::stringstream ss;
+            ss << __func__ << ", text: " << text << ", Exception: Unknown Exception";
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+        }
+    });
 }
 
-void LED::FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string text, LED::Alignment align, std::vector<char>& result)
+void LED::FnFormatDisplayMsg(const std::string& LedId, LED::Line lineNo, const std::string& text, LED::Alignment align, std::vector<char>& result)
 {   
     result.clear();
+    std::string stext = text;
 
     // Msg Header
     result.push_back(LED::STX1);
@@ -226,9 +254,9 @@ void LED::FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string te
         formattedText.resize(maxCharPerRow_, 0x20);
     }
 
-    if (text.length() > maxCharPerRow_)
+    if (stext.length() > maxCharPerRow_)
     {
-        text.resize(maxCharPerRow_);
+        stext.resize(maxCharPerRow_);
     }
 
     switch (align)
@@ -237,16 +265,16 @@ void LED::FnFormatDisplayMsg(std::string LedId, LED::Line lineNo, std::string te
             replaceTextIdx = 0;
             break;
         case LED::Alignment::RIGHT:
-            replaceTextIdx = maxCharPerRow_ - text.length();
+            replaceTextIdx = maxCharPerRow_ - stext.length();
             break;
         case LED::Alignment::CENTER:
             if (maxCharPerRow_ != LED614_MAX_CHAR_PER_ROW)
             {
-                replaceTextIdx = (maxCharPerRow_ - text.length()) / 2;
+                replaceTextIdx = (maxCharPerRow_ - stext.length()) / 2;
             }
             break;
     }
-    formattedText.replace(replaceTextIdx, text.length(), text);
+    formattedText.replace(replaceTextIdx, stext.length(), stext);
     result.insert(result.end(), formattedText.begin(), formattedText.end());
 
     // Msg Tail
@@ -274,11 +302,11 @@ LEDManager* LEDManager::getInstance()
     return ledManager_;
 }
 
-void LEDManager::createLED(boost::asio::io_context& io_context, unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
+void LEDManager::createLED(unsigned int baudRate, const std::string& comPortName, int maxCharacterPerRow)
 {
     try
     {
-        leds_.push_back(std::make_unique<LED>(io_context, baudRate, comPortName, maxCharacterPerRow));
+        leds_.push_back(std::make_unique<LED>(baudRate, comPortName, maxCharacterPerRow));
     }
     catch (const std::exception& e)
     {
