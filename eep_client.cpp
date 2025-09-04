@@ -7,11 +7,13 @@
 #include "eep_client.h"
 #include "log.h"
 #include <unordered_set>
+#include "event_manager.h"
 
 
 EEPClient* EEPClient::eepClient_ = nullptr;
 std::mutex EEPClient::mutex_;
 std::mutex EEPClient::currentCmdMutex_;
+std::mutex EEPClient::currentCmdRequestedMutex_;
 uint16_t EEPClient::sequenceNo_ = 0;
 std::mutex EEPClient::sequenceNoMutex_;
 uint16_t EEPClient::lastDeductCmdSerialNo_ = 0;
@@ -25,6 +27,7 @@ EEPClient::EEPClient()
     connectTimer_(ioContext_),
     sendTimer_(ioContext_),
     responseTimer_(ioContext_),
+    ackTimer_(ioContext_),
     watchdogTimer_(ioContext_),
     healthStatusTimer_(ioContext_),
     reconnectTimer_(ioContext_),
@@ -36,6 +39,7 @@ EEPClient::EEPClient()
     eepDestinationId_(0),
     eepCarparkID_(0),
     commandSequence_(0),
+    lastConnectionState_(false),
     logFileName_("eep")
 {
 
@@ -81,10 +85,26 @@ void EEPClient::FnEEPClientInit(const std::string& serverIP, unsigned short serv
 
     if (client_ && !exceptionFound)
     {
-        client_->setConnectHandler([this](bool success, const std::string& message) { handleConnect(success, message); });
-        client_->setCloseHandler([this](bool success, const std::string& message) { handleClose(success, message); });
-        client_->setReceiveHandler([this](bool success, const std::vector<uint8_t>& data) { handleReceivedData(success, data); });
-        client_->setSendHandler([this](bool success, const std::string& message) { handleSend(success, message); });
+        client_->setConnectHandler([this](bool success, const std::string& message) {
+            boost::asio::post(ioContext_, [this, success, message]() {
+                handleConnect(success, message);
+                });
+        });
+        client_->setCloseHandler([this](bool success, const std::string& message) { 
+            boost::asio::post(ioContext_, [this, success, message]() {
+                handleClose(success, message);
+            });
+        });
+        client_->setReceiveHandler([this](bool success, const std::vector<uint8_t>& data) { 
+            boost::asio::post(ioContext_, [this, success, data]() {
+                handleReceivedData(success, data); 
+            });
+        });
+        client_->setSendHandler([this](bool success, const std::string& message) { 
+            boost::asio::post(ioContext_, [this, success, message]() {
+                handleSend(success, message);
+            });
+        });
 
         startIoContextThread();
         processEvent(EVENT::CONNECT);
@@ -518,6 +538,17 @@ void EEPClient::FnSendCDDownloadReq()
     enqueueCommand(CommandType::CD_DOWNLOAD_REQ_CMD, static_cast<int>(PRIORITY::NORMAL), nullptr);
 }
 
+void EEPClient::FnSendRestartInquiryResponseReq(uint8_t response)
+{
+    // Data Format in little-Endian
+    auto reqData = std::make_shared<RestartInquiryResponseData>();
+
+    reqData->response = response;
+    std::fill(std::begin(reqData->rsv), std::end(reqData->rsv), 0x00);
+
+    enqueueCommand(CommandType::EEP_RESTART_INQUIRY_REQ_CMD, static_cast<int>(PRIORITY::NORMAL), reqData);
+}
+
 void EEPClient::startIoContextThread()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
@@ -652,6 +683,29 @@ void EEPClient::printField(std::ostringstream& oss, const std::string& label, ui
     oss << "\n";
 }
 
+void EEPClient::printFieldHex(std::ostringstream& oss, const std::string& label, uint64_t value, int hexWidth, const std::string& remark = "")
+{
+    std::ostringstream hexStream;
+    hexStream << "0x"
+              << std::setw(hexWidth) << std::setfill('0') << std::uppercase << std::hex << value;
+
+    std::ostringstream hexStreamWithoutPadding;
+    hexStreamWithoutPadding << "\"" << std::hex << value << "\"";
+
+    oss << std::setw(32) << std::setfill(' ') << ""                    // indent
+        << std::left << std::setw(50) << label                         // label left-aligned
+        << ": "
+        << std::right << std::setw(25) << hexStream.str()              // hex right-aligned
+        << " "
+        << std::right << std::setw(15) << hexStreamWithoutPadding.str(); // hex right-aligned
+
+    if (!remark.empty()) {
+        oss << "  " << remark;
+    }
+
+    oss << "\n";
+}
+
 void EEPClient::printFieldChar(std::ostringstream& oss, const std::string& label, const std::vector<uint8_t>& data, const std::string& remark = "")
 {
     std::ostringstream hexStream;
@@ -677,6 +731,34 @@ void EEPClient::printFieldChar(std::ostringstream& oss, const std::string& label
         << std::right << std::setw(hexWidth) << ("0x" + hexStream.str())
         << "  "
         << std::left << std::setw(asciiWidth) << ("\"" + asciiStream.str() + "\"");
+
+    if (!remark.empty()) {
+        oss << "  " << remark;
+    }
+
+    oss << "\n";
+}
+
+void EEPClient::printFieldHexChar(std::ostringstream& oss, const std::string& label, const std::vector<uint8_t>& data, const std::string& remark = "")
+{
+    std::ostringstream hexStream;
+
+    for (auto byte : data) {
+        hexStream << std::setw(2) << std::setfill('0') << std::uppercase << std::hex << static_cast<int>(byte);
+    }
+
+    // Format string consistently
+    const int indentWidth = 32;
+    const int labelWidth = 50;
+    //const int hexWidth   = 20 + static_cast<int>(data.size()) * 2;  // allow for longer hex + spacing
+    const int hexWidth   = 25;  // allow for longer hex + spacing
+
+    oss << std::setw(indentWidth) << std::setfill(' ') << ""
+        << std::left << std::setw(labelWidth) << label
+        << ": "
+        << std::right << std::setw(hexWidth) << ("0x" + hexStream.str())
+        << "  "
+        << std::left << std::setw(hexWidth) << ("\"" + hexStream.str() + "\"");
 
     if (!remark.empty()) {
         oss << "  " << remark;
@@ -1072,7 +1154,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 };
 
                 printField(oss, "RSV", rsv, 16);
-                printField(oss, "OBU Label", obulabel, 10);
+                printFieldHex(oss, "OBU Label", obulabel, 10);
                 printField(oss, "Type of OBU", typeObu, 2, getFieldDescription(typeObu, typeObuMap));
                 printField(oss, "RSV1", rsv1, 4);
                 printField(oss, "VCC", vcc, 6);
@@ -1081,8 +1163,8 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "RSV3", rsv3, 6);
                 printField(oss, "Card Validity", cardValidity, 2, getFieldDescription(cardValidity, cardValidityMap));
                 printField(oss, "RSV4", rsv4, 6);
-                printFieldChar(oss, "CAN", can);
-                printField(oss, "Card Balance", cardBalance, 8);
+                printFieldHexChar(oss, "CAN", can);
+                printField(oss, "Card Balance", cardBalance, 8, " Unit is cent");
                 printField(oss, "Backend Account", backendAccount, 2, getFieldDescription(backendAccount, backendAccountMap));
                 printField(oss, "Backend Setting", backendSetting, 2, getFieldDescription(backendSetting, backendSettingMap));
                 printField(oss, "Business function status", businessFunctionStatus, 2);
@@ -1214,7 +1296,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "Result of Deduction", resultDeduction, 2, getFieldDescription(resultDeduction, resultDeductionMap));
                 printField(oss, "Sub System Label", subSystemLabel, 8);
                 printField(oss, "RSV", rsv, 16);
-                printField(oss, "ObuLabel", obuLabel, 10);
+                printFieldHex(oss, "ObuLabel", obuLabel, 10);
                 printField(oss, "RSV1", rsv1, 6);
                 printFieldChar(oss, "Vehicle Number", vechicleNumber);
                 printField(oss, "RSV2", rsv2, 6);
@@ -1244,10 +1326,10 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "TRP(Terminal Resource Parameter)", trp, 8);
                 printField(oss, "Indication of Last AutoLoad", indicationLastAutoLoad, 2, getFieldDescription(indicationLastAutoLoad, indicationLastAutoLoadMap));
                 printField(oss, "RSV8", rsv8, 6);
-                printFieldChar(oss, "CAN", can);
+                printFieldHexChar(oss, "CAN", can);
                 printField(oss, "Last Credit Transaction Header", lastCreditTransactionHeader, 16);
                 printField(oss, "Last Credit Transaction TRP", lastCreditTransactionTRP, 8);
-                printField(oss, "Purse Balance Before Transaction", purseBalanceBeforeTransaction, 8);
+                printField(oss, "Purse Balance Before Transaction", purseBalanceBeforeTransaction, 8, " Unit is cent");
                 printField(oss, "Bad Debt Counter", badDebtCounter, 2, " Bit 0 to 1: BadDebtCounter");
                 printField(oss, "Transaction Status", transactionStatus, 2, " Bit 0 to 4 : Transaction Status");
                 printField(oss, "Debit Option", debitOption, 2);
@@ -1255,12 +1337,12 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "AutoLoad Amount", autoLoadAmount, 8);
                 printField(oss, "Counter Data", counterData, 16);
                 printField(oss, "Signed Certificate", signedCertificate, 16);
-                printField(oss, "Purse Balance after transaction", purseBalanceAfterTransaction, 8);
+                printField(oss, "Purse Balance after transaction", purseBalanceAfterTransaction, 8, " Unit is cent");
                 printField(oss, "Last Transaction Debit Option byte", lastTransactionDebitOptionbyte, 2);
                 printField(oss, "RSV10", rsv10, 6);
                 printField(oss, "Previous Transaction Header", previousTransactionHeader, 16);
                 printField(oss, "Previous TRP", previousTRP, 8);
-                printField(oss, "Previous Purse balance", previousPurseBalance, 8);
+                printField(oss, "Previous Purse balance", previousPurseBalance, 8, " Unit is cent");
                 printField(oss, "Previous Counter Data", previousCounterData, 16);
                 printField(oss, "Previous Transaction Signed Certificate", previousTransactionSignedCertificate, 16);
                 printField(oss, "Previous Purse Status", previousPurseStatus, 2);
@@ -1301,7 +1383,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "Result", result, 2, getFieldDescription(result, resultMap));
                 printField(oss, "RSV_lsb", rsv_lsb, 8);
                 printField(oss, "RSV_msb", rsv_msb, 10);
-                printField(oss, "ObuLabel", obuLabel, 10);
+                printFieldHex(oss, "ObuLabel", obuLabel, 10);
                 printField(oss, "RSV1", rsv1, 6);
                 break;
             }
@@ -1328,7 +1410,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "Result", result, 2, getFieldDescription(result, resultMap));
                 printField(oss, "RSV_lsb", rsv_lsb, 8);
                 printField(oss, "RSV_msb", rsv_msb, 14);
-                printField(oss, "ObuLabel", obuLabel, 10);
+                printFieldHex(oss, "ObuLabel", obuLabel, 10);
                 printField(oss, "RSV1", rsv1, 6);
                 break;
             }
@@ -1406,7 +1488,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "Number of WAVE connection", noOfWaveConnection, 2, " Value range is 0 to 4");
                 
                 printField(oss, "OBU1_RSV", OBU1_rsv, 16);
-                printField(oss, "OBU1_ObuLabel", OBU1_obulabel, 10);
+                printFieldHex(oss, "OBU1_ObuLabel", OBU1_obulabel, 10);
                 printField(oss, "OBU1_RSV1", OBU1_rsv1, 6);
                 printField(oss, "OBU1_Elapsed time since connection established", OBU1_elapsedTime, 8, " milliseconds");
                 printField(oss, "OBU1_RSSI", OBU1_rssi, 2, " RSSI value [dBm] = (RSSI) - 100");
@@ -1414,7 +1496,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "OBU1_RSV2", OBU1_rsv1, 6);
 
                 printField(oss, "OBU2_RSV", OBU2_rsv, 16);
-                printField(oss, "OBU2_ObuLabel", OBU2_obulabel, 10);
+                printFieldHex(oss, "OBU2_ObuLabel", OBU2_obulabel, 10);
                 printField(oss, "OBU2_RSV1", OBU2_rsv1, 6);
                 printField(oss, "OBU2_Elapsed time since connection established", OBU2_elapsedTime, 8, " milliseconds");
                 printField(oss, "OBU2_RSSI", OBU2_rssi, 2, " RSSI value [dBm] = (RSSI) - 100");
@@ -1422,7 +1504,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "OBU2_RSV2", OBU2_rsv1, 6);
 
                 printField(oss, "OBU3_RSV", OBU3_rsv, 16);
-                printField(oss, "OBU3_ObuLabel", OBU3_obulabel, 10);
+                printFieldHex(oss, "OBU3_ObuLabel", OBU3_obulabel, 10);
                 printField(oss, "OBU3_RSV1", OBU3_rsv1, 6);
                 printField(oss, "OBU3_Elapsed time since connection established", OBU3_elapsedTime, 8, " milliseconds");
                 printField(oss, "OBU3_RSSI", OBU3_rssi, 2, " RSSI value [dBm] = (RSSI) - 100");
@@ -1430,7 +1512,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "OBU3_RSV2", OBU3_rsv1, 6);
 
                 printField(oss, "OBU4_RSV", OBU4_rsv, 16);
-                printField(oss, "OBU4_ObuLabel", OBU4_obulabel, 10);
+                printFieldHex(oss, "OBU4_ObuLabel", OBU4_obulabel, 10);
                 printField(oss, "OBU4_RSV1", OBU4_rsv1, 6);
                 printField(oss, "OBU4_Elapsed time since connection established", OBU4_elapsedTime, 8, " milliseconds");
                 printField(oss, "OBU4_RSSI", OBU4_rssi, 2, " RSSI value [dBm] = (RSSI) - 100");
@@ -1547,10 +1629,12 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 }
 
-void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body)
+void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg)
 {
     std::ostringstream oss;
     MESSAGE_CODE code = static_cast<MESSAGE_CODE>(header.dataTypeCode_);
+    EEPEventWrapper eepEvt;
+    bool ret = true;
 
     switch (code)
     {
@@ -1562,14 +1646,38 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
                 break;
             }
 
-            ack ackdata{};
+            // Special handle for deduct req ack, need extra payload for deduct serial number
+            if (getCurrentCmdRequested().type == CommandType::DEDUCT_REQ_CMD)
+            {
+                ackDeduct ackDeductData{};
 
-            ackdata.resultCode = body[0];
-            ackdata.rsv = Common::getInstance()->FnReadUint24LE(body, 1);
+                ackDeductData.resultCode = body[0];
+                ackDeductData.rsv = Common::getInstance()->FnReadUint24LE(body, 1);
+                ackDeductData.deductSerialNo = getLastDeductCmdSerialNo();
 
-            // Serialization
-            boost::json::value jv = ackdata.to_json();
-            std::string json_string = boost::json::serialize(jv);
+                // Serialization
+                boost::json::value jv = ackDeductData.to_json();
+
+                eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+                eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::ACK);
+                eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+                eepEvt.payload = boost::json::serialize(jv);
+            }
+            else
+            {
+                ack ackdata{};
+
+                ackdata.resultCode = body[0];
+                ackdata.rsv = Common::getInstance()->FnReadUint24LE(body, 1);
+
+                // Serialization
+                boost::json::value jv = ackdata.to_json();
+
+                eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+                eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::ACK);
+                eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+                eepEvt.payload = boost::json::serialize(jv);
+            }
 
             break;
         }
@@ -1589,7 +1697,11 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = nakdata.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::NAK);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1597,6 +1709,15 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             // Reset the missed watchdog response count
             watchdogMissedRspCount_ = 0;
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::WATCHDOG_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = "{}";
+
+            // No need to raise event
+            ret = false;
+
             break;
         }
         case MESSAGE_CODE::HEALTH_STATUS_RESPONSE:
@@ -1659,7 +1780,14 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = hs.to_json();
-            std::string json_string = boost::json::serialize(jv); 
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::HEALTH_STATUS_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
+
+            // No need to raise event
+            ret = false;
 
             break;
         }
@@ -1678,7 +1806,11 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = sr.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::START_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1697,7 +1829,11 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = sr.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::STOP_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1716,7 +1852,11 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = dsr.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1768,7 +1908,11 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = dsr.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::DSRC_STATUS_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1787,22 +1931,34 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // Serialization
             boost::json::value jv = tcr.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(getCurrentCmdRequested().type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::TIME_CALIBRATION_RESPONSE);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
         default:
         {
+            ret = false;
             Logger::getInstance()->FnLog("Invalid data type code.",  logFileName_, "EEP");
             break;
         }
     }
+
+    if (ret)
+    {
+        eventMsg = boost::json::serialize(eepEvt.to_json());
+    }
 }
 
-void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, const std::vector<uint8_t>& body)
+void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg)
 {
     std::ostringstream oss;
     MESSAGE_CODE code = static_cast<MESSAGE_CODE>(header.dataTypeCode_);
+    EEPEventWrapper eepEvt;
+    bool ret = true;
 
     switch (code)
     {
@@ -1821,7 +1977,11 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = dsn.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(CommandType::UNKNOWN_REQ_CMD);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_NOTIFICATION);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1856,7 +2016,16 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = obuin.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            auto currentCmd = getCurrentCmdRequested();
+            CommandType cmdType = 
+                (currentCmd.type == CommandType::GET_OBU_INFO_REQ_CMD)
+                    ? currentCmd.type 
+                    : CommandType::UNKNOWN_REQ_CMD;
+            eepEvt.commandReqType = static_cast<uint8_t>(cmdType);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::OBU_INFORMATION_NOTIFICATION);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
            
             break;
         }
@@ -1941,7 +2110,17 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = td.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            auto currentCmd = getCurrentCmdRequested();
+            CommandType cmdType = 
+                (currentCmd.type == CommandType::DEDUCT_REQ_CMD || 
+                currentCmd.type == CommandType::TRANSACTION_REQ_CMD)
+                    ? currentCmd.type 
+                    : CommandType::UNKNOWN_REQ_CMD;
+            eepEvt.commandReqType = static_cast<uint8_t>(cmdType);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::TRANSACTION_DATA);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1964,7 +2143,16 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = cpoids.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            auto currentCmd = getCurrentCmdRequested();
+            CommandType cmdType = 
+                (currentCmd.type == CommandType::CPO_INFO_DISPLAY_REQ_CMD)
+                    ? currentCmd.type 
+                    : CommandType::UNKNOWN_REQ_CMD;
+            eepEvt.commandReqType = static_cast<uint8_t>(cmdType);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::CPO_INFORMATION_DISPLAY_RESULT);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -1986,7 +2174,16 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = cpcr.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            auto currentCmd = getCurrentCmdRequested();
+            CommandType cmdType = 
+                (currentCmd.type == CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD)
+                    ? currentCmd.type 
+                    : CommandType::UNKNOWN_REQ_CMD;
+            eepEvt.commandReqType = static_cast<uint8_t>(cmdType);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::CARPARK_PROCESS_COMPLETE_RESULT);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -2008,7 +2205,11 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = eepri.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(CommandType::UNKNOWN_REQ_CMD);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::EEP_RESTART_INQUIRY);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
 
             break;
         }
@@ -2035,14 +2236,25 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
 
             // Serialization
             boost::json::value jv = nl.to_json();
-            std::string json_string = boost::json::serialize(jv);
+
+            eepEvt.commandReqType = static_cast<uint8_t>(CommandType::UNKNOWN_REQ_CMD);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::NOTIFICATION_LOG);
+            eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
+            eepEvt.payload = boost::json::serialize(jv);
+
             break;
         }
         default:
         {
+            ret = false;
             Logger::getInstance()->FnLog("Invalid data type code.",  logFileName_, "EEP");
             break;
         }
+    }
+
+    if (ret)
+    {
+        eventMsg = boost::json::serialize(eepEvt.to_json());
     }
 }
 
@@ -2051,7 +2263,7 @@ bool EEPClient::isValidSourceDestination(uint8_t source, uint8_t destination)
     return ((source == eepDestinationId_) && (destination == eepSourceId_));
 }
 
-bool EEPClient::isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTypeCode_)
+bool EEPClient::isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTypeCode_, const std::vector<uint8_t>& msgBody)
 {
     static const std::unordered_map<CommandType, std::vector<uint8_t>> validResponses = {
         { CommandType::HEALTH_STATUS_REQ_CMD,                            {static_cast<uint8_t>(MESSAGE_CODE::HEALTH_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}       },
@@ -2072,7 +2284,111 @@ bool EEPClient::isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTy
         { CommandType::DSRC_STATUS_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::DSRC_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}         },
         { CommandType::TIME_CALIBRATION_REQ_CMD,                         {static_cast<uint8_t>(MESSAGE_CODE::TIME_CALIBRATION_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}    },
         { CommandType::SET_CARPARK_AVAIL_REQ_CMD,                        {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
-        { CommandType::CD_DOWNLOAD_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          }
+        { CommandType::CD_DOWNLOAD_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::EEP_RESTART_INQUIRY_REQ_CMD,                      {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          }
+    };
+
+    auto it = validResponses.find(cmd.type);
+    if (it == validResponses.end())
+    {
+        return false;
+    }
+
+    // Step 1: is the top-level dataTypeCode_ valid for this command?
+    if (std::find(it->second.begin(), it->second.end(), dataTypeCode_) == it->second.end())
+    {
+        return false;
+    }
+
+    static const std::unordered_map<CommandType, uint8_t> validAckNakRspRequestedDataType = {
+        { CommandType::HEALTH_STATUS_REQ_CMD,                            static_cast<uint8_t>(MESSAGE_CODE::HEALTH_STATUS_REQUEST)                              },
+        { CommandType::WATCHDOG_REQ_CMD,                                 static_cast<uint8_t>(MESSAGE_CODE::WATCHDOG_REQUEST)                                   },
+        { CommandType::START_REQ_CMD,                                    static_cast<uint8_t>(MESSAGE_CODE::START_REQUEST)                                      },
+        { CommandType::STOP_REQ_CMD,                                     static_cast<uint8_t>(MESSAGE_CODE::STOP_REQUEST)                                       },
+        { CommandType::DI_REQ_CMD,                                       static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_REQUEST)                                  },
+        { CommandType::SET_DI_PORT_CONFIG_CMD,                           static_cast<uint8_t>(MESSAGE_CODE::SET_DI_PORT_CONFIGURATION)                          },
+        { CommandType::GET_OBU_INFO_REQ_CMD,                             static_cast<uint8_t>(MESSAGE_CODE::GET_OBU_INFORMATION_REQUEST)                        },
+        { CommandType::GET_OBU_INFO_STOP_REQ_CMD,                        static_cast<uint8_t>(MESSAGE_CODE::GET_OBU_INFORMATION_STOP)                           },
+        { CommandType::DEDUCT_REQ_CMD,                                   static_cast<uint8_t>(MESSAGE_CODE::DEDUCT_REQUEST)                                     },
+        { CommandType::DEDUCT_STOP_REQ_CMD,                              static_cast<uint8_t>(MESSAGE_CODE::DEDUCT_STOP_REQUEST)                                },
+        { CommandType::TRANSACTION_REQ_CMD,                              static_cast<uint8_t>(MESSAGE_CODE::TRANSACTION_REQUEST)                                },
+        { CommandType::CPO_INFO_DISPLAY_REQ_CMD,                         static_cast<uint8_t>(MESSAGE_CODE::CPO_INFORMATION_DISPLAY_REQUEST)                    },
+        { CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD,    static_cast<uint8_t>(MESSAGE_CODE::CARPARK_PROCESS_COMPLETE_NOTIFICATION)              },
+        { CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD,       static_cast<uint8_t>(MESSAGE_CODE::DSRC_PROCESS_COMPLETE_NOTIFICATION)                 },
+        { CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD,        static_cast<uint8_t>(MESSAGE_CODE::STOP_REQUEST_OF_RELATED_INFORMATION_DISTRIBUTION)   },
+        { CommandType::DSRC_STATUS_REQ_CMD,                              static_cast<uint8_t>(MESSAGE_CODE::DSRC_STATUS_REQUEST)                                },
+        { CommandType::TIME_CALIBRATION_REQ_CMD,                         static_cast<uint8_t>(MESSAGE_CODE::TIME_CALIBRATION_REQUEST)                           },
+        { CommandType::SET_CARPARK_AVAIL_REQ_CMD,                        static_cast<uint8_t>(MESSAGE_CODE::SET_PARKING_AVAILABLE)                              },
+        { CommandType::CD_DOWNLOAD_REQ_CMD,                              static_cast<uint8_t>(MESSAGE_CODE::CD_DOWNLOAD_REQUEST)                                },
+        { CommandType::EEP_RESTART_INQUIRY_REQ_CMD,                      static_cast<uint8_t>(MESSAGE_CODE::EEP_RESTART_INQUIRY_RESPONSE)                       }
+    };
+
+
+    // Step 2: ACK/NAK must also carry correct requested type
+    if (dataTypeCode_ == static_cast<uint8_t>(MESSAGE_CODE::ACK) || dataTypeCode_ == static_cast<uint8_t>(MESSAGE_CODE::NAK))
+    {
+        if (msgBody.empty())
+        {
+            return false;
+        }
+
+        auto it2 = validAckNakRspRequestedDataType.find(cmd.type);
+        if (it2 == validAckNakRspRequestedDataType.end())
+        {
+            return false;
+        }
+
+        if (msgBody[0] != it2->second)
+        {
+            return false; // wrong referenced request inside ACK/NAK
+        }
+    }
+
+    return true;
+}
+
+bool EEPClient::doesCmdRequireNotification(Command cmd)
+{
+    switch (cmd.type)
+    {
+        case CommandType::GET_OBU_INFO_REQ_CMD:
+        case CommandType::DEDUCT_REQ_CMD:
+        case CommandType::TRANSACTION_REQ_CMD:
+        case CommandType::CPO_INFO_DISPLAY_REQ_CMD:
+        case CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
+        {
+            return true;
+        }
+        default:
+        {
+            return false;
+        }
+    }
+}
+
+bool EEPClient::isResponseComplete(Command cmd, const uint8_t& dataTypeCode_)
+{
+    static const std::unordered_map<CommandType, std::vector<uint8_t>> validResponses = {
+        { CommandType::HEALTH_STATUS_REQ_CMD,                            {static_cast<uint8_t>(MESSAGE_CODE::HEALTH_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}       },
+        { CommandType::WATCHDOG_REQ_CMD,                                 {static_cast<uint8_t>(MESSAGE_CODE::WATCHDOG_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}            },
+        { CommandType::START_REQ_CMD,                                    {static_cast<uint8_t>(MESSAGE_CODE::START_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}               },
+        { CommandType::STOP_REQ_CMD,                                     {static_cast<uint8_t>(MESSAGE_CODE::STOP_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                },
+        { CommandType::DI_REQ_CMD,                                       {static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}           },
+        { CommandType::SET_DI_PORT_CONFIG_CMD,                           {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::GET_OBU_INFO_REQ_CMD,                             {static_cast<uint8_t>(MESSAGE_CODE::NAK)}                                                                   },
+        { CommandType::GET_OBU_INFO_STOP_REQ_CMD,                        {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::DEDUCT_REQ_CMD,                                   {static_cast<uint8_t>(MESSAGE_CODE::NAK)}                                                                   },
+        { CommandType::DEDUCT_STOP_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::TRANSACTION_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::NAK)}                                                                   },
+        { CommandType::CPO_INFO_DISPLAY_REQ_CMD,                         {static_cast<uint8_t>(MESSAGE_CODE::NAK)}                                                                   },
+        { CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD,    {static_cast<uint8_t>(MESSAGE_CODE::NAK)}                                                                   },
+        { CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD,       {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD,        {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::DSRC_STATUS_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::DSRC_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}         },
+        { CommandType::TIME_CALIBRATION_REQ_CMD,                         {static_cast<uint8_t>(MESSAGE_CODE::TIME_CALIBRATION_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}    },
+        { CommandType::SET_CARPARK_AVAIL_REQ_CMD,                        {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::CD_DOWNLOAD_REQ_CMD,                              {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
+        { CommandType::EEP_RESTART_INQUIRY_REQ_CMD,                      {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          }
     };
 
     auto it = validResponses.find(cmd.type);
@@ -2084,7 +2400,7 @@ bool EEPClient::isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTy
     return std::find(it->second.begin(), it->second.end(), dataTypeCode_) != it->second.end();
 }
 
-bool EEPClient::isResponseNotificationReceived(const uint8_t& dataTypeCode_)
+bool EEPClient::isNotificationReceived(const uint8_t& dataTypeCode_)
 {
     static const std::unordered_set<uint8_t> validNotifications = {
         static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_NOTIFICATION),
@@ -2097,6 +2413,25 @@ bool EEPClient::isResponseNotificationReceived(const uint8_t& dataTypeCode_)
     };
 
     return validNotifications.find(dataTypeCode_) != validNotifications.end();
+}
+
+bool EEPClient::isResponseNotificationComplete(Command cmd, const uint8_t& dataTypeCode_)
+{
+    static const std::unordered_map<CommandType, uint8_t> validAckNakRspRequestedDataType = {
+        { CommandType::GET_OBU_INFO_REQ_CMD,                             static_cast<uint8_t>(MESSAGE_CODE::OBU_INFORMATION_NOTIFICATION)                       },
+        { CommandType::DEDUCT_REQ_CMD,                                   static_cast<uint8_t>(MESSAGE_CODE::TRANSACTION_DATA)                                   },
+        { CommandType::TRANSACTION_REQ_CMD,                              static_cast<uint8_t>(MESSAGE_CODE::TRANSACTION_DATA)                                   },
+        { CommandType::CPO_INFO_DISPLAY_REQ_CMD,                         static_cast<uint8_t>(MESSAGE_CODE::CPO_INFORMATION_DISPLAY_RESULT)                     },
+        { CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD,    static_cast<uint8_t>(MESSAGE_CODE::CARPARK_PROCESS_COMPLETE_RESULT)                    }
+    };
+
+    auto it = validAckNakRspRequestedDataType.find(cmd.type);
+    if (it == validAckNakRspRequestedDataType.end())
+    {
+        return false;
+    }
+
+    return it->second == dataTypeCode_;
 }
 
 void EEPClient::handleInvalidMessage(const std::vector<uint8_t>& data, uint8_t reasonCode_)
@@ -2141,13 +2476,21 @@ void EEPClient::handleReceivedData(bool success, const std::vector<uint8_t>& dat
                         showParsedMessage(msgHeader, msgBody);
 
                         // Handle for normal request cmd from station and response from EEP
-                        if (isResponseMatchedDataTypeCode(getCurrentCmd(), msgHeader.dataTypeCode_))
+                        if (isResponseMatchedDataTypeCode(getCurrentCmdRequested(), msgHeader.dataTypeCode_, msgBody))
                         {
                             if (msgHeader.seqNo_ == (getSequenceNo() - 1))
                             {
-                                Logger::getInstance()->FnLog("Response received, response timer cancelled.", logFileName_, "EEP");
-                                responseTimer_.cancel();
-                                handleParsedResponseMessage(msgHeader, msgBody);
+                                // Cancelled ACK timer
+                                ackTimer_.cancel();
+
+                                std::string eventMsg = "";
+                                handleParsedResponseMessage(msgHeader, msgBody, eventMsg);
+                                
+                                if (!eventMsg.empty())
+                                {
+                                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
+                                    Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
+                                }
                             }
                             else
                             {
@@ -2155,12 +2498,28 @@ void EEPClient::handleReceivedData(bool success, const std::vector<uint8_t>& dat
                             }
                         }
                         // Handle for those notification received from EEP
-                        else if (isResponseNotificationReceived(msgHeader.dataTypeCode_))
+                        else if (isNotificationReceived(msgHeader.dataTypeCode_))
                         {
-                            Logger::getInstance()->FnLog("Notification received, need to send ACK as response.", logFileName_, "EEP");
+                            if (isResponseNotificationComplete(getCurrentCmdRequested(), msgHeader.dataTypeCode_))
+                            {
+                                Logger::getInstance()->FnLog("Valid notification response received. Cancelling response timer.", logFileName_, "EEP");
+                                responseTimer_.cancel();
+                            }
+                            else
+                            {
+                                Logger::getInstance()->FnLog("Notification received, send ACK as response.", logFileName_, "EEP");
+                            }
+
                             // Send ACK with requested data type code
-                            handleParsedNotificationMessage(msgHeader, msgBody);
+                            std::string eventMsg = "";
+                            handleParsedNotificationMessage(msgHeader, msgBody, eventMsg);
                             FnSendAck(msgHeader.seqNo_, msgHeader.dataTypeCode_);
+
+                            if (!eventMsg.empty())
+                            {
+                                EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
+                                Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
+                            }
                         }
                         else
                         {
@@ -2271,10 +2630,15 @@ const EEPClient::StateTransition EEPClient::stateTransitionTable[static_cast<int
     {STATE::WRITING_REQUEST,
     {
         {EVENT::WRITE_COMPLETED                                 , &EEPClient::handleWritingRequestState         , STATE::WAITING_FOR_RESPONSE   },
-        {EVENT::WRITE_TIMEOUT                                   , &EEPClient::handleWritingRequestState         , STATE::CONNECTED              }
+        {EVENT::WRITE_TIMEOUT                                   , &EEPClient::handleWritingRequestState         , STATE::CONNECTED              },
+
+        {EVENT::RECONNECT_REQUEST                               , &EEPClient::handleWritingRequestState         , STATE::IDLE                   }
     }},
     {STATE::WAITING_FOR_RESPONSE,
     {
+        {EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED                , &EEPClient::handleWaitingForResponseState     , STATE::WAITING_FOR_RESPONSE  },
+        {EVENT::ACK_AS_RSP_RECEIVED                             , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
+        {EVENT::ACK_TIMEOUT                                     , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
         {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
         {EVENT::RESPONSE_TIMEOUT                                , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
 
@@ -2519,6 +2883,21 @@ std::string EEPClient::eventToString(EVENT event)
             eventStr = "WRITE_TIMEOUT";
             break;
         }
+        case EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED:
+        {
+            eventStr = "ACK_TIMER_CANCELLED_ACK_RECEIVED";
+            break;
+        }
+        case EVENT::ACK_AS_RSP_RECEIVED:
+        {
+            eventStr = "ACK_AS_RSP_RECEIVED";
+            break;
+        }
+        case EVENT::ACK_TIMEOUT:
+        {
+            eventStr = "ACK_TIMEOUT";
+            break;
+        }
         case EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED:
         {
             eventStr = "RESPONSE_TIMER_CANCELLED_RSP_RECEIVED";
@@ -2586,6 +2965,11 @@ std::string EEPClient::getCommandString(CommandType cmd)
 
     switch (cmd)
     {
+        case CommandType::UNKNOWN_REQ_CMD:
+        {
+            cmdStr = "UNKNOWN_REQ_CMD";
+            break;
+        }
         case CommandType::ACK:
         {
             cmdStr = "ACK";
@@ -2689,6 +3073,11 @@ std::string EEPClient::getCommandString(CommandType cmd)
         case CommandType::CD_DOWNLOAD_REQ_CMD:
         {
             cmdStr = "CD_DOWNLOAD_REQ_CMD";
+            break;
+        }
+        case CommandType::EEP_RESTART_INQUIRY_REQ_CMD:
+        {
+            cmdStr = "EEP_RESTART_INQUIRY_REQ_CMD";
             break;
         }
     }
@@ -2806,6 +3195,10 @@ void EEPClient::popFromCommandQueueAndEnqueueWrite()
         Command cmd = commandQueue_.top();
         commandQueue_.pop();
         setCurrentCmd(cmd);
+        if (cmd.type != CommandType::ACK || cmd.type != CommandType::NAK)
+        {
+            setCurrentCmdRequested(cmd);
+        }
         auto [packet, ok] = prepareCmd(cmd);
         
         if (ok)
@@ -2819,6 +3212,26 @@ void EEPClient::popFromCommandQueueAndEnqueueWrite()
     }
 }
 
+void EEPClient::clearCommandQueue()
+{
+    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    std::ostringstream oss;
+    oss << "Clearing command queue. Current size: " << commandQueue_.size() << std::endl;
+
+    while (!commandQueue_.empty())
+    {
+        const Command& cmdData = commandQueue_.top();
+        oss << "Removing command: [Cmd: " << getCommandString(cmdData.type)
+            << " , Priority: " << cmdData.priority
+            << " , Cmd Sequence: " << cmdData.sequence << "]" << std::endl;
+
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        commandQueue_.pop();
+    }
+
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+}
+
 void EEPClient::setCurrentCmd(Command cmd)
 {
     std::unique_lock<std::mutex> lock(currentCmdMutex_);
@@ -2829,6 +3242,20 @@ void EEPClient::setCurrentCmd(Command cmd)
 EEPClient::Command EEPClient::getCurrentCmd()
 {
     std::unique_lock<std::mutex> lock(currentCmdMutex_);
+
+    return currentCmd;
+}
+
+void EEPClient::setCurrentCmdRequested(Command cmd)
+{
+    std::unique_lock<std::mutex> lock(currentCmdRequestedMutex_);
+
+    currentCmd = cmd;
+}
+
+EEPClient::Command EEPClient::getCurrentCmdRequested()
+{
+    std::unique_lock<std::mutex> lock(currentCmdRequestedMutex_);
 
     return currentCmd;
 }
@@ -3222,6 +3649,24 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             appendMessageHeader(msg, static_cast<uint8_t>(MESSAGE_CODE::CD_DOWNLOAD_REQUEST), seqNo, 0x0000);
             break;
         }
+        case CommandType::EEP_RESTART_INQUIRY_REQ_CMD:
+        {
+            // Messahe Header
+            appendMessageHeader(msg, static_cast<uint8_t>(MESSAGE_CODE::EEP_RESTART_INQUIRY_RESPONSE), seqNo, 0x0004);
+
+            // Message Content
+            if (cmd.data)
+            {
+                auto data = cmd.data->serialize();
+                msg.insert(msg.end(), data.begin(), data.end());
+            }
+            else
+            {
+                Logger::getInstance()->FnLog("Empty Restart inquiry response request message to be sent.", logFileName_, "EEP");
+                success = false;
+            }
+            break;
+        }
         default:
         {
             Logger::getInstance()->FnLog("Invalid command type, unable to prepare message to be sent.", logFileName_, "EEP");
@@ -3324,7 +3769,7 @@ void EEPClient::handleSendTimerTimeout(const boost::system::error_code& error)
 
 void EEPClient::startResponseTimer()
 {
-    responseTimer_.expires_after(std::chrono::seconds(2));
+    responseTimer_.expires_after(std::chrono::seconds(4));
     responseTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&EEPClient::handleResponseTimeout, this, std::placeholders::_1)));
 }
@@ -3349,6 +3794,36 @@ void EEPClient::handleResponseTimeout(const boost::system::error_code& error)
         oss << "Response Timer error: " << error.message();
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
         processEvent(EVENT::RESPONSE_TIMEOUT);
+    }
+}
+
+void EEPClient::startAckTimer()
+{
+    ackTimer_.expires_after(std::chrono::seconds(1));
+    ackTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&EEPClient::handleAckTimeout, this, std::placeholders::_1)));
+}
+
+void EEPClient::handleAckTimeout(const boost::system::error_code& error)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+
+    if (error == boost::asio::error::operation_aborted)
+    {
+        Logger::getInstance()->FnLog("Ack Timer cancelled.", logFileName_, "EEP");
+        processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
+    }
+    else if (!error)
+    {
+        Logger::getInstance()->FnLog("Ack Timer timeout.", logFileName_, "EEP");
+        processEvent(EVENT::ACK_TIMEOUT);
+    }
+    else
+    {
+        std::ostringstream oss;
+        oss << "Ack Timer error: " << error.message();
+        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+        processEvent(EVENT::ACK_TIMEOUT);
     }
 }
 
@@ -3441,6 +3916,7 @@ void EEPClient::handleConnectingState(EVENT event)
     if (event == EVENT::CONNECT_SUCCESS)
     {
         Logger::getInstance()->FnLog("Successfully connected EEP via TCP.", logFileName_, "EEP");
+        notifyConnectionState(true);
         FnSendStartReq();
         startHealthStatusTimer();
         startWatchdogTimer();
@@ -3449,6 +3925,7 @@ void EEPClient::handleConnectingState(EVENT event)
     else if (event == EVENT::CONNECT_FAIL)
     {
         Logger::getInstance()->FnLog("Failed to connect EEP via TCP.", logFileName_, "EEP");
+        notifyConnectionState(false);
         startReconnectTimer();
     }
 }
@@ -3459,11 +3936,27 @@ void EEPClient::handleConnectedState(EVENT event)
 
     if (event == EVENT::CHECK_COMMAND)
     {
+        // If connection loss, then raise event
+        if (!client_->isConnected())
+        {
+            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            processEvent(EVENT::RECONNECT_REQUEST);
+            return;
+        }
+
         Logger::getInstance()->FnLog("Check the command queue.", logFileName_, "EEP");
         checkCommandQueue();
     }
     else if (event == EVENT::WRITE_COMMAND)
     {
+        // If connection loss, then raise event
+        if (!client_->isConnected())
+        {
+            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            processEvent(EVENT::RECONNECT_REQUEST);
+            return;
+        }
+
         Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "EEP");
         popFromCommandQueueAndEnqueueWrite();
         startSendTimer();
@@ -3471,6 +3964,7 @@ void EEPClient::handleConnectedState(EVENT event)
     else if (event == EVENT::RECONNECT_REQUEST)
     {
         Logger::getInstance()->FnLog("Reconnect request.", logFileName_, "EEP");
+        clearCommandQueue();
         eepClientClose();
         startReconnectTimer();
     }
@@ -3489,14 +3983,26 @@ void EEPClient::handleWritingRequestState(EVENT event)
         }
         else
         {
-            Logger::getInstance()->FnLog("Send the request data successfully. Start the Response Timer.", logFileName_, "EEP");
-            startResponseTimer();
+            Logger::getInstance()->FnLog("Send the request data successfully. Start the Ack Timer.", logFileName_, "EEP");
+            startAckTimer();
         }
     }
     else if (event == EVENT::WRITE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Send the request data failed.", logFileName_, "EEP");
-        handleCommandErrorOrTimeout(getCurrentCmd(), MSG_STATUS::SEND_FAILED);
+        Logger::getInstance()->FnLog("Send the request data failed due to write timer timeout.", logFileName_, "EEP");
+        if (!client_->isConnected())
+        {
+            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            processEvent(EVENT::RECONNECT_REQUEST);
+        }
+        handleCommandErrorOrTimeout(getCurrentCmdRequested(), MSG_STATUS::SEND_FAILED);
+    }
+    else if (event == EVENT::RECONNECT_REQUEST)
+    {
+        Logger::getInstance()->FnLog("Reconnect request.", logFileName_, "EEP");
+        clearCommandQueue();
+        eepClientClose();
+        startReconnectTimer();
     }
 }
 
@@ -3504,14 +4010,43 @@ void EEPClient::handleWaitingForResponseState(EVENT event)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
 
-    if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
+    if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("Cancelled ACK timer, received the ACK successfully.", logFileName_, "EEP");
+
+        // Check whether to start the response timer based on the command requested
+        if (doesCmdRequireNotification(getCurrentCmdRequested()))
+        {
+            Logger::getInstance()->FnLog("Cmd requires notification as response, start response timer.", logFileName_, "EEP");
+            startResponseTimer();
+        }
+        else
+        {
+            processEvent(EVENT::ACK_AS_RSP_RECEIVED);
+        }
+    }
+    else if (event == EVENT::ACK_AS_RSP_RECEIVED)
+    {
+        Logger::getInstance()->FnLog("Received the ACK as response successfully.", logFileName_, "EEP");
+    }
+    else if (event == EVENT::ACK_TIMEOUT)
+    {
+        Logger::getInstance()->FnLog("Received the ACK timeout.", logFileName_, "EEP");
+        handleCommandErrorOrTimeout(getCurrentCmdRequested(), MSG_STATUS::ACK_TIMEOUT);
+    }
+    else if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
     {
         Logger::getInstance()->FnLog("Received the response successfully.", logFileName_, "EEP");
     }
     else if (event == EVENT::RESPONSE_TIMEOUT)
     {
         Logger::getInstance()->FnLog("Received the response timeout.", logFileName_, "EEP");
-        handleCommandErrorOrTimeout(getCurrentCmd(), MSG_STATUS::RSP_TIMEOUT);
+        if (!client_->isConnected())
+        {
+            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            processEvent(EVENT::RECONNECT_REQUEST);
+        }
+        handleCommandErrorOrTimeout(getCurrentCmdRequested(), MSG_STATUS::RSP_TIMEOUT);
     }
     else if (event == EVENT::UNSOLICITED_REQUEST_DONE)
     {
@@ -3522,19 +4057,42 @@ void EEPClient::handleWaitingForResponseState(EVENT event)
 void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    EEPEventWrapper eepEvt;
+    std::string eventMsg = "";
 
     switch (cmd.type)
     {
         case CommandType::ACK:
         {
+            Logger::getInstance()->FnLog("Ignored send the ACK failed.", logFileName_, "EEP");
             break;
         }
         case CommandType::NAK:
         {
+            Logger::getInstance()->FnLog("Ignored send the NAK failed.", logFileName_, "EEP");
             break;
         }
-        case CommandType::HEALTH_STATUS_REQ_CMD:
+        case CommandType::START_REQ_CMD:
+        case CommandType::STOP_REQ_CMD:
+        case CommandType::DI_REQ_CMD:
+        case CommandType::GET_OBU_INFO_REQ_CMD:
+        case CommandType::GET_OBU_INFO_STOP_REQ_CMD:
+        case CommandType::DEDUCT_REQ_CMD:
+        case CommandType::DEDUCT_STOP_REQ_CMD:
+        case CommandType::CPO_INFO_DISPLAY_REQ_CMD:
+        case CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
+        case CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
+        case CommandType::TIME_CALIBRATION_REQ_CMD:
+        case CommandType::SET_CARPARK_AVAIL_REQ_CMD:
+        case CommandType::CD_DOWNLOAD_REQ_CMD:
+        case CommandType::EEP_RESTART_INQUIRY_REQ_CMD:
         {
+            eepEvt.commandReqType = static_cast<uint8_t>(cmd.type);
+            eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::NAK);
+            eepEvt.messageStatus = static_cast<uint32_t>(msgStatus);
+            eepEvt.payload = "{}";
+
+            eventMsg = boost::json::serialize(eepEvt.to_json());
             break;
         }
         case CommandType::WATCHDOG_REQ_CMD:
@@ -3548,57 +4106,26 @@ void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
             }
             break;
         }
-        case CommandType::START_REQ_CMD:
+        default:
         {
+            Logger::getInstance()->FnLog("Unhandled CommandType in handleCommandErrorOrTimeout", logFileName_, "EEP");
             break;
         }
-        case CommandType::STOP_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::DI_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::GET_OBU_INFO_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::GET_OBU_INFO_STOP_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::DEDUCT_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::DEDUCT_STOP_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::CPO_INFO_DISPLAY_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::TIME_CALIBRATION_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::SET_CARPARK_AVAIL_REQ_CMD:
-        {
-            break;
-        }
-        case CommandType::CD_DOWNLOAD_REQ_CMD:
-        {
-            break;
-        }
+    }
+
+    if (!eventMsg.empty())
+    {
+        EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
+        Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
+    }
+}
+
+void EEPClient::notifyConnectionState(bool connected)
+{
+    if (lastConnectionState_ != connected)
+    {
+        lastConnectionState_ = connected;
+        EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientConnectionState", connected);
+        Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientConnectionState.", logFileName_, "EEP");
     }
 }

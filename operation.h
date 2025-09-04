@@ -139,6 +139,8 @@ public:
     void FnSetLastActionTimeAfterLoopA();
     std::chrono::steady_clock::time_point FnGetLastActionTimeAfterLoopA();
 
+    void processEEP(const std::string& eventData);
+
     void Clearme();
     void RetryLCSCLastCommand();
 

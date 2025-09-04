@@ -94,4 +94,8 @@ private:
 
     // Barcode Scanner Event Handler
     bool handleBarcodeReceived(const BaseEvent* event);
+
+    // EEP Client Event Handler
+    bool handleEEPClientResponse(const BaseEvent* event);
+    bool handleEEPClientConnectionState(const BaseEvent* event);
 };

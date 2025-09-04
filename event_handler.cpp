@@ -12,6 +12,8 @@
 #include "ksm_reader.h"
 #include "lpr.h"
 #include "upt.h"
+#include "eep_client.h"
+#include <boost/json.hpp>
 
 EventHandler* EventHandler::eventHandler_ = nullptr;
 std::mutex EventHandler::mutex_;
@@ -79,7 +81,11 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
     {   "Evt_handlePrinterStatus"               ,std::bind(&EventHandler::handlePrinterStatus              ,eventHandler_, std::placeholders::_1) },
 
     // Barcode Scanner Event
-    {   "Evt_handleBarcodeReceived"             ,std::bind(&EventHandler::handleBarcodeReceived            ,eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleBarcodeReceived"             ,std::bind(&EventHandler::handleBarcodeReceived            ,eventHandler_, std::placeholders::_1) },
+
+    // EEP Client Event
+    {   "Evt_handleEEPClientResponse"           ,std::bind(&EventHandler::handleEEPClientResponse          ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleEEPClientConnectionState"    ,std::bind(&EventHandler::handleEEPClientConnectionState   ,eventHandler_, std::placeholders::_1) }
 };
 
 EventHandler::EventHandler()
@@ -1747,6 +1753,61 @@ bool EventHandler::handleBarcodeReceived(const BaseEvent* event)
         // process barcode data
         operation::getInstance()->ProcessBarcodeData(strEvent->data);
 
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleEEPClientResponse(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        
+        // process EEP Client data
+        operation::getInstance()->processEEP(strEvent->data);
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << __func__ << " Event Data casting failed.";
+        Logger::getInstance()->FnLog(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleEEPClientConnectionState(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<bool>* boolEvent = dynamic_cast<const Event<bool>*>(event);
+
+    if (boolEvent != nullptr)
+    {
+        bool value = boolEvent->data;
+
+        std::stringstream ss;
+        ss << __func__ << " Successfully, Event Data : " << value;
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+
+        // process EEP Client Connection State
     }
     else
     {

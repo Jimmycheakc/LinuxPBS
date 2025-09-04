@@ -30,6 +30,7 @@ public:
         // General Status
         SUCCESS         = 0x00000000u,
         SEND_FAILED     = 0x00000001u,
+        ACK_TIMEOUT     = 0x00000002u,
         RSP_TIMEOUT     = 0x00000003u,
         PARSE_FAILED    = 0x00000004u
     };
@@ -95,6 +96,9 @@ public:
         WRITE_COMMAND,
         WRITE_COMPLETED,
         WRITE_TIMEOUT,
+        ACK_TIMER_CANCELLED_ACK_RECEIVED,
+        ACK_AS_RSP_RECEIVED,
+        ACK_TIMEOUT,
         RESPONSE_TIMER_CANCELLED_RSP_RECEIVED,
         RESPONSE_TIMEOUT,
         RECONNECT_REQUEST,
@@ -419,6 +423,22 @@ public:
         }
     };
 
+    struct RestartInquiryResponseData : CommandDataBase
+    {
+        uint8_t response;
+        uint8_t rsv[3];
+
+        std::vector<uint8_t> serialize() const override
+        {
+            std::vector<uint8_t> out;
+
+            out.push_back(response);
+            out.insert(out.end(), std::begin(rsv), std::end(rsv));
+
+            return out;
+        }
+    };
+
     struct MessageHeader
     {
         uint8_t destinationID_;
@@ -461,8 +481,9 @@ public:
         }
     };
 
-    enum class CommandType
+    enum class CommandType : uint8_t
     {
+        UNKNOWN_REQ_CMD,
         ACK,
         NAK,
         HEALTH_STATUS_REQ_CMD,
@@ -483,7 +504,8 @@ public:
         DSRC_STATUS_REQ_CMD,
         TIME_CALIBRATION_REQ_CMD,
         SET_CARPARK_AVAIL_REQ_CMD,
-        CD_DOWNLOAD_REQ_CMD
+        CD_DOWNLOAD_REQ_CMD,
+        EEP_RESTART_INQUIRY_REQ_CMD
     };
 
     struct Command
@@ -509,6 +531,57 @@ public:
             return a.priority > b.priority; // Smaller priority first
         }
     };
+
+
+    // Event Wrapper for all the response & notification
+    struct EEPEventWrapper
+    {
+        uint8_t commandReqType;
+        uint8_t messageCode;
+        uint32_t messageStatus;
+        std::string payload;
+
+        // Serialize wrapper to JSON
+        boost::json::value to_json() const
+        {
+            boost::json::object obj;
+            obj["commandReqType"] = commandReqType;
+            obj["messageCode"] = messageCode;
+            obj["messageStatus"] = messageStatus;
+            if (!payload.empty())
+            {
+                obj["payload"] = boost::json::parse(payload);
+            }
+            else 
+            {
+                obj["payload"] = nullptr;  // or just skip adding it
+            }
+
+            return obj;
+        }
+
+        // Deserialize wrapper from JSON
+        static EEPEventWrapper from_json(const boost::json::value& jv)
+        {
+            const boost::json::object& obj = jv.as_object();
+            EEPEventWrapper event;
+            event.commandReqType = static_cast<uint8_t>(obj.at("commandReqType").as_int64());
+            event.messageCode = static_cast<uint8_t>(obj.at("messageCode").as_int64());
+            event.messageStatus = static_cast<uint32_t>(obj.at("messageStatus").as_int64());
+
+            if (obj.if_contains("payload") && !obj.at("payload").is_null())
+            {
+                event.payload = boost::json::serialize(obj.at("payload"));
+            }
+            else
+            {
+                event.payload.clear();  // empty string
+            }
+            return event;
+        }
+    };
+
+
 
     // Json format for response data serialization and deserialization
     struct healthStatus
@@ -612,53 +685,108 @@ public:
             healthStatus hs;
             const boost::json::object& obj = jv.as_object();
 
-            hs.subSystemLabel = static_cast<uint32_t>(obj.at("subSystemLabel").as_uint64());
-            hs.equipmentType = static_cast<uint8_t>(obj.at("equipmentType").as_uint64());
-            hs.EEPDSRCDeviceId = static_cast<uint8_t>(obj.at("EEPDSRCDeviceId").as_uint64());
-            hs.carparkId = static_cast<uint16_t>(obj.at("carparkId").as_uint64());
-            hs.lifeCycleMode = static_cast<uint8_t>(obj.at("lifeCycleMode").as_uint64());
-            hs.maintenanceMode = static_cast<uint8_t>(obj.at("maintenanceMode").as_uint64());
-            hs.operationStatus = static_cast<uint8_t>(obj.at("operationStatus").as_uint64());
-            hs.esimStatus = static_cast<uint8_t>(obj.at("esimStatus").as_uint64());
-            hs.powerStatus = static_cast<uint8_t>(obj.at("powerStatus").as_uint64());
-            hs.internalBatteryStatus = static_cast<uint8_t>(obj.at("internalBatteryStatus").as_uint64());
-            hs.usbBusStatus = static_cast<uint8_t>(obj.at("usbBusStatus").as_uint64());
-            hs.dioStatus = static_cast<uint8_t>(obj.at("dioStatus").as_uint64());
-            hs.securityKeyStatus = static_cast<uint8_t>(obj.at("securityKeyStatus").as_uint64());
-            hs.doorSwitchStatus = static_cast<uint8_t>(obj.at("doorSwitchStatus").as_uint64());
-            hs.temperatureStatus = static_cast<uint8_t>(obj.at("temperatureStatus").as_uint64());
-            hs.temperatureInHousing = static_cast<uint8_t>(obj.at("temperatureInHousing").as_uint64());
-            hs.gnssSignalQuality = static_cast<uint8_t>(obj.at("gnssSignalQuality").as_uint64());
-            hs.numberOfGnssStatelites = static_cast<uint8_t>(obj.at("numberOfGnssStatelites").as_uint64());
-            hs.timeSyncStatus = static_cast<uint8_t>(obj.at("timeSyncStatus").as_uint64());
-            hs.wwanConnectionStatus = static_cast<uint8_t>(obj.at("wwanConnectionStatus").as_uint64());
-            hs.DSRCEmissionMode = static_cast<uint8_t>(obj.at("DSRCEmissionMode").as_uint64());
-            hs.numberOfDSRCSession = static_cast<uint8_t>(obj.at("numberOfDSRCSession").as_uint64());
-            hs.rsv = static_cast<uint8_t>(obj.at("rsv").as_uint64());
-            hs.rsv1 = static_cast<uint8_t>(obj.at("rsv1").as_uint64());
-            hs.cpuLoad = static_cast<uint8_t>(obj.at("cpuLoad").as_uint64());
-            hs.storageSpace = static_cast<uint8_t>(obj.at("storageSpace").as_uint64());
-            hs.rsv2 = static_cast<uint16_t>(obj.at("rsv2").as_uint64());
+            hs.subSystemLabel = static_cast<uint32_t>(obj.at("subSystemLabel").as_int64());
+            hs.equipmentType = static_cast<uint8_t>(obj.at("equipmentType").as_int64());
+            hs.EEPDSRCDeviceId = static_cast<uint8_t>(obj.at("EEPDSRCDeviceId").as_int64());
+            hs.carparkId = static_cast<uint16_t>(obj.at("carparkId").as_int64());
+            hs.lifeCycleMode = static_cast<uint8_t>(obj.at("lifeCycleMode").as_int64());
+            hs.maintenanceMode = static_cast<uint8_t>(obj.at("maintenanceMode").as_int64());
+            hs.operationStatus = static_cast<uint8_t>(obj.at("operationStatus").as_int64());
+            hs.esimStatus = static_cast<uint8_t>(obj.at("esimStatus").as_int64());
+            hs.powerStatus = static_cast<uint8_t>(obj.at("powerStatus").as_int64());
+            hs.internalBatteryStatus = static_cast<uint8_t>(obj.at("internalBatteryStatus").as_int64());
+            hs.usbBusStatus = static_cast<uint8_t>(obj.at("usbBusStatus").as_int64());
+            hs.dioStatus = static_cast<uint8_t>(obj.at("dioStatus").as_int64());
+            hs.securityKeyStatus = static_cast<uint8_t>(obj.at("securityKeyStatus").as_int64());
+            hs.doorSwitchStatus = static_cast<uint8_t>(obj.at("doorSwitchStatus").as_int64());
+            hs.temperatureStatus = static_cast<uint8_t>(obj.at("temperatureStatus").as_int64());
+            hs.temperatureInHousing = static_cast<uint8_t>(obj.at("temperatureInHousing").as_int64());
+            hs.gnssSignalQuality = static_cast<uint8_t>(obj.at("gnssSignalQuality").as_int64());
+            hs.numberOfGnssStatelites = static_cast<uint8_t>(obj.at("numberOfGnssStatelites").as_int64());
+            hs.timeSyncStatus = static_cast<uint8_t>(obj.at("timeSyncStatus").as_int64());
+            hs.wwanConnectionStatus = static_cast<uint8_t>(obj.at("wwanConnectionStatus").as_int64());
+            hs.DSRCEmissionMode = static_cast<uint8_t>(obj.at("DSRCEmissionMode").as_int64());
+            hs.numberOfDSRCSession = static_cast<uint8_t>(obj.at("numberOfDSRCSession").as_int64());
+            hs.rsv = static_cast<uint8_t>(obj.at("rsv").as_int64());
+            hs.rsv1 = static_cast<uint8_t>(obj.at("rsv1").as_int64());
+            hs.cpuLoad = static_cast<uint8_t>(obj.at("cpuLoad").as_int64());
+            hs.storageSpace = static_cast<uint8_t>(obj.at("storageSpace").as_int64());
+            hs.rsv2 = static_cast<uint16_t>(obj.at("rsv2").as_int64());
 
             const boost::json::array& versionArray = obj.at("version").as_array();
             hs.version.clear();
             for (auto& v : versionArray)
-                hs.version.push_back(static_cast<uint8_t>(v.as_uint64()));
+                hs.version.push_back(static_cast<uint8_t>(v.as_int64()));
 
-            hs.cscBlocklistTable1 = static_cast<uint16_t>(obj.at("cscBlocklistTable1").as_uint64());
-            hs.cscBlocklistTable2 = static_cast<uint16_t>(obj.at("cscBlocklistTable2").as_uint64());
-            hs.cscBlocklistTable3 = static_cast<uint16_t>(obj.at("cscBlocklistTable3").as_uint64());
-            hs.cscBlocklistTable4 = static_cast<uint16_t>(obj.at("cscBlocklistTable4").as_uint64());
-            hs.cscIssuerListTable1 = static_cast<uint16_t>(obj.at("cscIssuerListTable1").as_uint64());
-            hs.cscIssuerListTable2 = static_cast<uint16_t>(obj.at("cscIssuerListTable2").as_uint64());
-            hs.cscIssuerListTable3 = static_cast<uint16_t>(obj.at("cscIssuerListTable3").as_uint64());
-            hs.cscIssuerListTable4 = static_cast<uint16_t>(obj.at("cscIssuerListTable4").as_uint64());
-            hs.cscConfigurationParamVersion = static_cast<uint8_t>(obj.at("cscConfigurationParamVersion").as_uint64());
-            hs.rsv3 = static_cast<uint32_t>(obj.at("rsv3").as_uint64());
-            hs.backendPaymentTerminationListversion = static_cast<uint32_t>(obj.at("backendPaymentTerminationListversion").as_uint64());
-            hs.rsv4 = static_cast<uint8_t>(obj.at("rsv4").as_uint64());
+            hs.cscBlocklistTable1 = static_cast<uint16_t>(obj.at("cscBlocklistTable1").as_int64());
+            hs.cscBlocklistTable2 = static_cast<uint16_t>(obj.at("cscBlocklistTable2").as_int64());
+            hs.cscBlocklistTable3 = static_cast<uint16_t>(obj.at("cscBlocklistTable3").as_int64());
+            hs.cscBlocklistTable4 = static_cast<uint16_t>(obj.at("cscBlocklistTable4").as_int64());
+            hs.cscIssuerListTable1 = static_cast<uint16_t>(obj.at("cscIssuerListTable1").as_int64());
+            hs.cscIssuerListTable2 = static_cast<uint16_t>(obj.at("cscIssuerListTable2").as_int64());
+            hs.cscIssuerListTable3 = static_cast<uint16_t>(obj.at("cscIssuerListTable3").as_int64());
+            hs.cscIssuerListTable4 = static_cast<uint16_t>(obj.at("cscIssuerListTable4").as_int64());
+            hs.cscConfigurationParamVersion = static_cast<uint8_t>(obj.at("cscConfigurationParamVersion").as_int64());
+            hs.rsv3 = static_cast<uint32_t>(obj.at("rsv3").as_int64());
+            hs.backendPaymentTerminationListversion = static_cast<uint32_t>(obj.at("backendPaymentTerminationListversion").as_int64());
+            hs.rsv4 = static_cast<uint8_t>(obj.at("rsv4").as_int64());
 
             return hs;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "healthStatus { "
+                << "subSystemLabel=" << subSystemLabel
+                << ", equipmentType=" << static_cast<int>(equipmentType)
+                << ", EEPDSRCDeviceId=" << static_cast<int>(EEPDSRCDeviceId)
+                << ", carparkId=" << carparkId
+                << ", lifeCycleMode=" << static_cast<int>(lifeCycleMode)
+                << ", maintenanceMode=" << static_cast<int>(maintenanceMode)
+                << ", operationStatus=" << static_cast<int>(operationStatus)
+                << ", esimStatus=" << static_cast<int>(esimStatus)
+                << ", powerStatus=" << static_cast<int>(powerStatus)
+                << ", internalBatteryStatus=" << static_cast<int>(internalBatteryStatus)
+                << ", usbBusStatus=" << static_cast<int>(usbBusStatus)
+                << ", dioStatus=" << static_cast<int>(dioStatus)
+                << ", securityKeyStatus=" << static_cast<int>(securityKeyStatus)
+                << ", doorSwitchStatus=" << static_cast<int>(doorSwitchStatus)
+                << ", temperatureStatus=" << static_cast<int>(temperatureStatus)
+                << ", temperatureInHousing=" << static_cast<int>(temperatureInHousing)
+                << ", gnssSignalQuality=" << static_cast<int>(gnssSignalQuality)
+                << ", numberOfGnssStatelites=" << static_cast<int>(numberOfGnssStatelites)
+                << ", timeSyncStatus=" << static_cast<int>(timeSyncStatus)
+                << ", wwanConnectionStatus=" << static_cast<int>(wwanConnectionStatus)
+                << ", DSRCEmissionMode=" << static_cast<int>(DSRCEmissionMode)
+                << ", numberOfDSRCSession=" << static_cast<int>(numberOfDSRCSession)
+                << ", rsv=" << static_cast<int>(rsv)
+                << ", rsv1=" << static_cast<int>(rsv1)
+                << ", cpuLoad=" << static_cast<int>(cpuLoad)
+                << ", storageSpace=" << static_cast<int>(storageSpace)
+                << ", rsv2=" << rsv2
+                << ", version=[";
+            for (size_t i = 0; i < version.size(); ++i)
+            {
+                if (i != 0) oss << ",";
+                oss << static_cast<int>(version[i]);
+            }
+            oss << "]"
+                << ", cscBlocklistTable1=" << cscBlocklistTable1
+                << ", cscBlocklistTable2=" << cscBlocklistTable2
+                << ", cscBlocklistTable3=" << cscBlocklistTable3
+                << ", cscBlocklistTable4=" << cscBlocklistTable4
+                << ", cscIssuerListTable1=" << cscIssuerListTable1
+                << ", cscIssuerListTable2=" << cscIssuerListTable2
+                << ", cscIssuerListTable3=" << cscIssuerListTable3
+                << ", cscIssuerListTable4=" << cscIssuerListTable4
+                << ", cscConfigurationParamVersion=" << static_cast<int>(cscConfigurationParamVersion)
+                << ", rsv3=" << rsv3
+                << ", backendPaymentTerminationListversion=" << backendPaymentTerminationListversion
+                << ", rsv4=" << static_cast<int>(rsv4)
+                << " }";
+            return oss.str();
         }
     };
 
@@ -683,10 +811,64 @@ public:
             ack ackdata;
             const boost::json::object& obj = jv.as_object();
 
-            ackdata.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_uint64());
-            ackdata.rsv = static_cast<uint32_t>(obj.at("rsv").as_uint64());
+            ackdata.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_int64());
+            ackdata.rsv = static_cast<uint32_t>(obj.at("rsv").as_int64());
 
             return ackdata;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "ack { "
+                << "resultCode=" << static_cast<int>(resultCode)
+                << ", rsv=" << rsv
+                << " }";
+            return oss.str();
+        }
+    };
+
+    struct ackDeduct
+    {
+        uint8_t resultCode;
+        uint32_t rsv;
+        uint16_t deductSerialNo;
+
+        // Serialize to JSON
+        boost::json::value to_json() const
+        {
+            boost::json::object obj;
+            obj["resultCode"] = resultCode;
+            obj["rsv"] = rsv;
+            obj["deductSerialNo"] = deductSerialNo;
+
+            return obj;
+        }
+
+        // Deserialize from JSON
+        static ackDeduct from_json(const boost::json::value& jv)
+        {
+            ackDeduct ackdata;
+            const boost::json::object& obj = jv.as_object();
+
+            ackdata.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_int64());
+            ackdata.rsv = static_cast<uint32_t>(obj.at("rsv").as_int64());
+            ackdata.deductSerialNo = static_cast<uint16_t>(obj.at("deductSerialNo").as_int64());
+
+            return ackdata;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "ack { "
+                << "resultCode=" << static_cast<int>(resultCode)
+                << ", rsv=" << rsv
+                << ", deductSerialNo=" << deductSerialNo
+                << " }";
+            return oss.str();
         }
     };
 
@@ -713,11 +895,23 @@ public:
             nak nakdata;
             const boost::json::object& obj = jv.as_object();
 
-            nakdata.requestDataTypeCode = static_cast<uint8_t>(obj.at("requestDataTypeCode").as_uint64());
-            nakdata.requestDataTypeCode = static_cast<uint8_t>(obj.at("reasonCode").as_uint64());
-            nakdata.requestDataTypeCode = static_cast<uint16_t>(obj.at("rsv").as_uint64());
+            nakdata.requestDataTypeCode = static_cast<uint8_t>(obj.at("requestDataTypeCode").as_int64());
+            nakdata.reasonCode = static_cast<uint8_t>(obj.at("reasonCode").as_int64());
+            nakdata.rsv = static_cast<uint16_t>(obj.at("rsv").as_int64());
 
             return nakdata;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "nak { "
+                << "requestDataTypeCode=" << static_cast<int>(requestDataTypeCode)
+                << ", reasonCode=" << static_cast<int>(reasonCode)
+                << ", rsv=" << rsv
+                << " }";
+            return oss.str();
         }
     };
 
@@ -742,10 +936,21 @@ public:
             startResponse sr;
             const boost::json::object& obj = jv.as_object();
 
-            sr.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_uint64());
-            sr.rsv = static_cast<uint32_t>(obj.at("rsv").as_uint64());
+            sr.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_int64());
+            sr.rsv = static_cast<uint32_t>(obj.at("rsv").as_int64());
 
             return sr;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "startResponse { "
+                << "resultCode=" << static_cast<int>(resultCode)
+                << ", rsv=" << rsv
+                << " }";
+            return oss.str();
         }
     };
 
@@ -769,10 +974,21 @@ public:
         {
             stopResponse sr;
             const boost::json::object& obj = jv.as_object();
-            sr.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_uint64());
-            sr.rsv = static_cast<uint32_t>(obj.at("rsv").as_uint64());
+            sr.resultCode = static_cast<uint8_t>(obj.at("resultCode").as_int64());
+            sr.rsv = static_cast<uint32_t>(obj.at("rsv").as_int64());
 
             return sr;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "stopResponse { "
+                << "resultCode=" << static_cast<int>(resultCode)
+                << ", rsv=" << rsv
+                << " }";
+            return oss.str();
         }
     };
 
@@ -797,10 +1013,21 @@ public:
             diStatusResponse dsr;
             const boost::json::object& obj = jv.as_object();
 
-            dsr.currDISignal = static_cast<uint32_t>(obj.at("currDISignal").as_uint64());
-            dsr.prevDISignal = static_cast<uint32_t>(obj.at("prevDISignal").as_uint64());
+            dsr.currDISignal = static_cast<uint32_t>(obj.at("currDISignal").as_int64());
+            dsr.prevDISignal = static_cast<uint32_t>(obj.at("prevDISignal").as_int64());
 
             return dsr;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "diStatusResponse { "
+                << "currDISignal=" << currDISignal
+                << ", prevDISignal=" << prevDISignal
+                << " }";
+            return oss.str();
         }
     };
 
@@ -847,29 +1074,29 @@ public:
             obj["presenceLoopStatus"] = presenceLoopStatus;
             obj["dsrcEmissionControl"] = dsrcEmissionControl;
             obj["noOfWaveConnection"] = noOfWaveConnection;
-            obj["OBU1_rsv"] = OBU1_rsv;
-            obj["OBU1_obulabel"] = OBU1_obulabel;
+            obj["OBU1_rsv"] = std::to_string(OBU1_rsv);
+            obj["OBU1_obulabel"] = std::to_string(OBU1_obulabel);
             obj["OBU1_rsv1"] = OBU1_rsv1;
             obj["OBU1_elapsedTime"] = OBU1_elapsedTime;
             obj["OBU1_rssi"] = OBU1_rssi;
             obj["OBU1_connectionStatus"] = OBU1_connectionStatus;
             obj["OBU1_rsv2"] = OBU1_rsv2;
-            obj["OBU2_rsv"] = OBU2_rsv;
-            obj["OBU2_obulabel"] = OBU2_obulabel;
+            obj["OBU2_rsv"] = std::to_string(OBU2_rsv);
+            obj["OBU2_obulabel"] = std::to_string(OBU2_obulabel);
             obj["OBU2_rsv1"] = OBU2_rsv1;
             obj["OBU2_elapsedTime"] = OBU2_elapsedTime;
             obj["OBU2_rssi"] = OBU2_rssi;
             obj["OBU2_connectionStatus"] = OBU2_connectionStatus;
             obj["OBU2_rsv2"] = OBU2_rsv2;
-            obj["OBU3_rsv"] = OBU3_rsv;
-            obj["OBU3_obulabel"] = OBU3_obulabel;
+            obj["OBU3_rsv"] = std::to_string(OBU3_rsv);
+            obj["OBU3_obulabel"] = std::to_string(OBU3_obulabel);
             obj["OBU3_rsv1"] = OBU3_rsv1;
             obj["OBU3_elapsedTime"] = OBU3_elapsedTime;
             obj["OBU3_rssi"] = OBU3_rssi;
             obj["OBU3_connectionStatus"] = OBU3_connectionStatus;
             obj["OBU3_rsv2"] = OBU3_rsv2;
-            obj["OBU4_rsv"] = OBU4_rsv;
-            obj["OBU4_obulabel"] = OBU4_obulabel;
+            obj["OBU4_rsv"] = std::to_string(OBU4_rsv);
+            obj["OBU4_obulabel"] = std::to_string(OBU4_obulabel);
             obj["OBU4_rsv1"] = OBU4_rsv1;
             obj["OBU4_elapsedTime"] = OBU4_elapsedTime;
             obj["OBU4_rssi"] = OBU4_rssi;
@@ -885,40 +1112,73 @@ public:
             dsrcStatusResponse dsr;
             const boost::json::object& obj = jv.as_object();
 
-            dsr.dsrcEmissionStatus = static_cast<uint8_t>(obj.at("dsrcEmissionStatus").as_uint64());
-            dsr.presenceLoopStatus = static_cast<uint8_t>(obj.at("presenceLoopStatus").as_uint64());
-            dsr.dsrcEmissionControl = static_cast<uint8_t>(obj.at("dsrcEmissionControl").as_uint64());
-            dsr.noOfWaveConnection = static_cast<uint8_t>(obj.at("noOfWaveConnection").as_uint64());
-            dsr.OBU1_rsv = obj.at("OBU1_rsv").as_uint64();
-            dsr.OBU1_obulabel = obj.at("OBU1_obulabel").as_uint64();
-            dsr.OBU1_rsv1 = static_cast<uint32_t>(obj.at("OBU1_rsv1").as_uint64());
-            dsr.OBU1_elapsedTime = static_cast<uint32_t>(obj.at("OBU1_elapsedTime").as_uint64());
-            dsr.OBU1_rssi = static_cast<uint8_t>(obj.at("OBU1_rssi").as_uint64());
-            dsr.OBU1_connectionStatus = static_cast<uint8_t>(obj.at("OBU1_connectionStatus").as_uint64());
-            dsr.OBU1_rsv2 = static_cast<uint16_t>(obj.at("OBU1_rsv2").as_uint64());
-            dsr.OBU2_rsv = obj.at("OBU2_rsv").as_uint64();
-            dsr.OBU2_obulabel = obj.at("OBU2_obulabel").as_uint64();
-            dsr.OBU2_rsv1 = static_cast<uint32_t>(obj.at("OBU2_rsv1").as_uint64());
-            dsr.OBU2_elapsedTime = static_cast<uint32_t>(obj.at("OBU2_elapsedTime").as_uint64());
-            dsr.OBU2_rssi = static_cast<uint8_t>(obj.at("OBU2_rssi").as_uint64());
-            dsr.OBU2_connectionStatus = static_cast<uint8_t>(obj.at("OBU2_connectionStatus").as_uint64());
-            dsr.OBU2_rsv2 = static_cast<uint16_t>(obj.at("OBU2_rsv2").as_uint64());
-            dsr.OBU3_rsv = obj.at("OBU3_rsv").as_uint64();
-            dsr.OBU3_obulabel = obj.at("OBU3_obulabel").as_uint64();
-            dsr.OBU3_rsv1 = static_cast<uint32_t>(obj.at("OBU3_rsv1").as_uint64());
-            dsr.OBU3_elapsedTime = static_cast<uint32_t>(obj.at("OBU3_elapsedTime").as_uint64());
-            dsr.OBU3_rssi = static_cast<uint8_t>(obj.at("OBU3_rssi").as_uint64());
-            dsr.OBU3_connectionStatus = static_cast<uint8_t>(obj.at("OBU3_connectionStatus").as_uint64());
-            dsr.OBU3_rsv2 = static_cast<uint16_t>(obj.at("OBU3_rsv2").as_uint64());
-            dsr.OBU4_rsv = obj.at("OBU4_rsv").as_uint64();
-            dsr.OBU4_obulabel = obj.at("OBU4_obulabel").as_uint64();
-            dsr.OBU4_rsv1 = static_cast<uint32_t>(obj.at("OBU4_rsv1").as_uint64());
-            dsr.OBU4_elapsedTime = static_cast<uint32_t>(obj.at("OBU4_elapsedTime").as_uint64());
-            dsr.OBU4_rssi = static_cast<uint8_t>(obj.at("OBU4_rssi").as_uint64());
-            dsr.OBU4_connectionStatus = static_cast<uint8_t>(obj.at("OBU4_connectionStatus").as_uint64());
-            dsr.OBU4_rsv2 = static_cast<uint16_t>(obj.at("OBU4_rsv2").as_uint64());
+            dsr.dsrcEmissionStatus = static_cast<uint8_t>(obj.at("dsrcEmissionStatus").as_int64());
+            dsr.presenceLoopStatus = static_cast<uint8_t>(obj.at("presenceLoopStatus").as_int64());
+            dsr.dsrcEmissionControl = static_cast<uint8_t>(obj.at("dsrcEmissionControl").as_int64());
+            dsr.noOfWaveConnection = static_cast<uint8_t>(obj.at("noOfWaveConnection").as_int64());
+            dsr.OBU1_rsv = std::stoull(obj.at("OBU1_rsv").as_string().c_str());
+            dsr.OBU1_obulabel = std::stoull(obj.at("OBU1_obulabel").as_string().c_str());
+            dsr.OBU1_rsv1 = static_cast<uint32_t>(obj.at("OBU1_rsv1").as_int64());
+            dsr.OBU1_elapsedTime = static_cast<uint32_t>(obj.at("OBU1_elapsedTime").as_int64());
+            dsr.OBU1_rssi = static_cast<uint8_t>(obj.at("OBU1_rssi").as_int64());
+            dsr.OBU1_connectionStatus = static_cast<uint8_t>(obj.at("OBU1_connectionStatus").as_int64());
+            dsr.OBU1_rsv2 = static_cast<uint16_t>(obj.at("OBU1_rsv2").as_int64());
+            dsr.OBU2_rsv = std::stoull(obj.at("OBU2_rsv").as_string().c_str());
+            dsr.OBU2_obulabel = std::stoull(obj.at("OBU2_obulabel").as_string().c_str());
+            dsr.OBU2_rsv1 = static_cast<uint32_t>(obj.at("OBU2_rsv1").as_int64());
+            dsr.OBU2_elapsedTime = static_cast<uint32_t>(obj.at("OBU2_elapsedTime").as_int64());
+            dsr.OBU2_rssi = static_cast<uint8_t>(obj.at("OBU2_rssi").as_int64());
+            dsr.OBU2_connectionStatus = static_cast<uint8_t>(obj.at("OBU2_connectionStatus").as_int64());
+            dsr.OBU2_rsv2 = static_cast<uint16_t>(obj.at("OBU2_rsv2").as_int64());
+            dsr.OBU3_rsv = std::stoull(obj.at("OBU3_rsv").as_string().c_str());
+            dsr.OBU3_obulabel = std::stoull(obj.at("OBU3_obulabel").as_string().c_str());
+            dsr.OBU3_rsv1 = static_cast<uint32_t>(obj.at("OBU3_rsv1").as_int64());
+            dsr.OBU3_elapsedTime = static_cast<uint32_t>(obj.at("OBU3_elapsedTime").as_int64());
+            dsr.OBU3_rssi = static_cast<uint8_t>(obj.at("OBU3_rssi").as_int64());
+            dsr.OBU3_connectionStatus = static_cast<uint8_t>(obj.at("OBU3_connectionStatus").as_int64());
+            dsr.OBU3_rsv2 = static_cast<uint16_t>(obj.at("OBU3_rsv2").as_int64());
+            dsr.OBU4_rsv = std::stoull(obj.at("OBU4_rsv").as_string().c_str());
+            dsr.OBU4_obulabel = std::stoull(obj.at("OBU4_obulabel").as_string().c_str());
+            dsr.OBU4_rsv1 = static_cast<uint32_t>(obj.at("OBU4_rsv1").as_int64());
+            dsr.OBU4_elapsedTime = static_cast<uint32_t>(obj.at("OBU4_elapsedTime").as_int64());
+            dsr.OBU4_rssi = static_cast<uint8_t>(obj.at("OBU4_rssi").as_int64());
+            dsr.OBU4_connectionStatus = static_cast<uint8_t>(obj.at("OBU4_connectionStatus").as_int64());
+            dsr.OBU4_rsv2 = static_cast<uint16_t>(obj.at("OBU4_rsv2").as_int64());
 
             return dsr;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "dsrcStatusResponse { "
+                << "dsrcEmissionStatus=" << static_cast<int>(dsrcEmissionStatus)
+                << ", presenceLoopStatus=" << static_cast<int>(presenceLoopStatus)
+                << ", dsrcEmissionControl=" << static_cast<int>(dsrcEmissionControl)
+                << ", noOfWaveConnection=" << static_cast<int>(noOfWaveConnection)
+                << ", OBU1={rsv=" << OBU1_rsv << ", obulabel=" << OBU1_obulabel 
+                << ", rsv1=" << OBU1_rsv1 << ", elapsedTime=" << OBU1_elapsedTime 
+                << ", rssi=" << static_cast<int>(OBU1_rssi) 
+                << ", connectionStatus=" << static_cast<int>(OBU1_connectionStatus)
+                << ", rsv2=" << OBU1_rsv2 << "}"
+                << ", OBU2={rsv=" << OBU2_rsv << ", obulabel=" << OBU2_obulabel 
+                << ", rsv1=" << OBU2_rsv1 << ", elapsedTime=" << OBU2_elapsedTime 
+                << ", rssi=" << static_cast<int>(OBU2_rssi) 
+                << ", connectionStatus=" << static_cast<int>(OBU2_connectionStatus)
+                << ", rsv2=" << OBU2_rsv2 << "}"
+                << ", OBU3={rsv=" << OBU3_rsv << ", obulabel=" << OBU3_obulabel 
+                << ", rsv1=" << OBU3_rsv1 << ", elapsedTime=" << OBU3_elapsedTime 
+                << ", rssi=" << static_cast<int>(OBU3_rssi) 
+                << ", connectionStatus=" << static_cast<int>(OBU3_connectionStatus)
+                << ", rsv2=" << OBU3_rsv2 << "}"
+                << ", OBU4={rsv=" << OBU4_rsv << ", obulabel=" << OBU4_obulabel 
+                << ", rsv1=" << OBU4_rsv1 << ", elapsedTime=" << OBU4_elapsedTime 
+                << ", rssi=" << static_cast<int>(OBU4_rssi) 
+                << ", connectionStatus=" << static_cast<int>(OBU4_connectionStatus)
+                << ", rsv2=" << OBU4_rsv2 << "}"
+                << " }";
+            return oss.str();
         }
     };
 
@@ -943,10 +1203,21 @@ public:
             timeCalibrationResponse tcr;
             const boost::json::object& obj = jv.as_object();
 
-            tcr.result = static_cast<uint8_t>(obj.at("result").as_uint64());
-            tcr.rsv = static_cast<uint32_t>(obj.at("rsv").as_uint64());
+            tcr.result = static_cast<uint8_t>(obj.at("result").as_int64());
+            tcr.rsv = static_cast<uint32_t>(obj.at("rsv").as_int64());
 
             return tcr;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "timeCalibrationResponse { "
+                << "result=" << static_cast<int>(result)
+                << ", rsv=" << rsv
+                << " }";
+            return oss.str();
         }
     };
 
@@ -971,10 +1242,21 @@ public:
             diStatusNotification dsn;
             const boost::json::object& obj = jv.as_object();
 
-            dsn.currDISignal = static_cast<uint32_t>(obj.at("currDISignal").as_uint64());
-            dsn.prevDISignal = static_cast<uint32_t>(obj.at("prevDISignal").as_uint64());
+            dsn.currDISignal = static_cast<uint32_t>(obj.at("currDISignal").as_int64());
+            dsn.prevDISignal = static_cast<uint32_t>(obj.at("prevDISignal").as_int64());
 
             return dsn;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "diStatusNotification { "
+                << "currDISignal=" << currDISignal
+                << ", prevDISignal=" << prevDISignal
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1001,8 +1283,8 @@ public:
         boost::json::value to_json() const
         {
             boost::json::object obj;
-            obj["rsv"] = rsv;
-            obj["obulabel"] = obulabel;
+            obj["rsv"] = std::to_string(rsv);
+            obj["obulabel"] = std::to_string(obulabel);
             obj["typeObu"] = typeObu;
             obj["rsv1"] = rsv1;
             obj["vcc"] = vcc;
@@ -1035,34 +1317,71 @@ public:
             obuInformationNotification obuin;
             const boost::json::object& obj = jv.as_object();
 
-            obuin.rsv = obj.at("rsv").as_uint64();
-            obuin.obulabel = obj.at("obulabel").as_uint64();
-            obuin.typeObu = static_cast<uint8_t>(obj.at("typeObu").as_uint64());
-            obuin.rsv1 = static_cast<uint16_t>(obj.at("rsv1").as_uint64());
-            obuin.vcc = static_cast<uint32_t>(obj.at("vcc").as_uint64());
-            obuin.rsv2 = static_cast<uint8_t>(obj.at("rsv2").as_uint64());
+            obuin.rsv = std::stoull(obj.at("rsv").as_string().c_str());
+            obuin.obulabel = std::stoull(obj.at("obulabel").as_string().c_str());
+            obuin.typeObu = static_cast<uint8_t>(obj.at("typeObu").as_int64());
+            obuin.rsv1 = static_cast<uint16_t>(obj.at("rsv1").as_int64());
+            obuin.vcc = static_cast<uint32_t>(obj.at("vcc").as_int64());
+            obuin.rsv2 = static_cast<uint8_t>(obj.at("rsv2").as_int64());
 
             const boost::json::array& vechicleNumberArray = obj.at("vechicleNumber").as_array();
             obuin.vechicleNumber.clear();
             for (auto& v : vechicleNumberArray)
-                obuin.vechicleNumber.push_back(static_cast<uint8_t>(v.as_uint64()));
+                obuin.vechicleNumber.push_back(static_cast<uint8_t>(v.as_int64()));
 
-            obuin.rsv3 = static_cast<uint32_t>(obj.at("rsv3").as_uint64());
-            obuin.cardValidity = static_cast<uint8_t>(obj.at("cardValidity").as_uint64());
-            obuin.rsv4 = static_cast<uint32_t>(obj.at("rsv4").as_uint64());
+            obuin.rsv3 = static_cast<uint32_t>(obj.at("rsv3").as_int64());
+            obuin.cardValidity = static_cast<uint8_t>(obj.at("cardValidity").as_int64());
+            obuin.rsv4 = static_cast<uint32_t>(obj.at("rsv4").as_int64());
 
             const boost::json::array& canArray = obj.at("can").as_array();
             obuin.can.clear();
             for (auto& c : canArray)
-                obuin.can.push_back(static_cast<uint8_t>(c.as_uint64()));
+                obuin.can.push_back(static_cast<uint8_t>(c.as_int64()));
 
-            obuin.cardBalance = static_cast<uint32_t>(obj.at("cardBalance").as_uint64());
-            obuin.backendAccount = static_cast<uint8_t>(obj.at("backendAccount").as_uint64());
-            obuin.backendSetting = static_cast<uint8_t>(obj.at("backendSetting").as_uint64());
-            obuin.businessFunctionStatus = static_cast<uint8_t>(obj.at("businessFunctionStatus").as_uint64());
-            obuin.rsv5 = static_cast<uint8_t>(obj.at("rsv5").as_uint64());
+            obuin.cardBalance = static_cast<uint32_t>(obj.at("cardBalance").as_int64());
+            obuin.backendAccount = static_cast<uint8_t>(obj.at("backendAccount").as_int64());
+            obuin.backendSetting = static_cast<uint8_t>(obj.at("backendSetting").as_int64());
+            obuin.businessFunctionStatus = static_cast<uint8_t>(obj.at("businessFunctionStatus").as_int64());
+            obuin.rsv5 = static_cast<uint8_t>(obj.at("rsv5").as_int64());
 
             return obuin;
+        }
+
+        // Convert to string (debug-friendly)
+        std::string to_string() const
+        {
+            auto vec_to_hex = [](const std::vector<uint8_t>& v) {
+                std::ostringstream oss;
+                oss << "[";
+                for (size_t i = 0; i < v.size(); ++i)
+                {
+                    oss << std::hex << std::uppercase << static_cast<int>(v[i]);
+                    if (i + 1 < v.size()) oss << " ";
+                }
+                oss << "]";
+                return oss.str();
+            };
+
+            std::ostringstream oss;
+            oss << "obuInformationNotification {"
+                << " rsv=" << rsv
+                << ", obulabel=" << obulabel
+                << ", typeObu=" << static_cast<int>(typeObu)
+                << ", rsv1=" << rsv1
+                << ", vcc=" << vcc
+                << ", rsv2=" << static_cast<int>(rsv2)
+                << ", vechicleNumber=" << vec_to_hex(vechicleNumber)
+                << ", rsv3=" << rsv3
+                << ", cardValidity=" << static_cast<int>(cardValidity)
+                << ", rsv4=" << rsv4
+                << ", can=" << vec_to_hex(can)
+                << ", cardBalance=" << cardBalance
+                << ", backendAccount=" << static_cast<int>(backendAccount)
+                << ", backendSetting=" << static_cast<int>(backendSetting)
+                << ", businessFunctionStatus=" << static_cast<int>(businessFunctionStatus)
+                << ", rsv5=" << static_cast<int>(rsv5)
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1141,8 +1460,8 @@ public:
             obj["protocolVer"] = protocolVer;
             obj["resultDeduction"] = resultDeduction;
             obj["subSystemLabel"] = subSystemLabel;
-            obj["rsv"] = rsv;
-            obj["obuLabel"] = obuLabel;
+            obj["rsv"] = std::to_string(rsv);
+            obj["obuLabel"] = std::to_string(obuLabel);
             obj["rsv1"] = rsv1;
 
             boost::json::array vechicleNumberArray;
@@ -1171,7 +1490,7 @@ public:
             obj["parkingEndMinute"] = parkingEndMinute;
             obj["parkingEndHour"] = parkingEndHour;
             obj["paymentFee"] = paymentFee;
-            obj["fepTime"] = fepTime;
+            obj["fepTime"] = std::to_string(fepTime);
             obj["rsv7"] = rsv7;
             obj["trp"] = trp;
             obj["indicationLastAutoLoad"] = indicationLastAutoLoad;
@@ -1181,7 +1500,7 @@ public:
             for (auto c : can) canArray.push_back(c);
             obj["can"] = canArray;
 
-            obj["lastCreditTransactionHeader"] = lastCreditTransactionHeader;
+            obj["lastCreditTransactionHeader"] = std::to_string(lastCreditTransactionHeader);
             obj["lastCreditTransactionTRP"] = lastCreditTransactionTRP;
             obj["purseBalanceBeforeTransaction"] = purseBalanceBeforeTransaction;
             obj["badDebtCounter"] = badDebtCounter;
@@ -1189,16 +1508,16 @@ public:
             obj["debitOption"] = debitOption;
             obj["rsv9"] = rsv9;
             obj["autoLoadAmount"] = autoLoadAmount;
-            obj["counterData"] = counterData;
-            obj["signedCertificate"] = signedCertificate;
+            obj["counterData"] = std::to_string(counterData);
+            obj["signedCertificate"] = std::to_string(signedCertificate);
             obj["purseBalanceAfterTransaction"] = purseBalanceAfterTransaction;
             obj["lastTransactionDebitOptionbyte"] = lastTransactionDebitOptionbyte;
             obj["rsv10"] = rsv10;
-            obj["previousTransactionHeader"] = previousTransactionHeader;
+            obj["previousTransactionHeader"] = std::to_string(previousTransactionHeader);
             obj["previousTRP"] = previousTRP;
             obj["previousPurseBalance"] = previousPurseBalance;
-            obj["previousCounterData"] = previousCounterData;
-            obj["previousTransactionSignedCertificate"] = previousTransactionSignedCertificate;
+            obj["previousCounterData"] = std::to_string(previousCounterData);
+            obj["previousTransactionSignedCertificate"] = std::to_string(previousTransactionSignedCertificate);
             obj["previousPurseStatus"] = previousPurseStatus;
             obj["rsv11"] = rsv11;
             obj["bepPaymentFeeAmount"] = bepPaymentFeeAmount;
@@ -1226,95 +1545,170 @@ public:
             transactionData td;
             const boost::json::object& obj = jv.as_object();
 
-            td.deductCommandSerialNum = static_cast<uint16_t>(obj.at("deductCommandSerialNum").as_uint64());
-            td.protocolVer = static_cast<uint8_t>(obj.at("protocolVer").as_uint64());
-            td.resultDeduction = static_cast<uint8_t>(obj.at("resultDeduction").as_uint64());
-            td.subSystemLabel = static_cast<uint32_t>(obj.at("subSystemLabel").as_uint64());
-            td.rsv = obj.at("rsv").as_uint64();
-            td.obuLabel = obj.at("obuLabel").as_uint64();
-            td.rsv1 = static_cast<uint32_t>(obj.at("rsv1").as_uint64());
+            td.deductCommandSerialNum = static_cast<uint16_t>(obj.at("deductCommandSerialNum").as_int64());
+            td.protocolVer = static_cast<uint8_t>(obj.at("protocolVer").as_int64());
+            td.resultDeduction = static_cast<uint8_t>(obj.at("resultDeduction").as_int64());
+            td.subSystemLabel = static_cast<uint32_t>(obj.at("subSystemLabel").as_int64());
+            td.rsv = std::stoull(obj.at("rsv").as_string().c_str());
+            td.obuLabel = std::stoull(obj.at("obuLabel").as_string().c_str());
+            td.rsv1 = static_cast<uint32_t>(obj.at("rsv1").as_int64());
 
             const boost::json::array& vechicleNumberArray = obj.at("vechicleNumber").as_array();
             td.vechicleNumber.clear();
             for (auto& v : vechicleNumberArray)
-                td.vechicleNumber.push_back(static_cast<uint8_t>(v.as_uint64()));
+                td.vechicleNumber.push_back(static_cast<uint8_t>(v.as_int64()));
 
-            td.rsv2 = static_cast<uint32_t>(obj.at("rsv2").as_uint64());
-            td.transactionRoute = static_cast<uint8_t>(obj.at("transactionRoute").as_uint64());
-            td.rsv3 = static_cast<uint8_t>(obj.at("rsv3").as_uint64());
-            td.frontendPaymentViolation = static_cast<uint8_t>(obj.at("frontendPaymentViolation").as_uint64());
-            td.backendPaymentViolation = static_cast<uint8_t>(obj.at("backendPaymentViolation").as_uint64());
-            td.transactionType = static_cast<uint8_t>(obj.at("transactionType").as_uint64());
-            td.rsv4 = static_cast<uint8_t>(obj.at("rsv4").as_uint64());
-            td.parkingStartDay = static_cast<uint8_t>(obj.at("parkingStartDay").as_uint64());
+            td.rsv2 = static_cast<uint32_t>(obj.at("rsv2").as_int64());
+            td.transactionRoute = static_cast<uint8_t>(obj.at("transactionRoute").as_int64());
+            td.rsv3 = static_cast<uint8_t>(obj.at("rsv3").as_int64());
+            td.frontendPaymentViolation = static_cast<uint8_t>(obj.at("frontendPaymentViolation").as_int64());
+            td.backendPaymentViolation = static_cast<uint8_t>(obj.at("backendPaymentViolation").as_int64());
+            td.transactionType = static_cast<uint8_t>(obj.at("transactionType").as_int64());
+            td.rsv4 = static_cast<uint8_t>(obj.at("rsv4").as_int64());
+            td.parkingStartDay = static_cast<uint8_t>(obj.at("parkingStartDay").as_int64());
 
-            td.parkingStartMonth = static_cast<uint8_t>(obj.at("parkingStartMonth").as_uint64());
-            td.parkingStartYear = static_cast<uint16_t>(obj.at("parkingStartYear").as_uint64());
-            td.rsv5 = static_cast<uint8_t>(obj.at("rsv5").as_uint64());
-            td.parkingStartSecond = static_cast<uint8_t>(obj.at("parkingStartSecond").as_uint64());
-            td.parkingStartMinute = static_cast<uint8_t>(obj.at("parkingStartMinute").as_uint64());
-            td.parkingStartHour = static_cast<uint8_t>(obj.at("parkingStartHour").as_uint64());
-            td.parkingEndDay = static_cast<uint8_t>(obj.at("parkingEndDay").as_uint64());
-            td.parkingEndMonth = static_cast<uint8_t>(obj.at("parkingEndMonth").as_uint64());
-            td.parkingEndYear = static_cast<uint16_t>(obj.at("parkingEndYear").as_uint64());
-            td.rsv6 = static_cast<uint8_t>(obj.at("rsv6").as_uint64());
-            td.parkingEndSecond = static_cast<uint8_t>(obj.at("parkingEndSecond").as_uint64());
-            td.parkingEndMinute = static_cast<uint8_t>(obj.at("parkingEndMinute").as_uint64());
-            td.parkingEndHour = static_cast<uint8_t>(obj.at("parkingEndHour").as_uint64());
-            td.paymentFee = static_cast<uint32_t>(obj.at("paymentFee").as_uint64());
-            td.fepTime = obj.at("fepTime").as_uint64();
-            td.rsv7 = static_cast<uint8_t>(obj.at("rsv7").as_uint64());
-            td.trp = static_cast<uint32_t>(obj.at("trp").as_uint64());
-            td.indicationLastAutoLoad = static_cast<uint8_t>(obj.at("indicationLastAutoLoad").as_uint64());
-            td.rsv8 = static_cast<uint32_t>(obj.at("rsv8").as_uint64());
+            td.parkingStartMonth = static_cast<uint8_t>(obj.at("parkingStartMonth").as_int64());
+            td.parkingStartYear = static_cast<uint16_t>(obj.at("parkingStartYear").as_int64());
+            td.rsv5 = static_cast<uint8_t>(obj.at("rsv5").as_int64());
+            td.parkingStartSecond = static_cast<uint8_t>(obj.at("parkingStartSecond").as_int64());
+            td.parkingStartMinute = static_cast<uint8_t>(obj.at("parkingStartMinute").as_int64());
+            td.parkingStartHour = static_cast<uint8_t>(obj.at("parkingStartHour").as_int64());
+            td.parkingEndDay = static_cast<uint8_t>(obj.at("parkingEndDay").as_int64());
+            td.parkingEndMonth = static_cast<uint8_t>(obj.at("parkingEndMonth").as_int64());
+            td.parkingEndYear = static_cast<uint16_t>(obj.at("parkingEndYear").as_int64());
+            td.rsv6 = static_cast<uint8_t>(obj.at("rsv6").as_int64());
+            td.parkingEndSecond = static_cast<uint8_t>(obj.at("parkingEndSecond").as_int64());
+            td.parkingEndMinute = static_cast<uint8_t>(obj.at("parkingEndMinute").as_int64());
+            td.parkingEndHour = static_cast<uint8_t>(obj.at("parkingEndHour").as_int64());
+            td.paymentFee = static_cast<uint32_t>(obj.at("paymentFee").as_int64());
+            td.fepTime = std::stoull(obj.at("fepTime").as_string().c_str());
+            td.rsv7 = static_cast<uint8_t>(obj.at("rsv7").as_int64());
+            td.trp = static_cast<uint32_t>(obj.at("trp").as_int64());
+            td.indicationLastAutoLoad = static_cast<uint8_t>(obj.at("indicationLastAutoLoad").as_int64());
+            td.rsv8 = static_cast<uint32_t>(obj.at("rsv8").as_int64());
 
             const boost::json::array& canArray = obj.at("can").as_array();
             td.can.clear();
             for (auto& c : canArray)
-                td.can.push_back(static_cast<uint8_t>(c.as_uint64()));
+                td.can.push_back(static_cast<uint8_t>(c.as_int64()));
 
             
-            td.lastCreditTransactionHeader = obj.at("lastCreditTransactionHeader").as_uint64();
-            td.lastCreditTransactionTRP = static_cast<uint32_t>(obj.at("lastCreditTransactionTRP").as_uint64());
-            td.purseBalanceBeforeTransaction = static_cast<uint32_t>(obj.at("purseBalanceBeforeTransaction").as_uint64());
-            td.badDebtCounter = static_cast<uint8_t>(obj.at("badDebtCounter").as_uint64());
-            td.transactionStatus = static_cast<uint8_t>(obj.at("transactionStatus").as_uint64());
-            td.debitOption = static_cast<uint8_t>(obj.at("debitOption").as_uint64());
+            td.lastCreditTransactionHeader = std::stoull(obj.at("lastCreditTransactionHeader").as_string().c_str());
+            td.lastCreditTransactionTRP = static_cast<uint32_t>(obj.at("lastCreditTransactionTRP").as_int64());
+            td.purseBalanceBeforeTransaction = static_cast<uint32_t>(obj.at("purseBalanceBeforeTransaction").as_int64());
+            td.badDebtCounter = static_cast<uint8_t>(obj.at("badDebtCounter").as_int64());
+            td.transactionStatus = static_cast<uint8_t>(obj.at("transactionStatus").as_int64());
+            td.debitOption = static_cast<uint8_t>(obj.at("debitOption").as_int64());
 
-            td.rsv9 = static_cast<uint8_t>(obj.at("rsv9").as_uint64());
-            td.autoLoadAmount = static_cast<uint32_t>(obj.at("autoLoadAmount").as_uint64());
-            td.counterData = obj.at("counterData").as_uint64();
-            td.signedCertificate = obj.at("signedCertificate").as_uint64();
-            td.purseBalanceAfterTransaction = static_cast<uint32_t>(obj.at("purseBalanceAfterTransaction").as_uint64());
-            td.lastTransactionDebitOptionbyte = static_cast<uint8_t>(obj.at("lastTransactionDebitOptionbyte").as_uint64());
-            td.rsv10 = static_cast<uint32_t>(obj.at("rsv10").as_uint64());
-            td.previousTransactionHeader = obj.at("previousTransactionHeader").as_uint64();
-            td.previousTRP = static_cast<uint32_t>(obj.at("previousTRP").as_uint64());
-            td.previousPurseBalance = static_cast<uint32_t>(obj.at("previousPurseBalance").as_uint64());
-            td.previousCounterData = obj.at("previousCounterData").as_uint64();
-            td.previousTransactionSignedCertificate = obj.at("previousTransactionSignedCertificate").as_uint64();
-            td.previousPurseStatus = static_cast<uint8_t>(obj.at("previousPurseStatus").as_uint64());
-            td.rsv11 = static_cast<uint32_t>(obj.at("rsv11").as_uint64());
-            td.bepPaymentFeeAmount = static_cast<uint16_t>(obj.at("bepPaymentFeeAmount").as_uint64());
-            td.rsv12 = static_cast<uint16_t>(obj.at("rsv12").as_uint64());
+            td.rsv9 = static_cast<uint8_t>(obj.at("rsv9").as_int64());
+            td.autoLoadAmount = static_cast<uint32_t>(obj.at("autoLoadAmount").as_int64());
+            td.counterData = std::stoull(obj.at("counterData").as_string().c_str());
+            td.signedCertificate = std::stoull(obj.at("signedCertificate").as_string().c_str());
+            td.purseBalanceAfterTransaction = static_cast<uint32_t>(obj.at("purseBalanceAfterTransaction").as_int64());
+            td.lastTransactionDebitOptionbyte = static_cast<uint8_t>(obj.at("lastTransactionDebitOptionbyte").as_int64());
+            td.rsv10 = static_cast<uint32_t>(obj.at("rsv10").as_int64());
+            td.previousTransactionHeader = std::stoull(obj.at("previousTransactionHeader").as_string().c_str());
+            td.previousTRP = static_cast<uint32_t>(obj.at("previousTRP").as_int64());
+            td.previousPurseBalance = static_cast<uint32_t>(obj.at("previousPurseBalance").as_int64());
+            td.previousCounterData = std::stoull(obj.at("previousCounterData").as_string().c_str());
+            td.previousTransactionSignedCertificate = std::stoull(obj.at("previousTransactionSignedCertificate").as_string().c_str());
+            td.previousPurseStatus = static_cast<uint8_t>(obj.at("previousPurseStatus").as_int64());
+            td.rsv11 = static_cast<uint32_t>(obj.at("rsv11").as_int64());
+            td.bepPaymentFeeAmount = static_cast<uint16_t>(obj.at("bepPaymentFeeAmount").as_int64());
+            td.rsv12 = static_cast<uint16_t>(obj.at("rsv12").as_int64());
             
             const boost::json::array& bepTimeOfReportArray = obj.at("bepTimeOfReport").as_array();
             td.bepTimeOfReport.clear();
             for (auto& b : bepTimeOfReportArray)
-                td.bepTimeOfReport.push_back(static_cast<uint8_t>(b.as_uint64()));
+                td.bepTimeOfReport.push_back(static_cast<uint8_t>(b.as_int64()));
 
-            td.rsv13 = static_cast<uint32_t>(obj.at("rsv13").as_uint64());
+            td.rsv13 = static_cast<uint32_t>(obj.at("rsv13").as_int64());
 
-            td.chargeReportCounter = static_cast<uint32_t>(obj.at("chargeReportCounter").as_uint64());
-            td.bepKeyVersion = static_cast<uint8_t>(obj.at("bepKeyVersion").as_uint64());
-            td.rsv14 = static_cast<uint32_t>(obj.at("rsv14").as_uint64());
+            td.chargeReportCounter = static_cast<uint32_t>(obj.at("chargeReportCounter").as_int64());
+            td.bepKeyVersion = static_cast<uint8_t>(obj.at("bepKeyVersion").as_int64());
+            td.rsv14 = static_cast<uint32_t>(obj.at("rsv14").as_int64());
             
             const boost::json::array& bepCertificateArray = obj.at("bepCertificate").as_array();
             td.bepCertificate.clear();
             for (auto& bc : bepCertificateArray)
-                td.bepCertificate.push_back(static_cast<uint8_t>(bc.as_uint64()));
+                td.bepCertificate.push_back(static_cast<uint8_t>(bc.as_int64()));
 
             return td;
+        }
+
+        // Convert to string (debug-friendly)
+        std::string to_string() const
+        {
+            auto vec_to_hex = [](const std::vector<uint8_t>& v) {
+                std::ostringstream oss;
+                oss << "[";
+                for (size_t i = 0; i < v.size(); ++i)
+                {
+                    oss << std::hex << std::uppercase << static_cast<int>(v[i]);
+                    if (i + 1 < v.size()) oss << " ";
+                }
+                oss << "]";
+                return oss.str();
+            };
+
+            std::ostringstream oss;
+            oss << "transactionData {"
+                << " deductCommandSerialNum=" << deductCommandSerialNum
+                << ", protocolVer=" << static_cast<int>(protocolVer)
+                << ", resultDeduction=" << static_cast<int>(resultDeduction)
+                << ", subSystemLabel=" << subSystemLabel
+                << ", rsv=" << rsv
+                << ", obuLabel=" << obuLabel
+                << ", rsv1=" << rsv1
+                << ", vechicleNumber=" << vec_to_hex(vechicleNumber)
+                << ", rsv2=" << rsv2
+                << ", transactionRoute=" << static_cast<int>(transactionRoute)
+                << ", rsv3=" << static_cast<int>(rsv3)
+                << ", frontendPaymentViolation=" << static_cast<int>(frontendPaymentViolation)
+                << ", backendPaymentViolation=" << static_cast<int>(backendPaymentViolation)
+                << ", transactionType=" << static_cast<int>(transactionType)
+                << ", rsv4=" << static_cast<int>(rsv4)
+                << ", parkingStart=" << static_cast<int>(parkingStartDay) << "/"
+                                    << static_cast<int>(parkingStartMonth) << "/"
+                                    << parkingStartYear << " "
+                                    << static_cast<int>(parkingStartHour) << ":"
+                                    << static_cast<int>(parkingStartMinute) << ":"
+                                    << static_cast<int>(parkingStartSecond)
+                << ", parkingEnd=" << static_cast<int>(parkingEndDay) << "/"
+                                << static_cast<int>(parkingEndMonth) << "/"
+                                << parkingEndYear << " "
+                                << static_cast<int>(parkingEndHour) << ":"
+                                << static_cast<int>(parkingEndMinute) << ":"
+                                << static_cast<int>(parkingEndSecond)
+                << ", paymentFee=" << paymentFee
+                << ", fepTime=" << fepTime
+                << ", trp=" << trp
+                << ", indicationLastAutoLoad=" << static_cast<int>(indicationLastAutoLoad)
+                << ", can=" << vec_to_hex(can)
+                << ", lastCreditTransactionHeader=" << lastCreditTransactionHeader
+                << ", lastCreditTransactionTRP=" << lastCreditTransactionTRP
+                << ", purseBalanceBeforeTransaction=" << purseBalanceBeforeTransaction
+                << ", badDebtCounter=" << static_cast<int>(badDebtCounter)
+                << ", transactionStatus=" << static_cast<int>(transactionStatus)
+                << ", debitOption=" << static_cast<int>(debitOption)
+                << ", autoLoadAmount=" << autoLoadAmount
+                << ", counterData=" << counterData
+                << ", signedCertificate=" << signedCertificate
+                << ", purseBalanceAfterTransaction=" << purseBalanceAfterTransaction
+                << ", lastTransactionDebitOptionbyte=" << static_cast<int>(lastTransactionDebitOptionbyte)
+                << ", previousTransactionHeader=" << previousTransactionHeader
+                << ", previousTRP=" << previousTRP
+                << ", previousPurseBalance=" << previousPurseBalance
+                << ", previousCounterData=" << previousCounterData
+                << ", previousTransactionSignedCertificate=" << previousTransactionSignedCertificate
+                << ", previousPurseStatus=" << static_cast<int>(previousPurseStatus)
+                << ", bepPaymentFeeAmount=" << bepPaymentFeeAmount
+                << ", bepTimeOfReport=" << vec_to_hex(bepTimeOfReport)
+                << ", chargeReportCounter=" << chargeReportCounter
+                << ", bepKeyVersion=" << static_cast<int>(bepKeyVersion)
+                << ", bepCertificate=" << vec_to_hex(bepCertificate)
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1334,8 +1728,8 @@ public:
             obj["sequenceNoOfRequestMsg"] = sequenceNoOfRequestMsg;
             obj["result"] = result;
             obj["rsv_lsb"] = rsv_lsb;
-            obj["rsv_msb"] = rsv_msb;
-            obj["obuLabel"] = obuLabel;
+            obj["rsv_msb"] = std::to_string(rsv_msb);
+            obj["obuLabel"] = std::to_string(obuLabel);
             obj["rsv1"] = rsv1;
 
             return obj;
@@ -1347,14 +1741,29 @@ public:
             cpoInformationDisplayResult cpoids;
             const boost::json::object& obj = jv.as_object();
 
-            cpoids.sequenceNoOfRequestMsg = static_cast<uint16_t>(obj.at("sequenceNoOfRequestMsg").as_uint64());
-            cpoids.result = static_cast<uint8_t>(obj.at("result").as_uint64());
-            cpoids.rsv_lsb = static_cast<uint32_t>(obj.at("rsv_lsb").as_uint64());
-            cpoids.rsv_msb = obj.at("rsv_msb").as_uint64();
-            cpoids.obuLabel = obj.at("obuLabel").as_uint64();
-            cpoids.rsv1 = static_cast<uint32_t>(obj.at("rsv1").as_uint64());
+            cpoids.sequenceNoOfRequestMsg = static_cast<uint16_t>(obj.at("sequenceNoOfRequestMsg").as_int64());
+            cpoids.result = static_cast<uint8_t>(obj.at("result").as_int64());
+            cpoids.rsv_lsb = static_cast<uint32_t>(obj.at("rsv_lsb").as_int64());
+            cpoids.rsv_msb = std::stoull(obj.at("rsv_msb").as_string().c_str());
+            cpoids.obuLabel = std::stoull(obj.at("obuLabel").as_string().c_str());
+            cpoids.rsv1 = static_cast<uint32_t>(obj.at("rsv1").as_int64());
 
             return cpoids;
+        }
+
+         // Convert to string (debug-friendly)
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "cpoInformationDisplayResult {"
+                << " sequenceNoOfRequestMsg=" << sequenceNoOfRequestMsg
+                << ", result=" << static_cast<int>(result)
+                << ", rsv_lsb=" << rsv_lsb
+                << ", rsv_msb=" << rsv_msb
+                << ", obuLabel=" << obuLabel
+                << ", rsv1=" << rsv1
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1372,8 +1781,8 @@ public:
             boost::json::object obj;
             obj["result"] = result;
             obj["rsv_lsb"] = rsv_lsb;
-            obj["rsv_msb"] = rsv_msb;
-            obj["obuLabel"] = obuLabel;
+            obj["rsv_msb"] = std::to_string(rsv_msb);
+            obj["obuLabel"] = std::to_string(obuLabel);
             obj["rsv1"] = rsv1;
 
             return obj;
@@ -1385,13 +1794,27 @@ public:
             carparkProcessCompleteResult cpcr;
             const boost::json::object& obj = jv.as_object();
 
-            cpcr.result = static_cast<uint8_t>(obj.at("result").as_uint64());
-            cpcr.rsv_lsb = static_cast<uint32_t>(obj.at("rsv_lsb").as_uint64());
-            cpcr.rsv_msb = obj.at("rsv_msb").as_uint64();
-            cpcr.obuLabel = obj.at("obuLabel").as_uint64();
-            cpcr.rsv1 = static_cast<uint32_t>(obj.at("rsv1").as_uint64());
+            cpcr.result = static_cast<uint8_t>(obj.at("result").as_int64());
+            cpcr.rsv_lsb = static_cast<uint32_t>(obj.at("rsv_lsb").as_int64());
+            cpcr.rsv_msb = std::stoull(obj.at("rsv_msb").as_string().c_str());
+            cpcr.obuLabel = std::stoull(obj.at("obuLabel").as_string().c_str());
+            cpcr.rsv1 = static_cast<uint32_t>(obj.at("rsv1").as_int64());
 
             return cpcr;
+        }
+
+        // Convert to string (debug-friendly)
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "carparkProcessCompleteResult {"
+                << " result=" << static_cast<int>(result)
+                << ", rsv_lsb=" << rsv_lsb
+                << ", rsv_msb=" << rsv_msb
+                << ", obuLabel=" << obuLabel
+                << ", rsv1=" << rsv1
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1420,12 +1843,25 @@ public:
             eepRestartInquiry eepri;
             const boost::json::object& obj = jv.as_object();
 
-            eepri.typeOfRestart = static_cast<uint8_t>(obj.at("typeOfRestart").as_uint64());
-            eepri.responseDeadline = static_cast<uint8_t>(obj.at("responseDeadline").as_uint64());
-            eepri.maxRetryCount = static_cast<uint8_t>(obj.at("maxRetryCount").as_uint64());
-            eepri.retryCounter = static_cast<uint8_t>(obj.at("retryCounter").as_uint64());
+            eepri.typeOfRestart = static_cast<uint8_t>(obj.at("typeOfRestart").as_int64());
+            eepri.responseDeadline = static_cast<uint8_t>(obj.at("responseDeadline").as_int64());
+            eepri.maxRetryCount = static_cast<uint8_t>(obj.at("maxRetryCount").as_int64());
+            eepri.retryCounter = static_cast<uint8_t>(obj.at("retryCounter").as_int64());
 
             return eepri;
+        }
+
+        // Convert to string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "eepRestartInquiry {"
+                << " typeOfRestart=" << static_cast<int>(typeOfRestart)
+                << ", responseDeadline=" << static_cast<int>(responseDeadline)
+                << ", maxRetryCount=" << static_cast<int>(maxRetryCount)
+                << ", retryCounter=" << static_cast<int>(retryCounter)
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1466,18 +1902,37 @@ public:
             notificationLog nl;
             const boost::json::object& obj = jv.as_object();
 
-            nl.day = static_cast<uint8_t>(obj.at("day").as_uint64());
-            nl.month = static_cast<uint8_t>(obj.at("month").as_uint64());
-            nl.year = static_cast<uint16_t>(obj.at("year").as_uint64());
-            nl.rsv = static_cast<uint8_t>(obj.at("rsv").as_uint64());
-            nl.second = static_cast<uint8_t>(obj.at("second").as_uint64());
-            nl.minute = static_cast<uint8_t>(obj.at("minute").as_uint64());
-            nl.hour = static_cast<uint8_t>(obj.at("hour").as_uint64());
-            nl.notificationType = static_cast<uint8_t>(obj.at("notificationType").as_uint64());
-            nl.errorCode = static_cast<uint8_t>(obj.at("errorCode").as_uint64());
-            nl.rsv1 = static_cast<uint16_t>(obj.at("rsv1").as_uint64());
+            nl.day = static_cast<uint8_t>(obj.at("day").as_int64());
+            nl.month = static_cast<uint8_t>(obj.at("month").as_int64());
+            nl.year = static_cast<uint16_t>(obj.at("year").as_int64());
+            nl.rsv = static_cast<uint8_t>(obj.at("rsv").as_int64());
+            nl.second = static_cast<uint8_t>(obj.at("second").as_int64());
+            nl.minute = static_cast<uint8_t>(obj.at("minute").as_int64());
+            nl.hour = static_cast<uint8_t>(obj.at("hour").as_int64());
+            nl.notificationType = static_cast<uint8_t>(obj.at("notificationType").as_int64());
+            nl.errorCode = static_cast<uint8_t>(obj.at("errorCode").as_int64());
+            nl.rsv1 = static_cast<uint16_t>(obj.at("rsv1").as_int64());
 
             return nl;
+        }
+
+        // Convert to printable string
+        std::string to_string() const
+        {
+            std::ostringstream oss;
+            oss << "notificationLog {"
+                << " day=" << static_cast<int>(day)
+                << ", month=" << static_cast<int>(month)
+                << ", year=" << year
+                << ", time=" << static_cast<int>(hour) << ":"
+                            << static_cast<int>(minute) << ":"
+                            << static_cast<int>(second)
+                << ", notificationType=" << static_cast<int>(notificationType)
+                << ", errorCode=" << static_cast<int>(errorCode)
+                << ", rsv=" << static_cast<int>(rsv)
+                << ", rsv1=" << rsv1
+                << " }";
+            return oss.str();
         }
     };
 
@@ -1504,6 +1959,7 @@ public:
     void FnSendTimeCalibrationReq();
     void FnSendSetCarparkAvailabilityReq(const std::string& availLots_, const std::string& totalLots_);
     void FnSendCDDownloadReq();
+    void FnSendRestartInquiryResponseReq(uint8_t response);
     void FnEEPClientClose();
 
     /**
@@ -1526,6 +1982,7 @@ private:
     boost::asio::steady_timer connectTimer_;
     boost::asio::steady_timer sendTimer_;
     boost::asio::steady_timer responseTimer_;
+    boost::asio::steady_timer ackTimer_;
     boost::asio::steady_timer watchdogTimer_;
     boost::asio::steady_timer healthStatusTimer_;
     std::unique_ptr<AppTcpClient> client_;
@@ -1535,6 +1992,7 @@ private:
     STATE currentState_;
     std::mutex cmdQueueMutex_;
     static std::mutex currentCmdMutex_;
+    static std::mutex currentCmdRequestedMutex_;
     std::priority_queue<Command, std::vector<Command>, CompareCommand> commandQueue_;
     uint64_t commandSequence_;
     Command currentCmd;
@@ -1549,6 +2007,7 @@ private:
     static uint16_t lastDeductCmdSerialNo_;
     static std::mutex deductCmdSerialNoMutex_;
     int watchdogMissedRspCount_;
+    bool lastConnectionState_;
     EEPClient();
     void startIoContextThread();
     void handleConnect(bool success, const std::string& message);
@@ -1565,9 +2024,12 @@ private:
     void checkCommandQueue();
     void enqueueCommand(CommandType type, int priority, std::shared_ptr<CommandDataBase> data);
     void popFromCommandQueueAndEnqueueWrite();
+    void clearCommandQueue();
     std::string getCommandString(CommandType cmd);
     void setCurrentCmd(Command cmd);
     Command getCurrentCmd();
+    void setCurrentCmdRequested(Command cmd);
+    Command getCurrentCmdRequested();
     void incrementSequenceNo();
     uint16_t getSequenceNo();
     void incrementDeductCmdSerialNo();
@@ -1583,6 +2045,8 @@ private:
     void handleSendTimerTimeout(const boost::system::error_code& error);
     void startResponseTimer();
     void handleResponseTimeout(const boost::system::error_code& error);
+    void startAckTimer();
+    void handleAckTimeout(const boost::system::error_code& error);
     void startWatchdogTimer();
     void handleWatchdogTimeout(const boost::system::error_code& error);
     void startHealthStatusTimer();
@@ -1596,13 +2060,19 @@ private:
     bool isValidCheckSum(const std::vector<uint8_t>& data);
     bool parseMessage(const std::vector<uint8_t>& data, MessageHeader& header, std::vector<uint8_t>& body);
     void printField(std::ostringstream& oss, const std::string& label, uint64_t value, int hexWidth, const std::string& remark);
+    void printFieldHex(std::ostringstream& oss, const std::string& label, uint64_t value, int hexWidth, const std::string& remark);
     void printFieldChar(std::ostringstream& oss, const std::string& label, const std::vector<uint8_t>& data, const std::string& remark);
+    void printFieldHexChar(std::ostringstream& oss, const std::string& label, const std::vector<uint8_t>& data, const std::string& remark);
     bool isValidSourceDestination(uint8_t source, uint8_t destination);
     std::string getFieldDescription(uint8_t value, const std::unordered_map<uint8_t, std::string>& map);
     void showParsedMessage(const MessageHeader& header, const std::vector<uint8_t>& body);
-    void handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body);
-    void handleParsedNotificationMessage(const MessageHeader& header, const std::vector<uint8_t>& body);
+    void handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg);
+    void handleParsedNotificationMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg);
     void handleInvalidMessage(const std::vector<uint8_t>& data, uint8_t reasonCode_);
-    bool isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTypeCode_);
-    bool isResponseNotificationReceived(const uint8_t& dataTypeCode_);
+    bool isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTypeCode_, const std::vector<uint8_t>& msgBody);
+    bool isNotificationReceived(const uint8_t& dataTypeCode_);
+    bool doesCmdRequireNotification(Command cmd);
+    bool isResponseComplete(Command cmd, const uint8_t& dataTypeCode_);
+    bool isResponseNotificationComplete(Command cmd, const uint8_t& dataTypeCode_);
+    void notifyConnectionState(bool connected);
 };

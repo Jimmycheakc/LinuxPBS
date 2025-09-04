@@ -4786,3 +4786,697 @@ void operation::ReceivedEntryRecord()
        CloseExitOperation(FreeParking);
     } 
 }
+
+void operation::processEEP(const std::string& eventData)
+{
+    //writelog(__func__, "OPR");
+
+    try
+    {
+        // Parse the string event data
+        boost::json::value parsed = boost::json::parse(eventData);
+        struct EEPClient::EEPEventWrapper eventParsed = EEPClient::EEPEventWrapper::from_json(parsed);
+
+        // Lambda to parse and log a payload
+        auto parsePayload = [&](auto& outputField, const std::string& payload, const std::string& label)
+        {
+            typedef typename std::remove_reference<decltype(outputField)>::type PayloadType;
+            boost::json::value payloadParsed = boost::json::parse(payload);
+            outputField = PayloadType::from_json(payloadParsed);
+
+            std::ostringstream oss;
+            oss << "EEP Payload [" << label << "] " << outputField.to_string();
+            writelog(oss.str(), "OPR");
+        };
+
+        auto toString = [](uint32_t value) -> std::string {
+            switch (value)
+            {
+                case static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS):      return "SUCCESS";
+                case static_cast<uint32_t>(EEPClient::MSG_STATUS::SEND_FAILED):  return "SEND_FAILED";
+                case static_cast<uint32_t>(EEPClient::MSG_STATUS::ACK_TIMEOUT):  return "ACK_TIMEOUT";
+                case static_cast<uint32_t>(EEPClient::MSG_STATUS::RSP_TIMEOUT):  return "RSP_TIMEOUT";
+                case static_cast<uint32_t>(EEPClient::MSG_STATUS::PARSE_FAILED): return "PARSE_FAILED";
+                default:                                              return "UNKNOWN";
+            }
+        };
+
+        // Handle UNKNOWN_REQ_CMD notifications
+        if (eventParsed.commandReqType == static_cast<uint32_t>(EEPClient::CommandType::UNKNOWN_REQ_CMD))
+        {
+            if (eventParsed.messageStatus != static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+            {
+                return;
+            }
+
+            switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+            {
+                case EEPClient::MESSAGE_CODE::NOTIFICATION_LOG:
+                {
+                    EEPClient::notificationLog NotifLog;
+                    parsePayload(NotifLog, eventParsed.payload, "NOTIFICATION_LOG");
+                    break;
+                }
+                case EEPClient::MESSAGE_CODE::DI_STATUS_NOTIFICATION:
+                {
+                    EEPClient::diStatusNotification diStatusNotif;
+                    parsePayload(diStatusNotif, eventParsed.payload, "DI_STATUS_NOTIFICATION");
+                    break;
+                }
+                case EEPClient::MESSAGE_CODE::EEP_RESTART_INQUIRY:
+                {
+                    EEPClient::eepRestartInquiry eepRestartInqNotif;
+                    parsePayload(eepRestartInqNotif, eventParsed.payload, "EEP_RESTART_INQUIRY");
+                    break;
+                }
+                case EEPClient::MESSAGE_CODE::TRANSACTION_DATA:
+                {
+                    EEPClient::transactionData transDataNotif;
+                    parsePayload(transDataNotif, eventParsed.payload, "TRANSACTION_DATA");
+                    break;
+                }
+                case EEPClient::MESSAGE_CODE::OBU_INFORMATION_NOTIFICATION:
+                {
+                    EEPClient::obuInformationNotification obuInfoNotif;
+                    parsePayload(obuInfoNotif, eventParsed.payload, "OBU_INFORMATION_NOTIFICATION");
+                    break;
+                }
+                case EEPClient::MESSAGE_CODE::CPO_INFORMATION_DISPLAY_RESULT:
+                {
+                    EEPClient::cpoInformationDisplayResult cpoInfoDisplayResultNotif;
+                    parsePayload(cpoInfoDisplayResultNotif, eventParsed.payload, "CPO_INFORMATION_DISPLAY_RESULT");
+                    break;
+                }
+                case EEPClient::MESSAGE_CODE::CARPARK_PROCESS_COMPLETE_RESULT:
+                {
+                    EEPClient::carparkProcessCompleteResult carparkProcessCompleteResultNotif;
+                    parsePayload(carparkProcessCompleteResultNotif, eventParsed.payload, "CARPARK_PROCESS_COMPLETE_RESULT");
+                    break;
+                }
+                default:
+                {
+                    writelog("EEP Notification: UNKNOWN.", "OPR");
+                    break;
+                }
+            }
+            return;
+        }
+
+        // Handle request commands
+        switch (static_cast<EEPClient::CommandType>(eventParsed.commandReqType))
+        {
+            case EEPClient::CommandType::START_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::START_RESPONSE:
+                        {
+                            EEPClient::startResponse startResp;
+                            parsePayload(startResp, eventParsed.payload, "START_RESPONSE");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak startRespNak;
+                            parsePayload(startRespNak, eventParsed.payload, "START_RESPONSE_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: START_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: START_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::STOP_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::STOP_RESPONSE:
+                        {
+                            EEPClient::stopResponse stopResp;
+                            parsePayload(stopResp, eventParsed.payload, "STOP_RESPONSE");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak stopRespNak;
+                            parsePayload(stopRespNak, eventParsed.payload, "STOP_RESPONSE_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: STOP_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: STOP_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::DI_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::DI_STATUS_RESPONSE:
+                        {
+                            EEPClient::diStatusResponse diStatusResp;
+                            parsePayload(diStatusResp, eventParsed.payload, "DI_STATUS_RESPONSE");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak diStatusNak;
+                            parsePayload(diStatusNak, eventParsed.payload, "DI_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: DI_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: DI_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::SET_DI_PORT_CONFIG_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack setDiPortConfigAck;
+                            parsePayload(setDiPortConfigAck, eventParsed.payload, "SET_DI_PORT_CONFIG_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak setDiPortConfigNak;
+                            parsePayload(setDiPortConfigNak, eventParsed.payload, "SET_DI_PORT_CONFIG_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: SET_DI_PORT_CONFIG_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: SET_DI_PORT_CONFIG_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::GET_OBU_INFO_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::OBU_INFORMATION_NOTIFICATION:
+                        {
+                            EEPClient::obuInformationNotification OBUInfoNotif;
+                            parsePayload(OBUInfoNotif, eventParsed.payload, "OBU_INFORMATION_NOTIFICATION");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack OBUInfoReqAck;
+                            parsePayload(OBUInfoReqAck, eventParsed.payload, "GET_OBU_INFO_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak OBUInfoReqNak;
+                            parsePayload(OBUInfoReqNak, eventParsed.payload, "GET_OBU_INFO_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: GET_OBU_INFO_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: GET_OBU_INFO_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::GET_OBU_INFO_STOP_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack getOBUInfoStopReqAck;
+                            parsePayload(getOBUInfoStopReqAck, eventParsed.payload, "GET_OBU_INFO_STOP_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak getOBUInfoStopReqNak;
+                            parsePayload(getOBUInfoStopReqNak, eventParsed.payload, "GET_OBU_INFO_STOP_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: GET_OBU_INFO_STOP_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: GET_OBU_INFO_STOP_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::DEDUCT_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::TRANSACTION_DATA:
+                        {
+                            EEPClient::transactionData transData;
+                            parsePayload(transData, eventParsed.payload, "TRANSACTION_DATA");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ackDeduct deductReqAck;
+                            parsePayload(deductReqAck, eventParsed.payload, "DEDUCT_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak deductReqNak;
+                            parsePayload(deductReqNak, eventParsed.payload, "DEDUCT_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: DEDUCT_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: DEDUCT_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::DEDUCT_STOP_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack deductStopReqAck;
+                            parsePayload(deductStopReqAck, eventParsed.payload, "DEDUCT_STOP_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak deductStopReqNak;
+                            parsePayload(deductStopReqNak, eventParsed.payload, "DEDUCT_STOP_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: DEDUCT_STOP_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: DEDUCT_STOP_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::TRANSACTION_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::TRANSACTION_DATA:
+                        {
+                            EEPClient::transactionData transData;
+                            parsePayload(transData, eventParsed.payload, "TRANSACTION_DATA");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack transReqAck;
+                            parsePayload(transReqAck, eventParsed.payload, "TRANSACTION_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak transReqNak;
+                            parsePayload(transReqNak, eventParsed.payload, "TRANSACTION_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: TRANSACTION_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: TRANSACTION_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::CPO_INFO_DISPLAY_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::CPO_INFORMATION_DISPLAY_RESULT:
+                        {
+                            EEPClient::cpoInformationDisplayResult cpoInfoDisplayResult;
+                            parsePayload(cpoInfoDisplayResult, eventParsed.payload, "CPO_INFORMATION_DISPLAY_RESULT");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack cpoInformationDisplayAck;
+                            parsePayload(cpoInformationDisplayAck, eventParsed.payload, "CPO_INFO_DISPLAY_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak cpoInformationDisplayNak;
+                            parsePayload(cpoInformationDisplayNak, eventParsed.payload, "CPO_INFO_DISPLAY_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: CPO_INFO_DISPLAY_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: CPO_INFO_DISPLAY_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::CARPARK_PROCESS_COMPLETE_RESULT:
+                        {
+                            EEPClient::carparkProcessCompleteResult processCompleteResult;
+                            parsePayload(processCompleteResult, eventParsed.payload, "CARPARK_PROCESS_COMPLETE_RESULT");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack processCompleteResultAck;
+                            parsePayload(processCompleteResultAck, eventParsed.payload, "CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak processCompleteResultNak;
+                            parsePayload(processCompleteResultNak, eventParsed.payload, "CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack dsrcProcessCompleteNotifAck;
+                            parsePayload(dsrcProcessCompleteNotifAck, eventParsed.payload, "DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak dsrcProcessCompleteNotifNak;
+                            parsePayload(dsrcProcessCompleteNotifNak, eventParsed.payload, "DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack stopReqOfRelatedInfoDistAck;
+                            parsePayload(stopReqOfRelatedInfoDistAck, eventParsed.payload, "STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak stopReqOfRelatedInfoDistNak;
+                            parsePayload(stopReqOfRelatedInfoDistNak, eventParsed.payload, "STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::DSRC_STATUS_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::DSRC_STATUS_RESPONSE:
+                        {
+                            EEPClient::dsrcStatusResponse dsrcStatusResp;
+                            parsePayload(dsrcStatusResp, eventParsed.payload, "DSRC_STATUS_RESPONSE");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak dsrcStatusReqNak;
+                            parsePayload(dsrcStatusReqNak, eventParsed.payload, "DSRC_STATUS_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: DSRC_STATUS_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: DSRC_STATUS_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::TIME_CALIBRATION_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::TIME_CALIBRATION_RESPONSE:
+                        {
+                            EEPClient::timeCalibrationResponse timeCalResp;
+                            parsePayload(timeCalResp, eventParsed.payload, "TIME_CALIBRATION_RESPONSE");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak timeCalReqNak;
+                            parsePayload(timeCalReqNak, eventParsed.payload, "TIME_CALIBRATION_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: TIME_CALIBRATION_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: TIME_CALIBRATION_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::SET_CARPARK_AVAIL_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack setCarparkAvailReqAck;
+                            parsePayload(setCarparkAvailReqAck, eventParsed.payload, "SET_CARPARK_AVAIL_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak setCarparkAvailReqNak;
+                            parsePayload(setCarparkAvailReqNak, eventParsed.payload, "SET_CARPARK_AVAIL_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: SET_CARPARK_AVAIL_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: SET_CARPARK_AVAIL_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::CD_DOWNLOAD_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack cdDownloadReqAck;
+                            parsePayload(cdDownloadReqAck, eventParsed.payload, "CD_DOWNLOAD_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak cdDownloadReqNak;
+                            parsePayload(cdDownloadReqNak, eventParsed.payload, "CD_DOWNLOAD_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: CD_DOWNLOAD_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: CD_DOWNLOAD_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+            case EEPClient::CommandType::EEP_RESTART_INQUIRY_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack eepRestartInqReqAck;
+                            parsePayload(eepRestartInqReqAck, eventParsed.payload, "EEP_RESTART_INQUIRY_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak eepRestartInqReqNak;
+                            parsePayload(eepRestartInqReqNak, eventParsed.payload, "EEP_RESTART_INQUIRY_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: EEP_RESTART_INQUIRY_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: EEP_RESTART_INQUIRY_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        writelog("Exception in " + std::string(__func__) + ": " + std::string(ex.what()), "EEP");
+    }
+}
