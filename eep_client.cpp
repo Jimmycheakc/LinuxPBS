@@ -4075,13 +4075,17 @@ void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
         case CommandType::START_REQ_CMD:
         case CommandType::STOP_REQ_CMD:
         case CommandType::DI_REQ_CMD:
+        case CommandType::SET_DI_PORT_CONFIG_CMD:
         case CommandType::GET_OBU_INFO_REQ_CMD:
         case CommandType::GET_OBU_INFO_STOP_REQ_CMD:
         case CommandType::DEDUCT_REQ_CMD:
         case CommandType::DEDUCT_STOP_REQ_CMD:
+        case CommandType::TRANSACTION_REQ_CMD:
         case CommandType::CPO_INFO_DISPLAY_REQ_CMD:
         case CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
         case CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD:
+        case CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD:
+        case CommandType::DSRC_STATUS_REQ_CMD:
         case CommandType::TIME_CALIBRATION_REQ_CMD:
         case CommandType::SET_CARPARK_AVAIL_REQ_CMD:
         case CommandType::CD_DOWNLOAD_REQ_CMD:
