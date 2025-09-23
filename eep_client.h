@@ -16,6 +16,8 @@ class EEPClient
 {
 public:
 
+    const std::string LOCAL_EEP_SETTLEMENT_FOLDER_PATH = "/home/root/carpark/EEP_SETTLEMENT";
+
     enum class PRIORITY : int
     {
         UNSOLICITED     = 0,
@@ -1998,6 +2000,7 @@ private:
     Command currentCmd;
     static uint16_t sequenceNo_;
     static std::mutex sequenceNoMutex_;
+    int iStationID_;
     std::string serverIP_;
     unsigned short serverPort_;
     int eepSourceId_;
@@ -2075,4 +2078,9 @@ private:
     bool isResponseComplete(Command cmd, const uint8_t& dataTypeCode_);
     bool isResponseNotificationComplete(Command cmd, const uint8_t& dataTypeCode_);
     void notifyConnectionState(bool connected);
+
+    // DSRC transaction record write to file
+    void processDSRCFeTx(const MessageHeader& header, const transactionData& txData);
+    void processDSRCBeTx(const MessageHeader& header, const transactionData& txData);
+    void writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string& data);
 };

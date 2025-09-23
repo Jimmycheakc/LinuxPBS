@@ -50,6 +50,20 @@ std::string Common::FnGetDateTime()
     return oss.str();
 }
 
+std::string Common::FnGetDateTimeFormat_yyyymmddhhmmssfff()
+{
+    auto now = std::chrono::system_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+    auto timer = std::chrono::system_clock::to_time_t(now);
+    struct tm timeinfo = {};
+    localtime_r(&timer, &timeinfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeinfo, "%Y%m%d%H%M%S");
+    oss << std::setfill('0') << std::setw(3) << ms.count();
+    return oss.str();
+}
+
 std::string Common::FnGetDateTimeFormat_ddmmyyy_hhmmss()
 {
     auto now = std::chrono::system_clock::now();
@@ -1182,6 +1196,14 @@ uint32_t Common::FnReadUint32LE(const std::vector<uint8_t>& buffer, std::size_t 
         (static_cast<uint32_t>(buffer[offset + 3]) << 24);
 }
 
+uint32_t Common::FnReadUint32BE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return (static_cast<uint32_t>(buffer[offset]) << 24) |
+        (static_cast<uint32_t>(buffer[offset + 1]) << 16) |
+        (static_cast<uint32_t>(buffer[offset + 2]) << 8) |
+        static_cast<uint32_t>(buffer[offset + 3]);
+}
+
 uint64_t Common::FnReadUint40BE(const std::vector<uint8_t>& buffer, std::size_t offset)
 {
     return (static_cast<uint64_t>(buffer[offset]) << 32) |
@@ -1211,6 +1233,17 @@ uint64_t Common::FnReadUint56LE(const std::vector<uint8_t>& buffer, std::size_t 
         (static_cast<uint64_t>(buffer[offset + 6]) << 48);
 }
 
+uint64_t Common::FnReadUint56BE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return (static_cast<uint64_t>(buffer[offset]) << 48) |
+        (static_cast<uint64_t>(buffer[offset + 1]) << 40) |
+        (static_cast<uint64_t>(buffer[offset + 2]) << 32) |
+        (static_cast<uint64_t>(buffer[offset + 3]) << 24) |
+        (static_cast<uint64_t>(buffer[offset + 4]) << 16) |
+        (static_cast<uint64_t>(buffer[offset + 5]) << 8) |
+        static_cast<uint64_t>(buffer[offset + 6]);
+}
+
 uint64_t Common::FnReadUint64LE(const std::vector<uint8_t>& buffer, std::size_t offset)
 {
     return static_cast<uint64_t>(buffer[offset]) |
@@ -1221,6 +1254,18 @@ uint64_t Common::FnReadUint64LE(const std::vector<uint8_t>& buffer, std::size_t 
         (static_cast<uint64_t>(buffer[offset + 5]) << 40) |
         (static_cast<uint64_t>(buffer[offset + 6]) << 48) |
         (static_cast<uint64_t>(buffer[offset + 7]) << 56);
+}
+
+uint64_t Common::FnReadUint64BE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return (static_cast<uint64_t>(buffer[offset]) << 56) |
+        (static_cast<uint64_t>(buffer[offset + 1]) << 48) |
+        (static_cast<uint64_t>(buffer[offset + 2]) << 40) |
+        (static_cast<uint64_t>(buffer[offset + 3]) << 32) |
+        (static_cast<uint64_t>(buffer[offset + 4]) << 24) |
+        (static_cast<uint64_t>(buffer[offset + 5]) << 16) |
+        (static_cast<uint64_t>(buffer[offset + 6]) << 8) |
+        static_cast<uint64_t>(buffer[offset + 7]);
 }
 
 bool Common::FnConvertDecimalStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian)

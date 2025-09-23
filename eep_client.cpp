@@ -1,5 +1,8 @@
 #include <algorithm>
+#include <boost/algorithm/string.hpp>
+#include <boost/filesystem.hpp>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <memory>
 #include <sstream>
@@ -33,6 +36,7 @@ EEPClient::EEPClient()
     reconnectTimer_(ioContext_),
     currentState_(EEPClient::STATE::IDLE),
     watchdogMissedRspCount_(0),
+    iStationID_(0),
     serverIP_(""),
     serverPort_(0),
     eepSourceId_(0),
@@ -60,12 +64,11 @@ void EEPClient::FnEEPClientInit(const std::string& serverIP, unsigned short serv
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    int iStationID = 0;
     bool exceptionFound = false;
 
     try
     {
-        iStationID = std::stoi(stationID);
+        iStationID_ = std::stoi(stationID);
     }
     catch(const std::exception& e)
     {
@@ -79,9 +82,9 @@ void EEPClient::FnEEPClientInit(const std::string& serverIP, unsigned short serv
     serverIP_ = serverIP;
     serverPort_ = serverPort;
     // Source ID = TS (Start from 0x60h - 9Fh) + station id
-    eepSourceId_ = 96 + iStationID;
+    eepSourceId_ = 96 + iStationID_;
     // Destination ID = EEP DSRC Device (0x20h - 0x5Fh) + station id
-    eepDestinationId_ = 32 + iStationID;
+    eepDestinationId_ = 32 + iStationID_;
 
     if (client_ && !exceptionFound)
     {
@@ -275,6 +278,10 @@ void EEPClient::FnSendDeductReq(const std::string& obuLabel_, const std::string&
         oss << "Result of Entry datetime parse: " << entryDateTimeParseSuccess << ", Entry datetime param value: " << entryTime_;
         oss << "Result of Exit datetime parse: " << exitDateTimeParseSuccess << ", Exit datetime param value: " << exitTime_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::DEDUCT_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -303,6 +310,10 @@ void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_)
         oss << __func__ << " failed to send. ";
         oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::DEDUCT_STOP_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -331,6 +342,10 @@ void EEPClient::FnSendTransactionReq(const std::string& obuLabel_)
         oss << __func__ << " failed to send. ";
         oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::TRANSACTION_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -385,6 +400,10 @@ void EEPClient::FnSendCPOInfoDisplayReq(const std::string& obuLabel_, const std:
         oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
         oss << "Result of data type parse: " << dataTypeParseSuccess << ", Data Type param value: " << parsedDataType_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::CPO_INFO_DISPLAY_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -428,6 +447,10 @@ void EEPClient::FnSendCarparkProcessCompleteNotificationReq(const std::string& o
         oss << " ,Result of processingResult parse: " << resultParseSuccess << ", processingResult param value: " << processingResult_;
         oss << " ,Result of fee parse: " << feeParseSuccess << ", fee param value: " << fee_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -452,6 +475,10 @@ void EEPClient::FnSendDSRCProcessCompleteNotificationReq(const std::string& obuL
         oss << __func__ << " failed to send. ";
         oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -476,6 +503,10 @@ void EEPClient::FnSendStopReqOfRelatedInfoDistributionReq(const std::string& obu
         oss << __func__ << " failed to send. ";
         oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -530,6 +561,10 @@ void EEPClient::FnSendSetCarparkAvailabilityReq(const std::string& availLots_, c
         oss << "Result of available lots parse: " << availLotsParseSuccess << ", available lots param value: " << availLots_;
         oss << "Result of total lots parse: " << totalLotsParseSuccess << ", total lots param value: " << totalLots_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+        struct Command cmdData = {};
+        cmdData.type = CommandType::SET_CARPARK_AVAIL_REQ_CMD;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -1210,9 +1245,9 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 uint8_t parkingEndMinute = body[62];
                 uint8_t parkingEndHour = body[63];
                 uint32_t paymentFee = Common::getInstance()->FnReadUint32LE(body, 64);
-                uint64_t fepTime = Common::getInstance()->FnReadUint56LE(body, 68);
+                uint64_t fepTime = Common::getInstance()->FnReadUint56BE(body, 68);
                 uint8_t rsv7 = body[75];
-                uint32_t trp = Common::getInstance()->FnReadUint32LE(body, 76);
+                uint32_t trp = Common::getInstance()->FnReadUint32BE(body, 76);
                 uint8_t indicationLastAutoLoad = body[80];
                 uint32_t rsv8 = Common::getInstance()->FnReadUint24LE(body, 81);
                 // CAN is CHAR data type based on protocol, so already big endian, no need to reverse
@@ -1541,7 +1576,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "RSV", rsv, 6);
                 break;
             }
-            case MESSAGE_CODE::EEP_RESTART_INQUIRY_RESPONSE:
+            case MESSAGE_CODE::EEP_RESTART_INQUIRY:
             {
                 if (body.size() < 4)
                 {
@@ -1559,7 +1594,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                     {0x01, "EEP restarts after OPC/TS notify permission of restart by 'EEP restart inquiry response' message"}
                 };
 
-                printField(oss, "Type of Restart", typeOfRestart, 2);
+                printField(oss, "Type of Restart", typeOfRestart, 2, getFieldDescription(typeOfRestart, typeOfRestartMap));
                 printField(oss, "Response Deadline", responseDeadline, 2, " Range of value : 1 - 10 [Sec]");
                 printField(oss, "Max Retry Count", maxRetryCount, 2);
                 printField(oss, "Retry Counter", retryCounter, 2);
@@ -2070,9 +2105,9 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
             td.parkingEndMinute = body[62];
             td.parkingEndHour = body[63];
             td.paymentFee = Common::getInstance()->FnReadUint32LE(body, 64);
-            td.fepTime = Common::getInstance()->FnReadUint56LE(body, 68);
+            td.fepTime = Common::getInstance()->FnReadUint56BE(body, 68);
             td.rsv7 = body[75];
-            td.trp = Common::getInstance()->FnReadUint32LE(body, 76);
+            td.trp = Common::getInstance()->FnReadUint32BE(body, 76);
             td.indicationLastAutoLoad = body[80];
             td.rsv8 = Common::getInstance()->FnReadUint24LE(body, 81);
             // CAN is CHAR data type based on protocol, so already big endian, no need to reverse
@@ -2121,6 +2156,17 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
             eepEvt.messageCode = static_cast<uint8_t>(MESSAGE_CODE::TRANSACTION_DATA);
             eepEvt.messageStatus = static_cast<uint32_t>(MSG_STATUS::SUCCESS);
             eepEvt.payload = boost::json::serialize(jv);
+
+            // Process frontend transaction
+            if (td.resultDeduction == 0x01)
+            {
+                processDSRCFeTx(header, td);
+            }
+            // Process backend transaction
+            else if (td.resultDeduction == 0x02)
+            {
+                processDSRCBeTx(header, td);
+            }
 
             break;
         }
@@ -3150,18 +3196,27 @@ void EEPClient::checkCommandQueue()
 
 void EEPClient::enqueueCommand(CommandType type, int priority, std::shared_ptr<CommandDataBase> data)
 {
-    boost::asio::post(strand_, [this, type, priority, data] () {
-        {
-            std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    if (client_->isConnected())
+    {
+        boost::asio::post(strand_, [this, type, priority, data] () {
+            {
+                std::unique_lock<std::mutex> lock(cmdQueueMutex_);
 
-            std::ostringstream oss;
-            oss << "Sending EEP Command to queue: " << getCommandString(type);
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+                std::ostringstream oss;
+                oss << "Sending EEP Command to queue: " << getCommandString(type);
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-            commandQueue_.emplace(type, priority, commandSequence_++, data);
-        }
-        checkCommandQueue();
-    });
+                commandQueue_.emplace(type, priority, commandSequence_++, data);
+            }
+            checkCommandQueue();
+        });
+    }
+    else
+    {
+        struct Command cmdData = {};
+        cmdData.type = type;
+        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+    }
 }
 
 void EEPClient::popFromCommandQueueAndEnqueueWrite()
@@ -4131,5 +4186,300 @@ void EEPClient::notifyConnectionState(bool connected)
         lastConnectionState_ = connected;
         EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientConnectionState", connected);
         Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientConnectionState.", logFileName_, "EEP");
+    }
+}
+
+void EEPClient::processDSRCFeTx(const MessageHeader& header, const transactionData& txData)
+{
+    std::string vehicleNumberStr(txData.vechicleNumber.begin(), txData.vechicleNumber.end());
+    vehicleNumberStr.erase(std::find(vehicleNumberStr.begin(), vehicleNumberStr.end(), '\0'), vehicleNumberStr.end());
+
+    std::ostringstream ossCAN;
+    for (auto byte : txData.can)
+    {
+        ossCAN << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+    }
+
+
+    std::ostringstream oss;
+    // Detail Record
+        // Record Type
+    oss << "D"
+        // Destination ID
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.destinationID_)
+        // Source ID
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.sourceID_)
+        // Data Type Code
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.dataTypeCode_)
+        // Date Time
+        << std::setw(4) << std::dec << static_cast<int>(header.year_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.month_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.day_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.hour_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.minute_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.second_)
+        << "000"
+        // Sequence Number
+        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.seqNo_)
+        // Data Length
+        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.dataLen_)
+        // Deduct command serial number
+        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(txData.deductCommandSerialNum)
+        // Protocol Version
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.protocolVer)
+        // Result of Deduction
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.resultDeduction)
+        // SubSystem Label
+        << std::setw(8) << std::setfill('0') << std::dec << static_cast<int>(txData.subSystemLabel)
+        // OBU Label
+        << std::setw(10) << std::setfill('0') << std::hex << static_cast<int>(txData.obuLabel)
+        // Vehicle Number
+        << std::left << std::setw(13) << std::setfill(' ') << vehicleNumberStr
+        << std::right
+        // Transaction Route
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionRoute)
+        // Frontend Payment Violation
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.frontendPaymentViolation)
+        // Transaction Type
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionType)
+        // Parking Start Date Time
+        << std::setw(4) << std::dec << static_cast<int>(txData.parkingStartYear)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMonth)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartDay)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartHour)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMinute)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartSecond)
+        << "000"
+        // Parking End Date Time
+        << std::setw(4) << std::dec << static_cast<int>(txData.parkingEndYear)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMonth)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndDay)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndHour)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMinute)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndSecond)
+        << "000"
+        // Payment Fee
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.paymentFee)
+        // FEP Date Time
+        << std::setw(14) << std::setfill('0') << std::hex << static_cast<int>(txData.fepTime)
+        << "000"
+        // TRP
+        << std::setw(8) << std::setfill('0') << std::hex << static_cast<int>(txData.trp)
+        // Inidication of Last AutoLoad
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.indicationLastAutoLoad)
+        // CAN
+        << std::setw(16) << std::setfill('0') << ossCAN.str()
+        // Last Credit Transaction Header
+        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.lastCreditTransactionHeader)
+        // Last Credit Transaction TRP
+        << std::setw(8) << std::setfill('0') << std::hex << static_cast<int>(txData.lastCreditTransactionTRP)
+        // Purse Balance Before Transaction
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.purseBalanceBeforeTransaction)
+        // Bad Debt Counter
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.badDebtCounter)
+        // Transaction Status
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionStatus)
+        // Debit Option
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.debitOption)
+        // AutoLoad Amount
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.autoLoadAmount)
+        // Counter Data
+        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.counterData)
+        // Signed Certificate
+        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.signedCertificate)
+        // Purse Balance after transaction
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.purseBalanceAfterTransaction)
+        // Last Transaction Debit Option
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.lastTransactionDebitOptionbyte)
+        // Previous Transaction Header
+        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.previousTransactionHeader)
+        // Previous TRP
+        << std::setw(8) << std::setfill('0') << std::hex << static_cast<int>(txData.previousTRP)
+        // Previous Purse balance
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.previousPurseBalance)
+        // Previous Counter Data
+        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.previousCounterData)
+        // Previous Transaction Signed Certificate
+        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.previousTransactionSignedCertificate)
+        // Previous Purse Status
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.previousPurseStatus)
+        // RFU
+        << std::string(31, ' ')
+        << "\n";
+    
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+    writeDSRCFeOrBeTxToCollFile(true, oss.str());
+}
+
+void EEPClient::processDSRCBeTx(const MessageHeader& header, const transactionData& txData)
+{
+    std::string vehicleNumberStr(txData.vechicleNumber.begin(), txData.vechicleNumber.end());
+    vehicleNumberStr.erase(std::find(vehicleNumberStr.begin(), vehicleNumberStr.end(), '\0'), vehicleNumberStr.end());
+
+    std::ostringstream ossCAN;
+    for (auto byte : txData.can)
+    {
+        ossCAN << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+    }
+
+    std::ostringstream ossBepTimeOfReport;
+    for (auto byte : txData.bepTimeOfReport)
+    {
+        ossBepTimeOfReport << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+    }
+
+    std::ostringstream ossBepCertificate;
+    for (auto byte : txData.bepCertificate)
+    {
+        ossBepCertificate << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+    }
+
+    std::ostringstream oss;
+    // Detail Record
+        // Record Type
+    oss << "D"
+        // Destination ID
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.destinationID_)
+        // Source ID
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.sourceID_)
+        // Data Type Code
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.dataTypeCode_)
+        // Date Time
+        << std::setw(4) << std::dec << static_cast<int>(header.year_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.month_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.day_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.hour_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.minute_)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.second_)
+        << "000"
+        // Sequence Number
+        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.seqNo_)
+        // Data Length
+        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.dataLen_)
+        // Deduct command serial number
+        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(txData.deductCommandSerialNum)
+        // Protocol Version
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.protocolVer)
+        // Result of Deduction
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.resultDeduction)
+        // SubSystem Label
+        << std::setw(8) << std::setfill('0') << std::dec << static_cast<int>(txData.subSystemLabel)
+        // OBU Label
+        << std::setw(10) << std::setfill('0') << std::hex << static_cast<int>(txData.obuLabel)
+        // Vehicle Number
+        << std::left << std::setw(13) << std::setfill(' ') << vehicleNumberStr
+        << std::right
+        // Transaction Route
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionRoute)
+        // Frontend Payment Violation
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.backendPaymentViolation)
+        // Transaction Type
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionType)
+        // Parking Start Date Time
+        << std::setw(4) << std::dec << static_cast<int>(txData.parkingStartYear)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMonth)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartDay)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartHour)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMinute)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartSecond)
+        << "000"
+        // Parking End Date Time
+        << std::setw(4) << std::dec << static_cast<int>(txData.parkingEndYear)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMonth)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndDay)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndHour)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMinute)
+        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndSecond)
+        << "000"
+        // Payment Fee
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.paymentFee)
+        // BepPaymentFeeAmount
+        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.bepPaymentFeeAmount)
+        // BepTimeOfReport
+        << std::setw(14) << std::setfill('0') << ossBepTimeOfReport.str()
+        << "000"
+        // chargeReportCounter
+        << std::setw(8) << std::setfill('0') << std::dec << static_cast<int>(txData.chargeReportCounter)
+        // BepKeyVersion
+        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.bepKeyVersion)
+        // BepCertificate
+        << std::setw(280) << std::setfill('0') << ossBepCertificate.str()
+        // RFU
+        << std::string(42, ' ')
+        << "\n";
+    
+    Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+    writeDSRCFeOrBeTxToCollFile(false, oss.str());
+}
+
+void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string& data)
+{
+    try
+    {
+        Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+
+        std::string detail = "";
+        std::string settleFile = "";
+
+        if (!boost::filesystem::exists(LOCAL_EEP_SETTLEMENT_FOLDER_PATH))
+        {
+            std::ostringstream oss;
+            oss << "EEP Settle folder: " << LOCAL_EEP_SETTLEMENT_FOLDER_PATH << " Not Found, Create it.";
+            Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+
+            if (!(boost::filesystem::create_directories(LOCAL_EEP_SETTLEMENT_FOLDER_PATH)))
+            {
+                std::ostringstream oss;
+                oss << "Failed to create directory: " << LOCAL_EEP_SETTLEMENT_FOLDER_PATH;
+                Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+                Logger::getInstance()->FnLog("Settlement Data: " + data, logFileName_, "EEP");
+                return;
+            }
+        }
+
+        std::ostringstream ossFilename;
+        ossFilename << ((isFrontendTx) ? "FE_" : "BE_")
+                    << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
+                    << "_"
+                    << std::setw(2) << std::setfill('0') << std::dec << iStationID_
+                    << Common::getInstance()->FnGetDateTimeFormat_hh();
+        settleFile = LOCAL_EEP_SETTLEMENT_FOLDER_PATH + "/" + ossFilename.str();
+
+        detail = data;
+
+        // Write data to local
+        Logger::getInstance()->FnLog("Write EEP settlement to local.", logFileName_, "EEP");
+
+        std::ofstream ofs;
+        if (!boost::filesystem::exists(settleFile))
+        {
+            ofs.open(settleFile, std::ios::binary | std::ios::out);
+        }
+        else
+        {
+            ofs.open(settleFile, std::ios::binary | std::ios::out | std::ios::app);
+        }
+
+        if (!ofs.is_open())
+        {
+            Logger::getInstance()->FnLog("Error opening file for writing settlement to" + settleFile, logFileName_, "EEP");
+            Logger::getInstance()->FnLog("Settlement Data: " + data, logFileName_, "EEP");
+            return;
+        }
+
+        ofs.write(data.c_str(), data.size());
+
+        if (!ofs)
+        {
+            Logger::getInstance()->FnLog("Write failed for " + settleFile, logFileName_, "EEP");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: " + e.what());
+    }
+    catch (...)
+    {
+        Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: Unknown Exception");
     }
 }
