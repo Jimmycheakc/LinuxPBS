@@ -768,7 +768,7 @@ void operation::Initdevice(io_context& ioContext)
         BARCODE_READER::getInstance()->FnBarcodeReaderInit();
     }
 
-    EEPClient::getInstance()->FnEEPClientInit(IniParser::getInstance()->FnGetEEPClientIp(), IniParser::getInstance()->FnGetEEPClientPort(), IniParser::getInstance()->FnGetStationID());
+    //EEPClient::getInstance()->FnEEPClientInit(IniParser::getInstance()->FnGetEEPClientIp(), IniParser::getInstance()->FnGetEEPClientPort(), IniParser::getInstance()->FnGetStationID());
 
     // Loop A timer
     pLoopATimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);
