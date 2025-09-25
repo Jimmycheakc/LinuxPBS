@@ -150,6 +150,7 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
         std::string logFilePath = Logger::getInstance()->LOG_FILE_PATH;
         std::string LPRDbLogFilePath = "/home/root/evas_web/db_files";
         std::string LCSCSettleFilePath = LCSCReader::getInstance()->LOCAL_LCSC_SETTLEMENT_FOLDER_PATH;
+        std::string EEPSettleFilePath = EEPClient::getInstance()->LOCAL_EEP_SETTLEMENT_FOLDER_PATH;
 
         // Extract year, month and day
         std::ostringstream ossToday;
@@ -166,12 +167,14 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
 
         std::string LPRDbFormattedDate = dbLogoss.str();
 
-        std::ostringstream lcscSettleoss;
-        lcscSettleoss << std::setw(4) << std::setfill('0') << (localToday.tm_year + 1900)
+        std::ostringstream ossTodayDate;
+        ossTodayDate << std::setw(4) << std::setfill('0') << (localToday.tm_year + 1900)
             << std::setw(2) << std::setfill('0') << (localToday.tm_mon + 1)
             << std::setw(2) << std::setfill('0') << localToday.tm_mday;
 
-        std::string LCSCSettleFormattedDate = lcscSettleoss.str();
+        std::string LCSCSettleFormattedDate = ossTodayDate.str();
+
+        std::string dsrcFormattedDate = ossTodayDate.str();
 
         // Iterate through the files in the log file path
         int foundNo_ = 0;
@@ -223,6 +226,35 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
         else
         {
             Logger::getInstance()->FnLog("LCSC settlement directory does not exist: " + LCSCSettleFilePath, "", "OPR");
+        }
+
+        int foundDSRCFeSettleFile_ = 0;
+        int foundDSRCBeSettleFile_ = 0;
+        if (std::filesystem::exists(EEPSettleFilePath) && std::filesystem::is_directory(EEPSettleFilePath))
+        {
+            for (const auto& entry : std::filesystem::directory_iterator(EEPSettleFilePath))
+            {
+                std::string filename = entry.path().filename().string();
+
+                // Exclude today's files
+                if (filename.find(dsrcFormattedDate) == std::string::npos)
+                {
+                    // Count FE files
+                    if (filename.find("FE_") != std::string::npos)
+                    {
+                        foundDSRCFeSettleFile_++;
+                    }
+                    // Count BE files
+                    else if (filename.find("BE_") != std::string::npos)
+                    {
+                        foundDSRCBeSettleFile_++;
+                    }
+                }
+            }
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("LCSC settlement directory does not exist: " + EEPSettleFilePath, "", "OPR");
         }
 
         std::string details;
@@ -616,6 +648,160 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
                                     ss << "Failed to copy log file : " << entry.path();
                                     Logger::getInstance()->FnLog(ss.str(), "", "OPR");
                                 }
+                            }
+                        }
+                    }
+                }
+                catch (const std::filesystem::filesystem_error& e)
+                {
+                    std::stringstream ss;
+                    ss << __func__ << ", Exception: " << e.what();
+                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                }
+                catch (const std::exception& e)
+                {
+                    std::stringstream ss;
+                    ss << __func__ << ", Exception: " << e.what();
+                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                }
+                catch (...)
+                {
+                    std::stringstream ss;
+                    ss << __func__ << ", Exception: Unknown Exception";
+                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                }
+
+                try
+                {
+                    // Unmount the shared folder
+                    std::string unmountCommand = "sudo umount " + mountPoint;
+                    int unmountStatus = std::system(unmountCommand.c_str());
+                    if (unmountStatus != 0)
+                    {
+                        Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
+                    }
+                    else
+                    {
+                        Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+                    }
+                }
+                catch (const std::filesystem::filesystem_error& e)
+                {
+                    std::stringstream ss;
+                    ss << __func__ << ", Unmount Exception: " << e.what();
+                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                }
+                catch (const std::exception& e)
+                {
+                    std::stringstream ss;
+                    ss << __func__ << ", Unmount Exception: " << e.what();
+                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                }
+                catch (...)
+                {
+                    std::stringstream ss;
+                    ss << __func__ << ", Unmount Exception: Unknown Exception";
+                    Logger::getInstance()->FnLogExceptionError(ss.str());
+                }
+            }
+
+
+            if (foundDSRCFeSettleFile_ > 0 || foundDSRCBeSettleFile_ > 0)
+            {
+                if (foundDSRCFeSettleFile_ > 0)
+                {
+                    std::stringstream ss;
+                    ss << "Found " << foundDSRCFeSettleFile_ << " DSRC Frontend settlement files.";
+                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                }
+
+                if (foundDSRCBeSettleFile_ > 0)
+                {
+                    std::stringstream ss;
+                    ss << "Found " << foundDSRCBeSettleFile_ << " DSRC Backend settlement files.";
+                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                }
+
+                // Create the mount poin directory if doesn't exist
+                std::string mountPoint = "/mnt/dsrcsettlementfiles";
+                std::string sharedFolderPath = "//" + IniParser::getInstance()->FnGetCentralDBServer() + "/Carpark/EEPSettle";
+
+                std::string username = IniParser::getInstance()->FnGetCentralUsername();
+                std::string password = IniParser::getInstance()->FnGetCentralPassword();
+
+                try
+                {
+                    if (!std::filesystem::exists(mountPoint))
+                    {
+                        std::error_code ec;
+                        if (!std::filesystem::create_directories(mountPoint, ec))
+                        {
+                            Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), "", "OPR");
+                        }
+                        else
+                        {
+                            Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), "", "OPR");
+                        }
+                    }
+                    else
+                    {
+                        Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), "", "OPR");
+                    }
+
+                    // Mount the shared folder
+                    std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
+                                                " -o username=" + username + ",password=" + password;
+                    std::cout << "Mount cmd: " << mountCommand << std::endl;
+                    int mountStatus = std::system(mountCommand.c_str());
+                    if (mountStatus != 0)
+                    {
+                        Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), "", "OPR");
+                    }
+                    else
+                    {
+                        Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
+
+                        // File copy/remove lambda
+                        auto copyAndRemove = [&](const std::filesystem::path& src, const std::string& subdir) {
+                            std::filesystem::path destFilePath = std::filesystem::path(mountPoint) / subdir / "Raw" / src.filename();
+
+                            // Ensure the parent directories exist
+                            std::error_code ec;
+                            std::filesystem::create_directories(destFilePath.parent_path(), ec);
+
+                            if (ec)
+                            {
+                                Logger::getInstance()->FnLog("Failed to create directory: " + destFilePath.parent_path().string() +
+                                                            " - " + ec.message(), "", "OPR");
+                            }
+                            else
+                            {
+                                std::filesystem::copy(src, destFilePath, std::filesystem::copy_options::overwrite_existing, ec);
+
+                                if (!ec)
+                                {
+                                    Logger::getInstance()->FnLog("Copied file: " + src.string(), "", "OPR");
+                                    std::filesystem::remove(src, ec);
+                                    if (!ec)
+                                        Logger::getInstance()->FnLog("Removed file: " + src.string(), "", "OPR");
+                                }
+                                else
+                                {
+                                    Logger::getInstance()->FnLog("Failed to copy file: " + src.string(), "", "OPR");
+                                }
+                            }
+                        };
+
+                        // Iterate files
+                        for (const auto& entry : std::filesystem::directory_iterator(EEPSettleFilePath))
+                        {
+                            std::string filename = entry.path().filename().string();
+                            if (filename.find(dsrcFormattedDate) == std::string::npos) // not today
+                            {
+                                if (filename.find("FE_") != std::string::npos)
+                                    copyAndRemove(entry.path(), "DSRCFE");
+                                else if (filename.find("BE_") != std::string::npos)
+                                    copyAndRemove(entry.path(), "DSRCBE");
                             }
                         }
                     }
