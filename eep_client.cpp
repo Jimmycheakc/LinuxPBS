@@ -11,6 +11,7 @@
 #include "log.h"
 #include <unordered_set>
 #include "event_manager.h"
+#include "operation.h"
 
 
 EEPClient* EEPClient::eepClient_ = nullptr;
@@ -4191,234 +4192,463 @@ void EEPClient::notifyConnectionState(bool connected)
 
 void EEPClient::processDSRCFeTx(const MessageHeader& header, const transactionData& txData)
 {
-    std::string vehicleNumberStr(txData.vechicleNumber.begin(), txData.vechicleNumber.end());
-    vehicleNumberStr.erase(std::find(vehicleNumberStr.begin(), vehicleNumberStr.end(), '\0'), vehicleNumberStr.end());
+    std::vector<uint8_t> txRec;
 
-    std::ostringstream ossCAN;
-    for (auto byte : txData.can)
+    auto toBCD = [](uint8_t value) -> uint8_t {
+        return static_cast<uint8_t>(((value / 10) << 4) | (value % 10));
+    };
+
+    // *** Detail Record ***
+    // Record Type
+    txRec.push_back('D');
+    // Destination ID
+    txRec.push_back(header.destinationID_);
+    // Source ID
+    txRec.push_back(header.sourceID_);
+    // Data Type Code
+    txRec.push_back(header.dataTypeCode_);
+    // Date Time
+    txRec.push_back(((header.year_ / 1000) << 4) | ((header.year_ / 100) % 10));
+    txRec.push_back(((header.year_ / 10) % 10 << 4) | ((header.year_ % 10)));
+    txRec.push_back(toBCD(header.month_));
+    txRec.push_back(toBCD(header.day_));
+    txRec.push_back(toBCD(header.hour_));
+    txRec.push_back(toBCD(header.minute_));
+    txRec.push_back(toBCD(header.second_));
+    txRec.push_back(0x00);
+    txRec.push_back(0x00);
+    // Sequence Number
+    txRec.push_back((header.seqNo_ >> 8) & 0xFF);
+    txRec.push_back(header.seqNo_ & 0xFF);
+    // Data Length
+    txRec.push_back(((header.dataLen_ / 1000) << 4) | ((header.dataLen_ / 100) % 10));
+    txRec.push_back(((header.dataLen_ / 10) % 10 << 4) | ((header.dataLen_ % 10)));
+    // Deduct command serial number
+    txRec.push_back((txData.deductCommandSerialNum >> 8) & 0xFF);
+    txRec.push_back(txData.deductCommandSerialNum & 0xFF);
+    // Protocol Version
+    txRec.push_back(txData.protocolVer);
+    // Result of Deduction
+    txRec.push_back(txData.resultDeduction);
+    // SubSystem Label
+    txRec.push_back(((txData.subSystemLabel / 10000000) << 4) | ((txData.subSystemLabel / 1000000) % 10));
+    txRec.push_back(((txData.subSystemLabel / 100000) % 10 << 4) | ((txData.subSystemLabel / 10000) % 10));
+    txRec.push_back(((txData.subSystemLabel / 1000) % 10 << 4) | ((txData.subSystemLabel / 100) % 10));
+    txRec.push_back(((txData.subSystemLabel / 10) % 10 << 4) | (txData.subSystemLabel % 10));
+    // OBU Label
+    // LTA Document Error - Not 10 ASCII, is 5 Numeric
+    txRec.push_back((txData.obuLabel >> 32) & 0xFF);
+    txRec.push_back((txData.obuLabel >> 24) & 0xFF);
+    txRec.push_back((txData.obuLabel >> 16) & 0xFF);
+    txRec.push_back((txData.obuLabel >> 8) & 0xFF);
+    txRec.push_back(txData.obuLabel & 0xFF);
+    /*
+    for (int shift = 36; shift >= 0; shift-=4)
     {
-        ossCAN << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+        uint8_t nibble = (txData.obuLabel >> shift) & 0x0F;
+
+        // Convert nibble to ASCII hex
+        char asciiChar;
+        if (nibble < 10)
+            asciiChar = '0' + nibble;
+        else
+            asciiChar = 'A' + (nibble - 10);
+
+        txRec.push_back(static_cast<uint8_t>(asciiChar));
     }
+    */
+    // Vehicle Number
+    constexpr size_t VEHICLE_NUM_LEN = 13;
 
+    if (!txData.vechicleNumber.empty())
+    {
+        std::vector<uint8_t> tempVecNum(txData.vechicleNumber.begin(), txData.vechicleNumber.end());
+        std::replace(tempVecNum.begin(), tempVecNum.end(), static_cast<uint8_t>(0x00), static_cast<uint8_t>(0x20));
+        // pad if shorter
+        if (tempVecNum.size() < VEHICLE_NUM_LEN)
+        {
+            tempVecNum.resize(VEHICLE_NUM_LEN, 0x20);
+        }
+        txRec.insert(txRec.end(), tempVecNum.begin(), tempVecNum.end());
+    }
+    else
+    {
+        txRec.insert(txRec.end(), VEHICLE_NUM_LEN, 0x20);
+    }
+    // Transaction Route
+    txRec.push_back(txData.transactionRoute);
+    // Frontend Payment Violation
+    txRec.push_back(txData.frontendPaymentViolation);
+    // Transaction Type
+    txRec.push_back(txData.transactionType);
+    // Parking Start Date Time
+    txRec.push_back(((txData.parkingStartYear / 1000) << 4) | ((txData.parkingStartYear / 100) % 10));
+    txRec.push_back(((txData.parkingStartYear / 10) % 10 << 4) | ((txData.parkingStartYear % 10)));
+    txRec.push_back(toBCD(txData.parkingStartMonth));
+    txRec.push_back(toBCD(txData.parkingStartDay));
+    txRec.push_back(toBCD(txData.parkingStartHour));
+    txRec.push_back(toBCD(txData.parkingStartMinute));
+    txRec.push_back(toBCD(txData.parkingStartSecond));
+    txRec.push_back(0x00);
+    txRec.push_back(0x00);
+    // Parking End Date Time
+    txRec.push_back(((txData.parkingEndYear / 1000) << 4) | ((txData.parkingEndYear / 100) % 10));
+    txRec.push_back(((txData.parkingEndYear / 10) % 10 << 4) | ((txData.parkingEndYear % 10)));
+    txRec.push_back(toBCD(txData.parkingEndMonth));
+    txRec.push_back(toBCD(txData.parkingEndDay));
+    txRec.push_back(toBCD(txData.parkingEndHour));
+    txRec.push_back(toBCD(txData.parkingEndMinute));
+    txRec.push_back(toBCD(txData.parkingEndSecond));
+    txRec.push_back(0x00);
+    txRec.push_back(0x00);
+    // Payment Fee
+    txRec.push_back(0x00);
+    txRec.push_back((txData.paymentFee / 1000000000) << 4 | ((txData.paymentFee / 100000000) % 10));
+    txRec.push_back((txData.paymentFee / 10000000) % 10 << 4 | ((txData.paymentFee / 1000000) % 10));
+    txRec.push_back((txData.paymentFee / 100000) % 10 << 4 | ((txData.paymentFee / 10000) % 10));
+    txRec.push_back((txData.paymentFee / 1000) % 10 << 4 | ((txData.paymentFee / 100) % 10));
+    txRec.push_back((txData.paymentFee / 10) % 10 << 4 | (txData.paymentFee % 10));
+    // FEP Date Time
+    txRec.push_back((txData.fepTime >> 48) & 0xFF);
+    txRec.push_back((txData.fepTime >> 40) & 0xFF);
+    txRec.push_back((txData.fepTime >> 32) & 0xFF);
+    txRec.push_back((txData.fepTime >> 24) & 0xFF);
+    txRec.push_back((txData.fepTime >> 16) & 0xFF);
+    txRec.push_back((txData.fepTime >> 8) & 0xFF);
+    txRec.push_back(txData.fepTime & 0xFF);
+    txRec.push_back(0x00);
+    txRec.push_back(0x00);
+    // TRP
+    txRec.push_back((txData.trp >> 24) & 0xFF);
+    txRec.push_back((txData.trp >> 16) & 0xFF);
+    txRec.push_back((txData.trp >> 8) & 0xFF);
+    txRec.push_back(txData.trp & 0xFF);
+    // Inidication of Last AutoLoad
+    txRec.push_back(txData.indicationLastAutoLoad);
+    // CAN
+    constexpr size_t CAN_LEN = 8; // <-- adjust to spec
 
+    if (!txData.can.empty())
+    {
+        std::vector<uint8_t> tempCan(txData.can.begin(), txData.can.end());
+        if (tempCan.size() < CAN_LEN)
+        {
+            tempCan.resize(CAN_LEN, 0x20);
+        }
+        txRec.insert(txRec.end(), tempCan.begin(), tempCan.end());
+    }
+    else
+    {
+        txRec.insert(txRec.end(), CAN_LEN, 0x20);
+    }
+    // Last Credit Transaction Header
+    txRec.push_back((txData.lastCreditTransactionHeader >> 56) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionHeader >> 48) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionHeader >> 40) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionHeader >> 32) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionHeader >> 24) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionHeader >> 16) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionHeader >> 8) & 0xFF);
+    txRec.push_back(txData.lastCreditTransactionHeader & 0xFF);
+    // Last Credit Transaction TRP
+    txRec.push_back((txData.lastCreditTransactionTRP >> 24) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionTRP >> 16) & 0xFF);
+    txRec.push_back((txData.lastCreditTransactionTRP >> 8) & 0xFF);
+    txRec.push_back(txData.lastCreditTransactionTRP & 0xFF);
+    // Purse Balance Before Transaction
+    txRec.push_back(0x00);
+    txRec.push_back((txData.purseBalanceBeforeTransaction / 1000000000) << 4 | ((txData.purseBalanceBeforeTransaction / 100000000) % 10));
+    txRec.push_back((txData.purseBalanceBeforeTransaction / 10000000) % 10 << 4 | ((txData.purseBalanceBeforeTransaction / 1000000) % 10));
+    txRec.push_back((txData.purseBalanceBeforeTransaction / 100000) % 10 << 4 | ((txData.purseBalanceBeforeTransaction / 10000) % 10));
+    txRec.push_back((txData.purseBalanceBeforeTransaction / 1000) % 10 << 4 | ((txData.purseBalanceBeforeTransaction / 100) % 10));
+    txRec.push_back((txData.purseBalanceBeforeTransaction / 10) % 10 << 4 | (txData.purseBalanceBeforeTransaction % 10));
+    // Bad Debt Counter
+    txRec.push_back(txData.badDebtCounter);
+    // Transaction Status
+    txRec.push_back(txData.transactionStatus);
+    // Debit Option
+    txRec.push_back(txData.debitOption);
+    // AutoLoad Amount
+    txRec.push_back(0x00);
+    txRec.push_back((txData.autoLoadAmount / 1000000000) << 4 | ((txData.autoLoadAmount / 100000000) % 10));
+    txRec.push_back((txData.autoLoadAmount / 10000000) % 10 << 4 | ((txData.autoLoadAmount / 1000000) % 10));
+    txRec.push_back((txData.autoLoadAmount / 100000) % 10 << 4 | ((txData.autoLoadAmount / 10000) % 10));
+    txRec.push_back((txData.autoLoadAmount / 1000) % 10 << 4 | ((txData.autoLoadAmount / 100) % 10));
+    txRec.push_back((txData.autoLoadAmount / 10) % 10 << 4 | (txData.autoLoadAmount % 10));
+    // Counter Data
+    txRec.push_back((txData.counterData >> 56) & 0xFF);
+    txRec.push_back((txData.counterData >> 48) & 0xFF);
+    txRec.push_back((txData.counterData >> 40) & 0xFF);
+    txRec.push_back((txData.counterData >> 32) & 0xFF);
+    txRec.push_back((txData.counterData >> 24) & 0xFF);
+    txRec.push_back((txData.counterData >> 16) & 0xFF);
+    txRec.push_back((txData.counterData >> 8) & 0xFF);
+    txRec.push_back(txData.counterData & 0xFF);
+    // Signed Certificate
+    txRec.push_back((txData.signedCertificate >> 56) & 0xFF);
+    txRec.push_back((txData.signedCertificate >> 48) & 0xFF);
+    txRec.push_back((txData.signedCertificate >> 40) & 0xFF);
+    txRec.push_back((txData.signedCertificate >> 32) & 0xFF);
+    txRec.push_back((txData.signedCertificate >> 24) & 0xFF);
+    txRec.push_back((txData.signedCertificate >> 16) & 0xFF);
+    txRec.push_back((txData.signedCertificate >> 8) & 0xFF);
+    txRec.push_back(txData.signedCertificate & 0xFF);
+    // Purse Balance after transaction
+    txRec.push_back(0x00);
+    txRec.push_back((txData.purseBalanceAfterTransaction / 1000000000) << 4 | ((txData.purseBalanceAfterTransaction / 100000000) % 10));
+    txRec.push_back((txData.purseBalanceAfterTransaction / 10000000) % 10 << 4 | ((txData.purseBalanceAfterTransaction / 1000000) % 10));
+    txRec.push_back((txData.purseBalanceAfterTransaction / 100000) % 10 << 4 | ((txData.purseBalanceAfterTransaction / 10000) % 10));
+    txRec.push_back((txData.purseBalanceAfterTransaction / 1000) % 10 << 4 | ((txData.purseBalanceAfterTransaction / 100) % 10));
+    txRec.push_back((txData.purseBalanceAfterTransaction / 10) % 10 << 4 | (txData.purseBalanceAfterTransaction % 10));
+    // Last Transaction Debit Option
+    txRec.push_back(txData.lastTransactionDebitOptionbyte);
+    // Previous Transaction Header
+    txRec.push_back((txData.previousTransactionHeader >> 56) & 0xFF);
+    txRec.push_back((txData.previousTransactionHeader >> 48) & 0xFF);
+    txRec.push_back((txData.previousTransactionHeader >> 40) & 0xFF);
+    txRec.push_back((txData.previousTransactionHeader >> 32) & 0xFF);
+    txRec.push_back((txData.previousTransactionHeader >> 24) & 0xFF);
+    txRec.push_back((txData.previousTransactionHeader >> 16) & 0xFF);
+    txRec.push_back((txData.previousTransactionHeader >> 8) & 0xFF);
+    txRec.push_back(txData.previousTransactionHeader & 0xFF);
+    // Previous TRP
+    txRec.push_back((txData.previousTRP >> 24) & 0xFF);
+    txRec.push_back((txData.previousTRP >> 16) & 0xFF);
+    txRec.push_back((txData.previousTRP >> 8) & 0xFF);
+    txRec.push_back(txData.previousTRP & 0xFF);
+    // Previous Purse balance
+    txRec.push_back(0x00);
+    txRec.push_back((txData.previousPurseBalance / 1000000000) << 4 | ((txData.previousPurseBalance / 100000000) % 10));
+    txRec.push_back((txData.previousPurseBalance / 10000000) % 10 << 4 | ((txData.previousPurseBalance / 1000000) % 10));
+    txRec.push_back((txData.previousPurseBalance / 100000) % 10 << 4 | ((txData.previousPurseBalance / 10000) % 10));
+    txRec.push_back((txData.previousPurseBalance / 1000) % 10 << 4 | ((txData.previousPurseBalance / 100) % 10));
+    txRec.push_back((txData.previousPurseBalance / 10) % 10 << 4 | (txData.previousPurseBalance % 10));
+    // Previous Counter Data
+    txRec.push_back((txData.previousCounterData >> 56) & 0xFF);
+    txRec.push_back((txData.previousCounterData >> 48) & 0xFF);
+    txRec.push_back((txData.previousCounterData >> 40) & 0xFF);
+    txRec.push_back((txData.previousCounterData >> 32) & 0xFF);
+    txRec.push_back((txData.previousCounterData >> 24) & 0xFF);
+    txRec.push_back((txData.previousCounterData >> 16) & 0xFF);
+    txRec.push_back((txData.previousCounterData >> 8) & 0xFF);
+    txRec.push_back(txData.previousCounterData & 0xFF);
+    // Previous Transaction Signed Certificate
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 56) & 0xFF);
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 48) & 0xFF);
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 40) & 0xFF);
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 32) & 0xFF);
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 24) & 0xFF);
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 16) & 0xFF);
+    txRec.push_back((txData.previousTransactionSignedCertificate >> 8) & 0xFF);
+    txRec.push_back(txData.previousTransactionSignedCertificate & 0xFF);
+    // Previous Purse Status
+    txRec.push_back(txData.previousPurseStatus);
+    // RFU
+    txRec.insert(txRec.end(), 31, static_cast<uint8_t>(' '));
+
+    /*
+    Logger::getInstance()->FnLog("In Hex (len=" + std::to_string(txRec.size()) + "): ", logFileName_, "EEP");
     std::ostringstream oss;
-    // Detail Record
-        // Record Type
-    oss << "D"
-        // Destination ID
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.destinationID_)
-        // Source ID
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.sourceID_)
-        // Data Type Code
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.dataTypeCode_)
-        // Date Time
-        << std::setw(4) << std::dec << static_cast<int>(header.year_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.month_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.day_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.hour_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.minute_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.second_)
-        << "000"
-        // Sequence Number
-        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.seqNo_)
-        // Data Length
-        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.dataLen_)
-        // Deduct command serial number
-        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(txData.deductCommandSerialNum)
-        // Protocol Version
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.protocolVer)
-        // Result of Deduction
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.resultDeduction)
-        // SubSystem Label
-        << std::setw(8) << std::setfill('0') << std::dec << static_cast<int>(txData.subSystemLabel)
-        // OBU Label
-        << std::setw(10) << std::setfill('0') << std::hex << static_cast<int>(txData.obuLabel)
-        // Vehicle Number
-        << std::left << std::setw(13) << std::setfill(' ') << vehicleNumberStr
-        << std::right
-        // Transaction Route
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionRoute)
-        // Frontend Payment Violation
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.frontendPaymentViolation)
-        // Transaction Type
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionType)
-        // Parking Start Date Time
-        << std::setw(4) << std::dec << static_cast<int>(txData.parkingStartYear)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMonth)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartDay)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartHour)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMinute)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartSecond)
-        << "000"
-        // Parking End Date Time
-        << std::setw(4) << std::dec << static_cast<int>(txData.parkingEndYear)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMonth)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndDay)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndHour)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMinute)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndSecond)
-        << "000"
-        // Payment Fee
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.paymentFee)
-        // FEP Date Time
-        << std::setw(14) << std::setfill('0') << std::hex << static_cast<int>(txData.fepTime)
-        << "000"
-        // TRP
-        << std::setw(8) << std::setfill('0') << std::hex << static_cast<int>(txData.trp)
-        // Inidication of Last AutoLoad
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.indicationLastAutoLoad)
-        // CAN
-        << std::setw(16) << std::setfill('0') << ossCAN.str()
-        // Last Credit Transaction Header
-        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.lastCreditTransactionHeader)
-        // Last Credit Transaction TRP
-        << std::setw(8) << std::setfill('0') << std::hex << static_cast<int>(txData.lastCreditTransactionTRP)
-        // Purse Balance Before Transaction
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.purseBalanceBeforeTransaction)
-        // Bad Debt Counter
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.badDebtCounter)
-        // Transaction Status
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionStatus)
-        // Debit Option
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.debitOption)
-        // AutoLoad Amount
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.autoLoadAmount)
-        // Counter Data
-        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.counterData)
-        // Signed Certificate
-        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.signedCertificate)
-        // Purse Balance after transaction
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.purseBalanceAfterTransaction)
-        // Last Transaction Debit Option
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.lastTransactionDebitOptionbyte)
-        // Previous Transaction Header
-        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.previousTransactionHeader)
-        // Previous TRP
-        << std::setw(8) << std::setfill('0') << std::hex << static_cast<int>(txData.previousTRP)
-        // Previous Purse balance
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.previousPurseBalance)
-        // Previous Counter Data
-        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.previousCounterData)
-        // Previous Transaction Signed Certificate
-        << std::setw(16) << std::setfill('0') << std::hex << static_cast<int>(txData.previousTransactionSignedCertificate)
-        // Previous Purse Status
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.previousPurseStatus)
-        // RFU
-        << std::string(31, ' ')
-        << "\n";
-    
+    for (uint8_t b : txRec)
+    {
+        oss << std::hex << std::uppercase << std::setw(2) 
+              << std::setfill('0') << static_cast<int>(b) << " ";
+    }
+    oss << std::endl;
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-    writeDSRCFeOrBeTxToCollFile(true, oss.str());
+
+    Logger::getInstance()->FnLog("In String (len=" + std::to_string(txRec.size()) + "): ", logFileName_, "EEP");
+    std::string str(txRec.begin(), txRec.end());
+    Logger::getInstance()->FnLog(str, logFileName_, "EEP");
+    */
+    writeDSRCFeOrBeTxToCollFile(true, txRec);
 }
 
 void EEPClient::processDSRCBeTx(const MessageHeader& header, const transactionData& txData)
 {
-    std::string vehicleNumberStr(txData.vechicleNumber.begin(), txData.vechicleNumber.end());
-    vehicleNumberStr.erase(std::find(vehicleNumberStr.begin(), vehicleNumberStr.end(), '\0'), vehicleNumberStr.end());
+    std::vector<uint8_t> BeTxRec;
 
-    std::ostringstream ossCAN;
-    for (auto byte : txData.can)
+    auto toBCD = [](uint8_t value) -> uint8_t {
+        return static_cast<uint8_t>(((value / 10) << 4) | (value % 10));
+    };
+
+    // *** Detail Record ***
+    // Record Type
+    BeTxRec.push_back('D');
+    // Destination ID
+    BeTxRec.push_back(header.destinationID_);
+    // Source ID
+    BeTxRec.push_back(header.sourceID_);
+    // Data Type Code
+    BeTxRec.push_back(header.dataTypeCode_);
+    // Date Time
+    BeTxRec.push_back(((header.year_ / 1000) << 4) | ((header.year_ / 100) % 10));
+    BeTxRec.push_back(((header.year_ / 10) % 10 << 4) | ((header.year_ % 10)));
+    BeTxRec.push_back(toBCD(header.month_));
+    BeTxRec.push_back(toBCD(header.day_));
+    BeTxRec.push_back(toBCD(header.hour_));
+    BeTxRec.push_back(toBCD(header.minute_));
+    BeTxRec.push_back(toBCD(header.second_));
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back(0x00);
+    // Sequence Number
+    BeTxRec.push_back((header.seqNo_ >> 8) & 0xFF);
+    BeTxRec.push_back(header.seqNo_ & 0xFF);
+    // Data Length
+    BeTxRec.push_back(((header.dataLen_ / 1000) << 4) | ((header.dataLen_ / 100) % 10));
+    BeTxRec.push_back(((header.dataLen_ / 10) % 10 << 4) | ((header.dataLen_ % 10)));
+    // Deduct command serial number
+    BeTxRec.push_back((txData.deductCommandSerialNum >> 8) & 0xFF);
+    BeTxRec.push_back(txData.deductCommandSerialNum & 0xFF);
+    // Protocol Version
+    BeTxRec.push_back(txData.protocolVer);
+    // Result of Deduction
+    BeTxRec.push_back(txData.resultDeduction);
+    // SubSystem Label
+    BeTxRec.push_back(((txData.subSystemLabel / 10000000) << 4) | ((txData.subSystemLabel / 1000000) % 10));
+    BeTxRec.push_back(((txData.subSystemLabel / 100000) % 10 << 4) | ((txData.subSystemLabel / 10000) % 10));
+    BeTxRec.push_back(((txData.subSystemLabel / 1000) % 10 << 4) | ((txData.subSystemLabel / 100) % 10));
+    BeTxRec.push_back(((txData.subSystemLabel / 10) % 10 << 4) | (txData.subSystemLabel % 10));
+    // OBU Label
+    // LTA Document Error - Not 10 ASCII, is 5 Numeric
+    BeTxRec.push_back((txData.obuLabel >> 32) & 0xFF);
+    BeTxRec.push_back((txData.obuLabel >> 24) & 0xFF);
+    BeTxRec.push_back((txData.obuLabel >> 16) & 0xFF);
+    BeTxRec.push_back((txData.obuLabel >> 8) & 0xFF);
+    BeTxRec.push_back(txData.obuLabel & 0xFF);
+    /* 
+    for (int shift = 36; shift >= 0; shift-=4)
     {
-        ossCAN << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
-    }
+        uint8_t nibble = (txData.obuLabel >> shift) & 0x0F;
 
-    std::ostringstream ossBepTimeOfReport;
-    for (auto byte : txData.bepTimeOfReport)
+        // Convert nibble to ASCII hex
+        char asciiChar;
+        if (nibble < 10)
+            asciiChar = '0' + nibble;
+        else
+            asciiChar = 'A' + (nibble - 10);
+
+        BeTxRec.push_back(static_cast<uint8_t>(asciiChar));
+    }
+    */
+    // Vehicle Number
+    constexpr size_t VEHICLE_NUM_LEN = 13;
+
+    if (!txData.vechicleNumber.empty())
     {
-        ossBepTimeOfReport << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+        std::vector<uint8_t> tempVecNum(txData.vechicleNumber.begin(), txData.vechicleNumber.end());
+        std::replace(tempVecNum.begin(), tempVecNum.end(), static_cast<uint8_t>(0x00), static_cast<uint8_t>(0x20));
+        // pad if shorter
+        if (tempVecNum.size() < VEHICLE_NUM_LEN)
+        {
+            tempVecNum.resize(VEHICLE_NUM_LEN, 0x20);
+        }
+        BeTxRec.insert(BeTxRec.end(), tempVecNum.begin(), tempVecNum.end());
     }
-
-    std::ostringstream ossBepCertificate;
-    for (auto byte : txData.bepCertificate)
+    else
     {
-        ossBepCertificate << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(byte);
+        BeTxRec.insert(BeTxRec.end(), VEHICLE_NUM_LEN, 0x20);
     }
+    // Transaction Route
+    BeTxRec.push_back(txData.transactionRoute);
+    // Backend Payment Violation
+    BeTxRec.push_back(txData.backendPaymentViolation);
+    // Transaction Type
+    BeTxRec.push_back(txData.transactionType);
+    // Parking Start Date Time
+    BeTxRec.push_back(((txData.parkingStartYear / 1000) << 4) | ((txData.parkingStartYear / 100) % 10));
+    BeTxRec.push_back(((txData.parkingStartYear / 10) % 10 << 4) | ((txData.parkingStartYear % 10)));
+    BeTxRec.push_back(toBCD(txData.parkingStartMonth));
+    BeTxRec.push_back(toBCD(txData.parkingStartDay));
+    BeTxRec.push_back(toBCD(txData.parkingStartHour));
+    BeTxRec.push_back(toBCD(txData.parkingStartMinute));
+    BeTxRec.push_back(toBCD(txData.parkingStartSecond));
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back(0x00);
+    // Parking End Date Time
+    BeTxRec.push_back(((txData.parkingEndYear / 1000) << 4) | ((txData.parkingEndYear / 100) % 10));
+    BeTxRec.push_back(((txData.parkingEndYear / 10) % 10 << 4) | ((txData.parkingEndYear % 10)));
+    BeTxRec.push_back(toBCD(txData.parkingEndMonth));
+    BeTxRec.push_back(toBCD(txData.parkingEndDay));
+    BeTxRec.push_back(toBCD(txData.parkingEndHour));
+    BeTxRec.push_back(toBCD(txData.parkingEndMinute));
+    BeTxRec.push_back(toBCD(txData.parkingEndSecond));
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back(0x00);
+    // Payment Fee
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back((txData.paymentFee / 1000000000) << 4 | ((txData.paymentFee / 100000000) % 10));
+    BeTxRec.push_back((txData.paymentFee / 10000000) % 10 << 4 | ((txData.paymentFee / 1000000) % 10));
+    BeTxRec.push_back((txData.paymentFee / 100000) % 10 << 4 | ((txData.paymentFee / 10000) % 10));
+    BeTxRec.push_back((txData.paymentFee / 1000) % 10 << 4 | ((txData.paymentFee / 100) % 10));
+    BeTxRec.push_back((txData.paymentFee / 10) % 10 << 4 | (txData.paymentFee % 10));
+    // BepPaymentFeeAmount
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back(0x00);
+    BeTxRec.push_back((txData.paymentFee / 100000) % 10 << 4 | ((txData.paymentFee / 10000) % 10));
+    BeTxRec.push_back((txData.paymentFee / 1000) % 10 << 4 | ((txData.paymentFee / 100) % 10));
+    BeTxRec.push_back((txData.paymentFee / 10) % 10 << 4 | (txData.paymentFee % 10));
+    // BepTimeOfReport
+    constexpr size_t BEPTIME_LEN = 9;
 
+    std::vector<uint8_t> tempBepTime(BEPTIME_LEN, 0x00); // pre-fill with 0x00
+    size_t copyStart = BEPTIME_LEN - txData.bepTimeOfReport.size();
+    std::copy(txData.bepTimeOfReport.begin(), txData.bepTimeOfReport.end(), tempBepTime.begin() + copyStart);
+    BeTxRec.insert(BeTxRec.end(), tempBepTime.begin(), tempBepTime.end());
+    // chargeReportCounter
+    BeTxRec.push_back(((txData.chargeReportCounter / 10000000) << 4) | ((txData.chargeReportCounter / 1000000) % 10));
+    BeTxRec.push_back(((txData.chargeReportCounter / 100000) % 10 << 4) | ((txData.chargeReportCounter / 10000) % 10));
+    BeTxRec.push_back(((txData.chargeReportCounter / 1000) % 10 << 4) | ((txData.chargeReportCounter / 100) % 10));
+    BeTxRec.push_back(((txData.chargeReportCounter / 10) % 10 << 4) | (txData.chargeReportCounter % 10));
+    // BepKeyVersion
+    BeTxRec.push_back(txData.bepKeyVersion);
+    // BepCertificate
+    constexpr size_t BEP_CERT_LEN = 280;
+
+    if (!txData.bepCertificate.empty())
+    {
+        std::vector<uint8_t> tempBepCert(txData.bepCertificate.begin(), txData.bepCertificate.end());
+        // pad if shorter
+        if (tempBepCert.size() < BEP_CERT_LEN)
+        {
+            tempBepCert.resize(BEP_CERT_LEN, 0x20);
+        }
+        BeTxRec.insert(BeTxRec.end(), tempBepCert.begin(), tempBepCert.end());
+    }
+    else
+    {
+        BeTxRec.insert(BeTxRec.end(), BEP_CERT_LEN, 0x20);
+    }
+    // RFU
+    BeTxRec.insert(BeTxRec.end(), 42, static_cast<uint8_t>(' '));
+
+    /*
+    Logger::getInstance()->FnLog("In Hex (len=" + std::to_string(BeTxRec.size()) + "): ", logFileName_, "EEP");
     std::ostringstream oss;
-    // Detail Record
-        // Record Type
-    oss << "D"
-        // Destination ID
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.destinationID_)
-        // Source ID
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.sourceID_)
-        // Data Type Code
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(header.dataTypeCode_)
-        // Date Time
-        << std::setw(4) << std::dec << static_cast<int>(header.year_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.month_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.day_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.hour_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.minute_)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(header.second_)
-        << "000"
-        // Sequence Number
-        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.seqNo_)
-        // Data Length
-        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(header.dataLen_)
-        // Deduct command serial number
-        << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(txData.deductCommandSerialNum)
-        // Protocol Version
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.protocolVer)
-        // Result of Deduction
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.resultDeduction)
-        // SubSystem Label
-        << std::setw(8) << std::setfill('0') << std::dec << static_cast<int>(txData.subSystemLabel)
-        // OBU Label
-        << std::setw(10) << std::setfill('0') << std::hex << static_cast<int>(txData.obuLabel)
-        // Vehicle Number
-        << std::left << std::setw(13) << std::setfill(' ') << vehicleNumberStr
-        << std::right
-        // Transaction Route
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionRoute)
-        // Frontend Payment Violation
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.backendPaymentViolation)
-        // Transaction Type
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.transactionType)
-        // Parking Start Date Time
-        << std::setw(4) << std::dec << static_cast<int>(txData.parkingStartYear)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMonth)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartDay)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartHour)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartMinute)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingStartSecond)
-        << "000"
-        // Parking End Date Time
-        << std::setw(4) << std::dec << static_cast<int>(txData.parkingEndYear)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMonth)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndDay)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndHour)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndMinute)
-        << std::setw(2) << std::setfill('0') << std::dec << static_cast<int>(txData.parkingEndSecond)
-        << "000"
-        // Payment Fee
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.paymentFee)
-        // BepPaymentFeeAmount
-        << std::setw(12) << std::setfill('0') << std::dec << static_cast<int>(txData.bepPaymentFeeAmount)
-        // BepTimeOfReport
-        << std::setw(14) << std::setfill('0') << ossBepTimeOfReport.str()
-        << "000"
-        // chargeReportCounter
-        << std::setw(8) << std::setfill('0') << std::dec << static_cast<int>(txData.chargeReportCounter)
-        // BepKeyVersion
-        << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(txData.bepKeyVersion)
-        // BepCertificate
-        << std::setw(280) << std::setfill('0') << ossBepCertificate.str()
-        // RFU
-        << std::string(42, ' ')
-        << "\n";
-    
+    for (uint8_t b : BeTxRec)
+    {
+        oss << std::hex << std::uppercase << std::setw(2) 
+              << std::setfill('0') << static_cast<int>(b) << " ";
+    }
+    oss << std::endl;
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-    writeDSRCFeOrBeTxToCollFile(false, oss.str());
+
+    Logger::getInstance()->FnLog("In String (len=" + std::to_string(BeTxRec.size()) + "): ", logFileName_, "EEP");
+    std::string str(BeTxRec.begin(), BeTxRec.end());
+    Logger::getInstance()->FnLog(str, logFileName_, "EEP");
+    */
+    writeDSRCFeOrBeTxToCollFile(false, BeTxRec);
 }
 
-void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string& data)
+void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data)
 {
+    std::string dataStr(data.begin(), data.end());
+
     try
     {
         Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
 
-        std::string detail = "";
         std::string settleFile = "";
 
         if (!boost::filesystem::exists(LOCAL_EEP_SETTLEMENT_FOLDER_PATH))
@@ -4432,20 +4662,18 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string
                 std::ostringstream oss;
                 oss << "Failed to create directory: " << LOCAL_EEP_SETTLEMENT_FOLDER_PATH;
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-                Logger::getInstance()->FnLog("Settlement Data: " + data, logFileName_, "EEP");
+                Logger::getInstance()->FnLog("Settlement Data: " + std::string(data.begin(), data.end()), logFileName_, "EEP");
                 return;
             }
         }
 
         std::ostringstream ossFilename;
-        ossFilename << ((isFrontendTx) ? "FE_" : "BE_")
-                    << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
-                    << "_"
-                    << std::setw(2) << std::setfill('0') << std::dec << iStationID_
-                    << Common::getInstance()->FnGetDateTimeFormat_hh();
+            ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
+                        << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
+                        << ((isFrontendTx) ? "FE_" : "BE_") << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
+                        << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
+                        << Common::getInstance()->FnGetDateTimeFormat_hh() << ".dsr";
         settleFile = LOCAL_EEP_SETTLEMENT_FOLDER_PATH + "/" + ossFilename.str();
-
-        detail = data;
 
         // Write data to local
         Logger::getInstance()->FnLog("Write EEP settlement to local.", logFileName_, "EEP");
@@ -4454,6 +4682,60 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string
         if (!boost::filesystem::exists(settleFile))
         {
             ofs.open(settleFile, std::ios::binary | std::ios::out);
+
+            auto toBCD = [](uint8_t value) -> uint8_t {
+                return static_cast<uint8_t>(((value / 10) << 4) | (value % 10));
+            };
+
+            // Header Record
+            std::vector<uint8_t> header;
+            // Record Type
+            header.push_back('H');
+            // EEP Car Park ID
+            std::ostringstream tempCarParkIDoss;
+            tempCarParkIDoss << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID;
+            std::string tempCarParkID = tempCarParkIDoss.str();
+            header.insert(header.end(), tempCarParkID.begin(), tempCarParkID.end());
+            // Date and Time
+            auto now = std::chrono::system_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+
+            std::time_t timer = std::chrono::system_clock::to_time_t(now);
+            struct tm timeinfo = {};
+            localtime_r(&timer, &timeinfo);
+
+            uint16_t year           = timeinfo.tm_year + 1900;
+            uint8_t month           = timeinfo.tm_mon + 1;
+            uint8_t day             = timeinfo.tm_mday;
+            uint8_t hour            = timeinfo.tm_hour;
+            uint8_t minute          = timeinfo.tm_min;
+            uint8_t second          = timeinfo.tm_sec;
+            uint16_t millisecond    = static_cast<uint16_t>(ms.count());
+            uint8_t ms_hundreds = (millisecond / 100) % 10;
+            uint8_t ms_tens     = (millisecond / 10) % 10;
+            uint8_t ms_ones     = millisecond % 10;
+
+            header.push_back(((year / 1000) << 4) | ((year / 100) % 10));
+            header.push_back(((year / 10) % 10 << 4) | ((year % 10)));
+            header.push_back(toBCD(month));
+            header.push_back(toBCD(day));
+            header.push_back(toBCD(hour));
+            header.push_back(toBCD(minute));
+            header.push_back(toBCD(second));
+            header.push_back((ms_hundreds << 4) | ms_tens);
+            header.push_back(ms_ones << 4);
+            // Collection File Name
+            std::ostringstream tempFileNameoss;
+            tempFileNameoss << std::left << std::setw(48) << std::setfill(' ') << ossFilename.str();
+            std::string tempFileName = tempFileNameoss.str();
+            header.insert(header.end(), tempFileName.begin(), tempFileName.end());
+            // RFU
+            if (isFrontendTx)
+                header.insert(header.end(), 145, static_cast<uint8_t>(' '));
+            else
+                header.insert(header.end(), 349, static_cast<uint8_t>(' '));
+
+            ofs.write(reinterpret_cast<const char*>(header.data()), header.size());
         }
         else
         {
@@ -4463,23 +4745,26 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string
         if (!ofs.is_open())
         {
             Logger::getInstance()->FnLog("Error opening file for writing settlement to" + settleFile, logFileName_, "EEP");
-            Logger::getInstance()->FnLog("Settlement Data: " + data, logFileName_, "EEP");
+            Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
             return;
         }
 
-        ofs.write(data.c_str(), data.size());
+        ofs.write(reinterpret_cast<const char*>(data.data()), data.size());
 
         if (!ofs)
         {
             Logger::getInstance()->FnLog("Write failed for " + settleFile, logFileName_, "EEP");
+            Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
         }
     }
     catch (const std::exception& e)
     {
         Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: " + e.what());
+        Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
     }
     catch (...)
     {
         Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: Unknown Exception");
+        Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
     }
 }

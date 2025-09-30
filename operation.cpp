@@ -4835,6 +4835,36 @@ void operation::processEEP(const std::string& eventData)
                 {
                     EEPClient::notificationLog NotifLog;
                     parsePayload(NotifLog, eventParsed.payload, "NOTIFICATION_LOG");
+
+                    const std::unordered_map<uint8_t, std::string> notificationTypeMap = {
+                        {0x00, "Error Occurrence"},
+                        {0x01, "Error Recovery"}
+                    };
+
+                    const std::unordered_map<uint8_t, std::string> errorCodeMap = {
+                        {0x01, "Main power down"},
+                        {0x02, "Main power is low voltage"},
+                        {0x03, "Low Internal battery"},
+                        {0x10, "Abnormal temperature in housing"},
+                        {0x11, "Forced shutdown due to abnormal temperature"},
+                        {0x12, "Housing is open"},
+                        {0x20, "DSRC is unavailable"},
+                        {0x21, "Cellular network failure"},
+                        {0x22, "USB bus failure"},
+                        {0x23, "IO board failure"},
+                        {0x24, "Ethernet failure"},
+                        {0x25, "RS-232C failure"},
+                        {0x26, "No GNSS signal"},
+                        {0x40, "Out of storage space"},
+                        {0x41, "Table Error"}
+                    };
+
+                    auto getFieldDescription = [](uint8_t value, const std::unordered_map<uint8_t, std::string>& map) -> std::string
+                    {
+                        auto it = map.find(value);
+                        return it != map.end() ? it->second : "Unknown";
+                    };
+
                     break;
                 }
                 case EEPClient::MESSAGE_CODE::DI_STATUS_NOTIFICATION:

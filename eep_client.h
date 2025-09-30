@@ -2082,5 +2082,5 @@ private:
     // DSRC transaction record write to file
     void processDSRCFeTx(const MessageHeader& header, const transactionData& txData);
     void processDSRCBeTx(const MessageHeader& header, const transactionData& txData);
-    void writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::string& data);
+    void writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data);
 };
