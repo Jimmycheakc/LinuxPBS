@@ -852,7 +852,7 @@ void operation::PBSEntry(string sIU)
 
     if (sIU == "") return;
     //check blacklist
-    SendMsg2Server("90",sIU+",,,,,PMS_DVR");
+    SendMsg2Server("90",","+sIU+",,"+tEntry.sLPN[0]+ ",,PMS_DVR");
     iRet = m_db->IsBlackListIU(sIU);
     if (iRet >= 0){
         ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
@@ -2745,6 +2745,11 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
     {
         if (gtStation.iType == tientry) db::getInstance()->updateEntryTrans(LPN,sTransid);
         else db::getInstance()->updateExitTrans(LPN,sTransid);
+    }
+
+    if (tEntry.sIUTKNo != "")
+    {
+        SendMsg2Server("90",","+tEntry.sIUTKNo+",,"+LPN+ ",,PMS_DVR");
     }
 }
 
