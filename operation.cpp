@@ -5013,6 +5013,37 @@ void operation::processEEP(const std::string& eventData)
                 }
                 break;
             }
+            case EEPClient::CommandType::DO_REQ_CMD:
+            {
+                if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))
+                {
+                    switch (static_cast<EEPClient::MESSAGE_CODE>(eventParsed.messageCode))
+                    {
+                        case EEPClient::MESSAGE_CODE::ACK:
+                        {
+                            EEPClient::ack setDoReqAck;
+                            parsePayload(setDoReqAck, eventParsed.payload, "DO_REQ_ACK");
+                            break;
+                        }
+                        case EEPClient::MESSAGE_CODE::NAK:
+                        {
+                            EEPClient::nak setDoReqNak;
+                            parsePayload(setDoReqNak, eventParsed.payload, "DO_REQ_NAK");
+                            break;
+                        }
+                        default:
+                        {
+                            writelog("EEP Request Cmd: DO_REQ_CMD, unknown response.", "OPR");
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    writelog("EEP Request Cmd: DO_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                }
+                break;
+            }
             case EEPClient::CommandType::SET_DI_PORT_CONFIG_CMD:
             {
                 if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::SUCCESS))

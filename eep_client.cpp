@@ -183,6 +183,22 @@ void EEPClient::FnSendDIReq()
     enqueueCommand(CommandType::DI_REQ_CMD, static_cast<int>(PRIORITY::NORMAL), nullptr);
 }
 
+void EEPClient::FnSendDOReq(uint8_t do1, uint8_t do2, uint8_t do3, uint8_t do4, uint8_t do5, uint8_t do6)
+{
+    // Data Format in little-Endian
+    auto reqData = std::make_shared<SetDOPort>();
+
+    reqData->do1 = do1;
+    reqData->do2 = do2;
+    reqData->do3 = do3;
+    reqData->do4 = do4;
+    reqData->do5 = do5;
+    reqData->do6 = do6;
+    std::fill(std::begin(reqData->rsv), std::end(reqData->rsv), 0x00);
+
+    enqueueCommand(CommandType::DO_REQ_CMD, static_cast<int>(PRIORITY::NORMAL), reqData);
+}
+
 void EEPClient::FnSendSetDIPortConfigReq(uint16_t periodDebounceDI1_, uint16_t periodDebounceDI2_, uint16_t periodDebounceDI3_, uint16_t periodDebounceDI4_, uint16_t periodDebounceDI5_)
 {
     // Data Format in little-Endian
@@ -2318,6 +2334,7 @@ bool EEPClient::isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTy
         { CommandType::START_REQ_CMD,                                    {static_cast<uint8_t>(MESSAGE_CODE::START_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}               },
         { CommandType::STOP_REQ_CMD,                                     {static_cast<uint8_t>(MESSAGE_CODE::STOP_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                },
         { CommandType::DI_REQ_CMD,                                       {static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}           },
+        { CommandType::DO_REQ_CMD,                                       {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
         { CommandType::SET_DI_PORT_CONFIG_CMD,                           {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
         { CommandType::GET_OBU_INFO_REQ_CMD,                             {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
         { CommandType::GET_OBU_INFO_STOP_REQ_CMD,                        {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
@@ -2353,6 +2370,7 @@ bool EEPClient::isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTy
         { CommandType::START_REQ_CMD,                                    static_cast<uint8_t>(MESSAGE_CODE::START_REQUEST)                                      },
         { CommandType::STOP_REQ_CMD,                                     static_cast<uint8_t>(MESSAGE_CODE::STOP_REQUEST)                                       },
         { CommandType::DI_REQ_CMD,                                       static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_REQUEST)                                  },
+        { CommandType::DO_REQ_CMD,                                       static_cast<uint8_t>(MESSAGE_CODE::SET_DO_REQUEST)                                     },
         { CommandType::SET_DI_PORT_CONFIG_CMD,                           static_cast<uint8_t>(MESSAGE_CODE::SET_DI_PORT_CONFIGURATION)                          },
         { CommandType::GET_OBU_INFO_REQ_CMD,                             static_cast<uint8_t>(MESSAGE_CODE::GET_OBU_INFORMATION_REQUEST)                        },
         { CommandType::GET_OBU_INFO_STOP_REQ_CMD,                        static_cast<uint8_t>(MESSAGE_CODE::GET_OBU_INFORMATION_STOP)                           },
@@ -2421,6 +2439,7 @@ bool EEPClient::isResponseComplete(Command cmd, const uint8_t& dataTypeCode_)
         { CommandType::START_REQ_CMD,                                    {static_cast<uint8_t>(MESSAGE_CODE::START_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}               },
         { CommandType::STOP_REQ_CMD,                                     {static_cast<uint8_t>(MESSAGE_CODE::STOP_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                },
         { CommandType::DI_REQ_CMD,                                       {static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_RESPONSE), static_cast<uint8_t>(MESSAGE_CODE::NAK)}           },
+        { CommandType::DO_REQ_CMD,                                       {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
         { CommandType::SET_DI_PORT_CONFIG_CMD,                           {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
         { CommandType::GET_OBU_INFO_REQ_CMD,                             {static_cast<uint8_t>(MESSAGE_CODE::NAK)}                                                                   },
         { CommandType::GET_OBU_INFO_STOP_REQ_CMD,                        {static_cast<uint8_t>(MESSAGE_CODE::ACK), static_cast<uint8_t>(MESSAGE_CODE::NAK)}                          },
@@ -3052,6 +3071,11 @@ std::string EEPClient::getCommandString(CommandType cmd)
             cmdStr = "DI_REQ_CMD";
             break;
         }
+        case CommandType::DO_REQ_CMD:
+        {
+            cmdStr = "DO_REQ_CMD";
+            break;
+        }
         case CommandType::SET_DI_PORT_CONFIG_CMD:
         {
             cmdStr = "SET_DI_PORT_CONFIG_CMD";
@@ -3499,6 +3523,24 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
         {
             // Message Header
             appendMessageHeader(msg, static_cast<uint8_t>(MESSAGE_CODE::DI_STATUS_REQUEST), seqNo, 0x0000);
+            break;
+        }
+        case CommandType::DO_REQ_CMD:
+        {
+            // Message Header
+            appendMessageHeader(msg, static_cast<uint8_t>(MESSAGE_CODE::SET_DO_REQUEST), seqNo, 0x0008);
+
+            // Message Content
+            if (cmd.data)
+            {
+                auto data = cmd.data->serialize();
+                msg.insert(msg.end(), data.begin(), data.end());
+            }
+            else
+            {
+                Logger::getInstance()->FnLog("Empty DI Port Configuration message to be sent.", logFileName_, "EEP");
+                success = false;
+            }
             break;
         }
         case CommandType::SET_DI_PORT_CONFIG_CMD:
@@ -4131,6 +4173,7 @@ void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
         case CommandType::START_REQ_CMD:
         case CommandType::STOP_REQ_CMD:
         case CommandType::DI_REQ_CMD:
+        case CommandType::DO_REQ_CMD:
         case CommandType::SET_DI_PORT_CONFIG_CMD:
         case CommandType::GET_OBU_INFO_REQ_CMD:
         case CommandType::GET_OBU_INFO_STOP_REQ_CMD:

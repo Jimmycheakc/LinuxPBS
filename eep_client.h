@@ -191,6 +191,31 @@ public:
         }
     };
 
+    struct SetDOPort : CommandDataBase
+    {
+        uint8_t do1;
+        uint8_t do2;
+        uint8_t do3;
+        uint8_t do4;
+        uint8_t do5;
+        uint8_t do6;
+        uint8_t rsv[2];
+
+        std::vector<uint8_t> serialize() const override
+        {
+            std::vector<uint8_t> out;
+            out.push_back(do1);
+            out.push_back(do2);
+            out.push_back(do3);
+            out.push_back(do4);
+            out.push_back(do5);
+            out.push_back(do6);
+            out.insert(out.end(), std::begin(rsv), std::end(rsv));
+
+            return out;
+        }
+    };
+
     struct DeductData : CommandDataBase
     {
         uint8_t serialNum[2];
@@ -493,6 +518,7 @@ public:
         START_REQ_CMD,
         STOP_REQ_CMD,
         DI_REQ_CMD,
+        DO_REQ_CMD,
         SET_DI_PORT_CONFIG_CMD,
         GET_OBU_INFO_REQ_CMD,
         GET_OBU_INFO_STOP_REQ_CMD,
@@ -1947,6 +1973,7 @@ public:
     void FnSendStartReq();
     void FnSendStopReq();
     void FnSendDIReq();
+    void FnSendDOReq(uint8_t do1, uint8_t do2, uint8_t do3, uint8_t do4, uint8_t do5, uint8_t do6);
     void FnSendSetDIPortConfigReq(uint16_t periodDebounceDi1_, uint16_t periodDebounceDi2_, uint16_t periodDebounceDi3_, uint16_t periodDebounceDi4_, uint16_t periodDebounceDi5_);
     void FnSendGetOBUInfoReq();
     void FnSendGetOBUInfoStopReq();
