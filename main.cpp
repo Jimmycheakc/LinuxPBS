@@ -229,7 +229,6 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
         }
 
         int foundDSRCFeSettleFile_ = 0;
-        int foundDSRCBeSettleFile_ = 0;
         if (std::filesystem::exists(EEPSettleFilePath) && std::filesystem::is_directory(EEPSettleFilePath))
         {
             for (const auto& entry : std::filesystem::directory_iterator(EEPSettleFilePath))
@@ -243,11 +242,6 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
                     if (filename.find("FE_") != std::string::npos)
                     {
                         foundDSRCFeSettleFile_++;
-                    }
-                    // Count BE files
-                    else if (filename.find("BE_") != std::string::npos)
-                    {
-                        foundDSRCBeSettleFile_++;
                     }
                 }
             }
@@ -706,19 +700,12 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
             }
 
 
-            if (foundDSRCFeSettleFile_ > 0 || foundDSRCBeSettleFile_ > 0)
+            if (foundDSRCFeSettleFile_ > 0)
             {
                 if (foundDSRCFeSettleFile_ > 0)
                 {
                     std::stringstream ss;
                     ss << "Found " << foundDSRCFeSettleFile_ << " DSRC Frontend settlement files.";
-                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                }
-
-                if (foundDSRCBeSettleFile_ > 0)
-                {
-                    std::stringstream ss;
-                    ss << "Found " << foundDSRCBeSettleFile_ << " DSRC Backend settlement files.";
                     Logger::getInstance()->FnLog(ss.str(), "", "OPR");
                 }
 
@@ -800,8 +787,6 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
                             {
                                 if (filename.find("FE_") != std::string::npos)
                                     copyAndRemove(entry.path(), "DSRCFE");
-                                else if (filename.find("BE_") != std::string::npos)
-                                    copyAndRemove(entry.path(), "DSRCBE");
                             }
                         }
                     }

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <boost/asio/thread_pool.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/filesystem.hpp>
 #include <iostream>
@@ -25,7 +26,8 @@ uint16_t EEPClient::deductCmdSerialNo_ = 0;
 std::mutex EEPClient::deductCmdSerialNoMutex_;
 
 EEPClient::EEPClient()
-    : ioContext_(),
+    : filePool_(2),
+    ioContext_(),
     strand_(boost::asio::make_strand(ioContext_)),
     workGuard_(boost::asio::make_work_guard(ioContext_)),
     connectTimer_(ioContext_),
@@ -125,6 +127,7 @@ void EEPClient::FnEEPClientClose()
 
     eepClientClose();
 
+    filePool_.join();  // Wait for all background jobs to finish
     workGuard_.reset();
     ioContext_.stop();
     if (ioContextThread_.joinable())
@@ -4693,6 +4696,7 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
 
         std::string settleFile = "";
+        std::string settleFileName = "";
 
         if (!boost::filesystem::exists(LOCAL_EEP_SETTLEMENT_FOLDER_PATH))
         {
@@ -4711,11 +4715,24 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         }
 
         std::ostringstream ossFilename;
+        if (isFrontendTx)
+        {
             ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
                         << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
-                        << ((isFrontendTx) ? "FE_" : "BE_") << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
+                        << "FE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
                         << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
                         << Common::getInstance()->FnGetDateTimeFormat_hh() << ".dsr";
+        }
+        else
+        {
+            ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
+                        << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
+                        << "_BE_"
+                        << std::setw(2) << std::setfill('0') << std::dec << iStationID_
+                        << "_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()
+                        << ".dsr";   
+        }
+        settleFileName = ossFilename.str();
         settleFile = LOCAL_EEP_SETTLEMENT_FOLDER_PATH + "/" + ossFilename.str();
 
         // Write data to local
@@ -4799,6 +4816,15 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
             Logger::getInstance()->FnLog("Write failed for " + settleFile, logFileName_, "EEP");
             Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
         }
+        ofs.close();
+
+        if (!isFrontendTx)
+        {
+            boost::asio::post(filePool_, [this, settleFile]() {
+                    copyAndRemoveBEFile(settleFile);
+            });
+        }
+
     }
     catch (const std::exception& e)
     {
@@ -4809,5 +4835,141 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
     {
         Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: Unknown Exception");
         Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
+    }
+}
+
+void EEPClient::copyAndRemoveBEFile(const std::string& settlementfilepath)
+{
+    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+
+    // Create the mount poin directory if doesn't exist
+    std::string mountPoint = "/mnt/dsrcsettlementfiles";
+    std::string sharedFolderPath = "//" + IniParser::getInstance()->FnGetCentralDBServer() + "/Carpark/EEPSettle";
+
+    std::string username = IniParser::getInstance()->FnGetCentralUsername();
+    std::string password = IniParser::getInstance()->FnGetCentralPassword();
+
+    try
+    {
+        if (!std::filesystem::exists(mountPoint))
+        {
+            std::error_code ec;
+            if (!std::filesystem::create_directories(mountPoint, ec))
+            {
+                Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), logFileName_, "EEP");
+            }
+            else
+            {
+                Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), logFileName_, "EEP");
+            }
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), logFileName_, "EEP");
+        }
+
+        // Mount the shared folder
+        std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
+                                    " -o username=" + username + ",password=" + password;
+        std::cout << "Mount cmd: " << mountCommand << std::endl;
+        int mountStatus = std::system(mountCommand.c_str());
+        if (mountStatus != 0)
+        {
+            Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), logFileName_, "EEP");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), logFileName_, "EEP");
+
+            // File copy/remove lambda
+            auto copyAndRemove = [&](const std::filesystem::path& src, const std::string& subdir) {
+                std::filesystem::path destFilePath = std::filesystem::path(mountPoint) / subdir / "Raw" / src.filename();
+
+                // Ensure the parent directories exist
+                std::error_code ec;
+                std::filesystem::create_directories(destFilePath.parent_path(), ec);
+
+                if (ec)
+                {
+                    Logger::getInstance()->FnLog("Failed to create directory: " + destFilePath.parent_path().string() +
+                                                " - " + ec.message(), logFileName_, "EEP");
+                }
+                else
+                {
+                    std::filesystem::copy(src, destFilePath, std::filesystem::copy_options::overwrite_existing, ec);
+
+                    if (!ec)
+                    {
+                        Logger::getInstance()->FnLog("Copied file: " + src.string(), logFileName_, "EEP");
+                        std::filesystem::remove(src, ec);
+                        if (!ec)
+                            Logger::getInstance()->FnLog("Removed file: " + src.string(), logFileName_, "EEP");
+                    }
+                    else
+                    {
+                        Logger::getInstance()->FnLog("Failed to copy file: " + src.string(), logFileName_, "EEP");
+                    }
+                }
+            };
+
+            copyAndRemove(settlementfilepath, "DSRCBE");
+        }
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+    }
+
+    try
+    {
+        // Unmount the shared folder
+        std::string unmountCommand = "sudo umount " + mountPoint;
+        int unmountStatus = std::system(unmountCommand.c_str());
+        if (unmountStatus != 0)
+        {
+            Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), logFileName_, "EEP");
+        }
+        else
+        {
+            Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), logFileName_, "EEP");
+        }
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Unmount Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Unmount Exception: " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << __func__ << ", Unmount Exception: Unknown Exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
     }
 }

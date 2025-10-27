@@ -1,5 +1,6 @@
 #pragma once
 
+#include <boost/asio/thread_pool.hpp>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -2004,6 +2005,7 @@ public:
 private:
     static EEPClient* eepClient_;
     static std::mutex mutex_;
+    boost::asio::thread_pool filePool_;  // background worker threads
     boost::asio::io_context ioContext_;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
@@ -2110,4 +2112,5 @@ private:
     void processDSRCFeTx(const MessageHeader& header, const transactionData& txData);
     void processDSRCBeTx(const MessageHeader& header, const transactionData& txData);
     void writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data);
+    void copyAndRemoveBEFile(const std::string& settlementfilepath);
 };
