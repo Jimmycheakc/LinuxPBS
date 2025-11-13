@@ -164,10 +164,9 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         }
         else  
         {
-            operation:: getInstance()->HandlePBSError(AntennaError,value);
-
             if (operation:: getInstance()->tProcess.gbLoopApresent.load() == true)
             {
+                operation:: getInstance()->HandlePBSError(AntennaError,value);
                 Antenna::getInstance()->FnAntennaStopRead();
                 operation::getInstance()->writelog("No IU detected! Antenna Error", "OPR");
                 operation::getInstance()->ShowLEDMsg("Antenna Error!^Insert/Tap Card", "Antenna Error!^Insert/Tap Card");

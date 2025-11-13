@@ -2749,7 +2749,7 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
 
     if (tEntry.sIUTKNo != "")
     {
-        SendMsg2Server("90",","+tEntry.sIUTKNo+",,"+LPN+ ",,PMS_DVR");
+        SendMsg2Server("90",","+tEntry.sIUTKNo+",,"+LPN+ ",,Entry OK");
     }
 }
 
