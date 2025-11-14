@@ -4719,7 +4719,7 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         {
             ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
                         << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
-                        << "FE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
+                        << "_FE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
                         << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
                         << Common::getInstance()->FnGetDateTimeFormat_hh() << ".dsr";
         }
@@ -4727,10 +4727,9 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         {
             ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
                         << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
-                        << "_BE_"
-                        << std::setw(2) << std::setfill('0') << std::dec << iStationID_
-                        << "_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()
-                        << ".dsr";   
+                        << "_BE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
+                        << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
+                        << Common::getInstance()->FnGetDateTimeFormat_hh() << ".dsr";   
         }
         settleFileName = ossFilename.str();
         settleFile = LOCAL_EEP_SETTLEMENT_FOLDER_PATH + "/" + ossFilename.str();
