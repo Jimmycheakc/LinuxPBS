@@ -4715,9 +4715,14 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         }
 
         std::ostringstream ossFilename;
+        auto toMax16 = [](const std::string& s)
+        {
+            return (s.size() >= 16) ? s.substr(0, 16) : s;
+        };
+
         if (isFrontendTx)
         {
-            ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
+            ossFilename << "EEP_" << toMax16(operation::getInstance()->tParas.gsCPOID)
                         << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
                         << "_FE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
                         << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
@@ -4725,11 +4730,11 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         }
         else
         {
-            ossFilename << "EEP_" << operation::getInstance()->tParas.gsCPOID
+            ossFilename << "EEP_" << toMax16(operation::getInstance()->tParas.gsCPOID)
                         << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
-                        << "_BE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
-                        << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
-                        << Common::getInstance()->FnGetDateTimeFormat_hh() << ".dsr";   
+                        << "_BE_"
+                        << std::setw(2) << std::setfill('0') << std::dec << iStationID_
+                        << "_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() << ".dsr";   
         }
         settleFileName = ossFilename.str();
         settleFile = LOCAL_EEP_SETTLEMENT_FOLDER_PATH + "/" + ossFilename.str();
@@ -4784,15 +4789,35 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
             header.push_back((ms_hundreds << 4) | ms_tens);
             header.push_back(ms_ones << 4);
             // Collection File Name
-            std::ostringstream tempFileNameoss;
-            tempFileNameoss << std::left << std::setw(48) << std::setfill(' ') << ossFilename.str();
-            std::string tempFileName = tempFileNameoss.str();
-            header.insert(header.end(), tempFileName.begin(), tempFileName.end());
+            auto padded = [&](const std::string& s, std::size_t width)
+            {
+                std::ostringstream oss;
+                oss << std::left << std::setw(width) << std::setfill(' ') << s;
+                return oss.str();
+            };
+
+            const std::string fname = ossFilename.str();
+            const std::size_t fnameLen = fname.length();
+            std::string finalName = "";
+            if (isFrontendTx)
+            {
+                finalName = padded(fname, 48);
+            }
+            else
+            {
+                finalName = (fnameLen > 48) ? padded(fname, fnameLen) : padded(fname, 48);
+            }
+            header.insert(header.end(), finalName.begin(), finalName.end());
             // RFU
             if (isFrontendTx)
+            {
                 header.insert(header.end(), 145, static_cast<uint8_t>(' '));
+            }
             else
-                header.insert(header.end(), 349, static_cast<uint8_t>(' '));
+            {
+                std::size_t rfuLen = 349 - ((fnameLen > 48) ? (fnameLen - 48) : 0);
+                header.insert(header.end(), rfuLen, static_cast<uint8_t>(' '));
+            }
 
             ofs.write(reinterpret_cast<const char*>(header.data()), header.size());
         }
