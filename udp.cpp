@@ -270,9 +270,18 @@ void udpclient::processdata (const char* data, std::size_t length)
 				}
 				operation::getInstance()->m_db->loadmessage();
 				operation::getInstance()->m_db->loadExitmessage();
-				if (operation::getInstance()->tProcess.gbcarparkfull.load() == false){
-					operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-					operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+				if (operation::getInstance()->tProcess.gbcarparkfull.load() == false)
+				{
+					if (operation::getInstance()->gtStation.iType == tientry)
+					{
+						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+					}
+					else
+					{
+						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+					}
 				}
 				break;
 			}
@@ -432,13 +441,24 @@ void udpclient::processdata (const char* data, std::size_t length)
 					operation::getInstance()->tProcess.gbcarparkfull.store(bCarparkFull);
 					if (bCarparkFull == false) {
 						string sIUNo = operation:: getInstance()->tEntry.sIUTKNo; 
-						if (operation::getInstance()->tProcess.gbLoopApresent.load() == true and sIUNo != "" ){
+						if (operation::getInstance()->tProcess.gbLoopApresent.load() == true and sIUNo != "" )
+						{
 							operation::getInstance()->PBSEntry(sIUNo);
 						}
-						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+
+						if (operation::getInstance()->gtStation.iType == tientry)
+						{
+							operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+							operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+						}
+						else
+						{
+							operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+							operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+						}
 					}
-					else {
+					else
+					{
 						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_CarParkFull2LED[0]);
 						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_CarParkFull2LED[1]);
 					}

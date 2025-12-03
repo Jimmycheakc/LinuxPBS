@@ -134,8 +134,16 @@ void operation::OperationInit(io_context& ioContext)
         //----
         writelog("EPS in operation","OPR");
         //------
-        tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-        tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+         if (gtStation.iType == tientry)
+        {
+            tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+            tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+        }
+        else
+        {
+            tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+            tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+        }
         //-------
         Clearme();
         CheckReader();
@@ -372,7 +380,14 @@ void operation::LoopACome()
     startLoopAPeriodicTimer();
     FnSetLastActionTimeAfterLoopA();
 
-    ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
+    if (gtStation.iType == tientry)
+    {
+        ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
+    }
+    else
+    {
+        ShowLEDMsg(tExitMsg.MsgExit_XLoopA[0], tExitMsg.MsgExit_XLoopA[1]);
+    }
     Clearme();
     DIO::getInstance()->FnSetLCDBacklight(1);
     //----
@@ -1809,125 +1824,229 @@ void operation::ShowTotalLots(std::string totallots, std::string LEDId)
 }
 
 void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires)
- {
+{
     
     std::string sExp;
     int i;
     int giSeasonTransType;
     std::string sMsgPartialSeason;
 
-    if (gtStation.iType == tientry){
-         tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
-         giSeasonTransType = tEntry.iTransType;
+    if (gtStation.iType == tientry)
+    {
+        tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
+        giSeasonTransType = tEntry.iTransType;
     } 
-    else {
-         tExit.iTransType = GetSeasonTransType(tExit.iVehicleType,std::stoi(tSeason.rate_type), tExit.iTransType);
+    else
+    {
+        tExit.iTransType = GetSeasonTransType(tExit.iVehicleType,std::stoi(tSeason.rate_type), tExit.iTransType);
         giSeasonTransType = tExit.iTransType;
     }
     tProcess.giShowType = 0;
 
-    if (giSeasonTransType > 49) {
+    if (giSeasonTransType > 49)
+    {
         sMsgPartialSeason = db::getInstance()->GetPartialSeasonMsg(giSeasonTransType);
         writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(giSeasonTransType),"OPR");
     }
-    if (sMsgPartialSeason.empty()) {
+
+    if (sMsgPartialSeason.empty())
+    {
         sMsgPartialSeason = "Season";
     }
 
-    switch (iReturn) {
-            case -1: 
-                writelog("DB error when Check season", "OPR");
-                break;
-            case 0:  
+    switch (iReturn)
+    {
+        case -1:
+        {
+            writelog("DB error when Check season", "OPR");
+            break;
+        }
+        case 0:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonInvalid[0];
                 sLCD = tMsg.Msg_SeasonInvalid[1];
-                break;
-            case 1:  
-                if (gtStation.iType == tientry) {
-                    sMsg = tMsg.Msg_ValidSeason[0];
-                    sLCD = tMsg.Msg_ValidSeason[1];
-                } else{
-                    sMsg = tExitMsg.MsgExit_XValidSeason[0];
-                    sLCD = tExitMsg.MsgExit_XValidSeason[1];
-                } 
-                break;
-            case 2: 
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonInvalid[0];
+                sLCD = tExitMsg.MsgExit_SeasonInvalid[1];
+            }
+            break;
+        }
+        case 1:
+        {
+            if (gtStation.iType == tientry)
+            {
+                sMsg = tMsg.Msg_ValidSeason[0];
+                sLCD = tMsg.Msg_ValidSeason[1];
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_XValidSeason[0];
+                sLCD = tExitMsg.MsgExit_XValidSeason[1];
+            }
+            break;
+        }
+        case 2:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonExpired[0];
                 sLCD = tMsg.Msg_SeasonExpired[1];
-                writelog("Season Expired", "OPR");
-                break;
-            case 3: 
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonExpired[0];
+                sLCD = tExitMsg.MsgExit_SeasonExpired[1];
+            }
+            writelog("Season Expired", "OPR");
+            break;
+        }
+        case 3:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonTerminated[0];
                 sLCD = tMsg.Msg_SeasonTerminated[1];
-                writelog ("Season terminated", "OPR");
-                break;
-            case 4:  
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonTerminated[0];
+                sLCD = tExitMsg.MsgExit_SeasonTerminated[1];
+            }
+            writelog ("Season terminated", "OPR");
+            break;
+        }
+        case 4:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonBlocked[0];
                 sLCD = tMsg.Msg_SeasonBlocked[1];
-                writelog ("Season Blocked", "OPR");
-                break;
-            case 5:  
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonBlocked[0];
+                sLCD = tExitMsg.MsgExit_SeasonBlocked[1];
+            }
+            writelog ("Season Blocked", "OPR");
+            break;
+        }
+        case 5:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonInvalid[0];
                 sLCD = tMsg.Msg_SeasonInvalid[1];
-                writelog ("Season Lost", "OPR");
-                break;
-            case 6:
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonInvalid[0];
+                sLCD = tExitMsg.MsgExit_SeasonInvalid[1];
+            }
+            writelog ("Season Lost", "OPR");
+            break;
+        }
+        case 6:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonPassback[0];
                 sLCD = tMsg.Msg_SeasonPassback[1];
-                writelog ("Season Passback", "OPR");
-                break;
-            case 7:  
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonBlocked[0];
+                sLCD = tExitMsg.MsgExit_SeasonBlocked[1];
+            }
+            writelog ("Season Passback", "OPR");
+            break;
+        }
+        case 7:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonNotStart[0];
                 sLCD = tMsg.Msg_SeasonNotStart[1];
-                writelog ("Season Not Start", "OPR");
-                break;
-            case 8: 
-                sMsg = "Wrong Season Type";
-                sLCD = "Wrong Season Type";
-                writelog ("Wrong Season Type", "OPR");
-                break;
-            case 9: 
-                sMsg = "Complimentary";
-                sLCD = "Complimentary";
-                writelog ("Complimentary!", "OPR");
-                break;
-            case 10:     
-                sMsg = tMsg.Msg_SeasonAsHourly[0];
-                sLCD = tMsg.Msg_SeasonAsHourly[1];
-                writelog ("Season As Hourly", "OPR");
-                break;
-            case 11:     
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonNotStart[0];
+                sLCD = tExitMsg.MsgExit_SeasonNotStart[1];
+            }
+            writelog ("Season Not Start", "OPR");
+            break;
+        }
+        case 8:
+        {
+            sMsg = "Wrong Season Type";
+            sLCD = "Wrong Season Type";
+            writelog ("Wrong Season Type", "OPR");
+            break;
+        }
+        case 9:
+        {
+            sMsg = "Complimentary";
+            sLCD = "Complimentary";
+            writelog ("Complimentary!", "OPR");
+            break;
+        }
+        case 10:
+        {
+            sMsg = tMsg.Msg_SeasonAsHourly[0];
+            sLCD = tMsg.Msg_SeasonAsHourly[1];
+            writelog ("Season As Hourly", "OPR");
+            break;
+        }
+        case 11:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_ESeasonWithinAllowance[0];
                 sLCD = tMsg.Msg_ESeasonWithinAllowance[1];
-                writelog ("Season within allowance", "OPR");
-                break;
-            case 12:
-                sMsg = tExitMsg.MsgExit_MasterSeason[0];
-                sLCD = tExitMsg.MsgExit_MasterSeason[1];
-                writelog ("Master Season", "OPR");
-                break;
-            case 13:     
-                sMsg = tMsg.Msg_WholeDayParking[0];
-                sLCD = tMsg.Msg_WholeDayParking[1];
-                writelog ("Whole Day Season", "OPR");
-                break;
-            default:
-                break;
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_XSeasonWithinAllowance[0];
+                sLCD = tExitMsg.MsgExit_XSeasonWithinAllowance[1];
+            }
+            writelog ("Season within allowance", "OPR");
+            break;
         }
+        case 12:
+        {
+            sMsg = tExitMsg.MsgExit_MasterSeason[0];
+            sLCD = tExitMsg.MsgExit_MasterSeason[1];
+            writelog ("Master Season", "OPR");
+            break;
+        }
+        case 13:
+        {
+            sMsg = tMsg.Msg_WholeDayParking[0];
+            sLCD = tMsg.Msg_WholeDayParking[1];
+            writelog ("Whole Day Season", "OPR");
+            break;
+        }
+        default:
+            break;
+    }
 
-        size_t pos = sMsg.find("Season");
-        if (pos != std::string::npos) sMsg.replace(pos, 6, sMsgPartialSeason);
-        pos=sLCD.find("Season");
-        if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
-        
-        if (iReturn = 1 && std::stoi(tSeason.rate_type) != 0) {
-            sMsg = sMsgPartialSeason;
-            sLCD = sMsgPartialSeason;
-        }
-        
-        ShowLEDMsg(sMsg,sLCD);
-        
-        if (iReturn != 1 || std::stoi(tSeason.rate_type) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    size_t pos = sMsg.find("Season");
+    if (pos != std::string::npos) sMsg.replace(pos, 6, sMsgPartialSeason);
+    pos=sLCD.find("Season");
+    if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
+    
+    if (iReturn = 1 && std::stoi(tSeason.rate_type) != 0)
+    {
+        sMsg = sMsgPartialSeason;
+        sLCD = sMsgPartialSeason;
+    }
+    
+    ShowLEDMsg(sMsg,sLCD);
+    
+    if (iReturn != 1 || std::stoi(tSeason.rate_type) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 }
 

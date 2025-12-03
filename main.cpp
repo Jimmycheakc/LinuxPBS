@@ -105,8 +105,16 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 operation::getInstance()->tProcess.gbInitParamFail = 0;
                 operation::getInstance()->Initdevice(*(operation::getInstance()->iCurrentContext));
                 operation::getInstance()->isOperationInitialized_.store(true);
-                operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-                operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+                if (operation::getInstance()->gtStation.iType == tientry)
+                {
+                    operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+                    operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+                }
+                else
+                {
+                    operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+                    operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+                }
                 operation::getInstance()->writelog("EPS in operation","OPR");
             }
         }
