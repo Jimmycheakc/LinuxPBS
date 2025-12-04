@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <vector>
@@ -96,6 +97,8 @@ private:
     std::string logFileName_;
     std::atomic<bool> isBarcodeMonitoringThreadRunning_;
     std::thread barcodeMonitoringThread_;
+    std::condition_variable cv_;
+    std::mutex cvMutex_;
     BARCODE_READER();
     std::string readBarcode(const std::string& devicePath);
     void monitoringBarcodeThreadFunction();
