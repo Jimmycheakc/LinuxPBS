@@ -27,6 +27,7 @@
 #include "udp.h"
 #include "ksm_reader.h"
 #include "eep_client.h"
+#include "shutdown_manager.h"
 
 
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
@@ -874,6 +875,8 @@ void signalHandler(const boost::system::error_code& ec, int signal, boost::asio:
         Logger::getInstance()->FnLog("Terminal signal received. Station Program terminated.");
         operation::getInstance()->SendMsg2Server("09","11Stopping...");
 
+        ShutdownManager::getInstance()->gracefulShutdown();
+        /*
         // Display Station Stopped on LCD
         std::string LCDLine1Msg = ">>> STN STOPPED <<< ";
         std::string LCDLine2Msg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
@@ -890,6 +893,7 @@ void signalHandler(const boost::system::error_code& ec, int signal, boost::asio:
 
         // Stop the io_context to allow the run() loop to exit
         ioContext.stop();
+        */
     }
 }
 
@@ -898,6 +902,8 @@ int main (int agrc, char* argv[])
     // Initialization
     boost::asio::io_context ioContext;
     auto workGuard = boost::asio::make_work_guard(ioContext);
+
+    ShutdownManager::getInstance()->set(&ioContext, &workGuard);
 
     boost::asio::strand<boost::asio::io_context::executor_type> strand_ = boost::asio::make_strand(ioContext);
     boost::asio::strand<boost::asio::io_context::executor_type> logStrand_ = boost::asio::make_strand(ioContext);

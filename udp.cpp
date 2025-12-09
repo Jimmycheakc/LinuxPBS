@@ -13,6 +13,7 @@
 #include "log.h"
 #include "version.h"
 #include "common.h"
+#include "shutdown_manager.h"
 
 void udpclient::processmonitordata (const char* data, std::size_t length) 
 {
@@ -207,6 +208,8 @@ void udpclient::processdata (const char* data, std::size_t length)
 				operation::getInstance()->SendMsg2Server("09","11Stopping...");
 				operation::getInstance()->writelog("Exit by PMS", "UDP");
 
+				ShutdownManager::getInstance()->gracefulShutdown();
+				/*
 				// Display Station Stopped on LCD
 				std::string LCDMsg = "Station Stopped!";
 				char* sLCDMsg = const_cast<char*>(LCDMsg.data());
@@ -214,6 +217,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 				LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
 
 				std::exit(0);
+				*/
 				break;
 			}
 			case CmdStatusEnquiry:

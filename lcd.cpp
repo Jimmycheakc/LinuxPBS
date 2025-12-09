@@ -1,3 +1,5 @@
+#include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <unistd.h>
 #include "ch341_lib.h"
@@ -98,6 +100,58 @@ void LCD::sendCommandDataToDriver(int fd, char* data, bool value)
     });
 }
 
+void LCD::formatAndPostData(const char* raw_data, bool is_data)
+{
+    if (!raw_data || !lcdInitialized_) 
+        return;
+
+    std::stringstream ss;
+    size_t length = strlen(raw_data);
+    
+    // 1. Hexadecimal Conversion (Corrected Logic)
+    for (size_t i = 0; i < length; ++i)
+    {
+        unsigned char aChar = (unsigned char)raw_data[i];
+        
+        // Convert the byte value to its two-digit hex representation
+        std::stringstream char_hex_ss;
+        char_hex_ss << std::hex << std::setw(2) << std::setfill('0') << (int)aChar;
+        std::string hex_digits = char_hex_ss.str();
+
+        if (i == 0) 
+        {
+            // Append the initial "0x" ONLY for the very first byte
+            ss << "0x" << hex_digits;
+        } 
+        else 
+        {
+            // Append ONLY the hex digits for all subsequent bytes
+            ss << hex_digits;
+        }
+    }
+    
+    std::string hex_command_str = ss.str();
+
+    // 2. Post to Driver
+    if (!hex_command_str.empty())
+    {
+        // sendCommandDataToDriver expects a non-const char*, so const_cast is used.
+        sendCommandDataToDriver(lcdFd_, const_cast<char*>(hex_command_str.data()), is_data);
+    }
+}
+
+void LCD::clearDisplayLineWithPostData()
+{
+    // 1. Create a C++ string containing 20 space characters.
+    // The std::string constructor takes the count (20) and the character (' ').
+    std::string twenty_spaces(20, ' '); 
+
+    // 2. Call the formatAndPostData helper function once.
+    // The .c_str() method returns the required const char* pointer.
+    // Assuming '1' means data (not command).
+    formatAndPostData(twenty_spaces.c_str(), 1); 
+}
+
 void LCD::FnLCDClear()
 {
     if (lcdInitialized_ == false)
@@ -143,10 +197,13 @@ void LCD::FnLCDDisplayString(std::uint8_t row, std::uint8_t col, char* str)
         str_size = MAXIMUM_CHARACTER_PER_ROW;
     }
 
+    formatAndPostData(str, 1);
+    /*
     for (int i = 0; i < str_size; i++)
     {
         FnLCDDisplayCharacter(str[i]);
     }
+    */
 }
 
 void LCD::FnLCDDisplayStringCentered(std::uint8_t row, char* str)
@@ -158,10 +215,13 @@ void LCD::FnLCDDisplayStringCentered(std::uint8_t row, char* str)
     if (str_size <= MAXIMUM_CHARACTER_PER_ROW)
     {
         FnLCDCursor(row, 1);
+        clearDisplayLineWithPostData();
+        /*
         for (int i = 0; i < 20; i ++)
         {
             FnLCDDisplayCharacter(' ');
         }
+        */
         
         std::uint8_t col_size = ((MAXIMUM_CHARACTER_PER_ROW - str_size) / 2) + 1;
 
@@ -176,10 +236,13 @@ void LCD::FnLCDDisplayStringCentered(std::uint8_t row, char* str)
 void LCD::FnLCDClearDisplayRow(std::uint8_t row)
 {
     FnLCDCursor(row, 1);
+    clearDisplayLineWithPostData();
+    /*
     for (int i = 0; i < 20; i ++)
     {
         FnLCDDisplayCharacter(' ');
     }
+    */
 }
 
 void LCD::FnLCDDisplayRow(std::uint8_t row, char* str)
@@ -197,10 +260,13 @@ void LCD::FnLCDDisplayRow(std::uint8_t row, char* str)
         str_size = MAXIMUM_CHARACTER_PER_ROW;
     }
 
+    formatAndPostData(str, 1);
+    /*
     for (int i = 0; i < str_size; i++)
     {
         FnLCDDisplayCharacter(str[i]);
     }
+    */
 }
 
 void LCD::FnLCDDisplayScreen(char* str)
