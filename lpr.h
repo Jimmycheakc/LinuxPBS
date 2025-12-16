@@ -66,6 +66,8 @@ private:
     boost::asio::steady_timer periodicReconnectTimer2_;
     bool frontCameraInitialized_;
     bool rearCameraInitialized_;
+    bool lastFrontCameraConnected_;
+    bool lastRearCameraConnected_;
     Lpr();
     void startIoContextThread();
     void initFrontCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);

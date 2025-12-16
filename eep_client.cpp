@@ -305,7 +305,7 @@ void EEPClient::FnSendDeductReq(const std::string& obuLabel_, const std::string&
     }
 }
 
-void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_)
+void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_, uint16_t serialNum_)
 {
     // Data Format in little-Endian
     auto reqData = std::make_shared<DeductStopData>();
@@ -315,10 +315,8 @@ void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_)
 
     if (obuParseSuccess)
     {
-        uint16_t lastSerialNum = getLastDeductCmdSerialNo();
-
-        reqData->serialNum[0] = static_cast<uint8_t>(lastSerialNum & 0xFF);
-        reqData->serialNum[1] = static_cast<uint8_t>((lastSerialNum >> 8) & 0xFF);;
+        reqData->serialNum[0] = static_cast<uint8_t>(serialNum_ & 0xFF);
+        reqData->serialNum[1] = static_cast<uint8_t>((serialNum_ >> 8) & 0xFF);;
         std::fill(std::begin(reqData->rsv), std::end(reqData->rsv), 0x00);
         std::copy(obuLabelArr, obuLabelArr + 5, reqData->obuLabel);
         std::fill(std::begin(reqData->rsv1), std::end(reqData->rsv1), 0x00);
@@ -337,7 +335,7 @@ void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_)
     }
 }
 
-void EEPClient::FnSendTransactionReq(const std::string& obuLabel_)
+void EEPClient::FnSendTransactionReq(const std::string& obuLabel_, uint16_t serialNum_)
 {
     // Data Format in little-Endian
     auto reqData = std::make_shared<TransactionReqData>();
@@ -347,10 +345,8 @@ void EEPClient::FnSendTransactionReq(const std::string& obuLabel_)
 
     if (obuParseSuccess)
     {
-        uint16_t lastSerialNum = getLastDeductCmdSerialNo();
-
-        reqData->serialNum[0] = static_cast<uint8_t>(lastSerialNum & 0xFF);
-        reqData->serialNum[1] = static_cast<uint8_t>((lastSerialNum >> 8) & 0xFF);;
+        reqData->serialNum[0] = static_cast<uint8_t>(serialNum_ & 0xFF);
+        reqData->serialNum[1] = static_cast<uint8_t>((serialNum_ >> 8) & 0xFF);;
         std::fill(std::begin(reqData->rsv), std::end(reqData->rsv), 0x00);
         std::copy(obuLabelArr, obuLabelArr + 5, reqData->obuLabel);
         std::fill(std::begin(reqData->rsv1), std::end(reqData->rsv1), 0x00);

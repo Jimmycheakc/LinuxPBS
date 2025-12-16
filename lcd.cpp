@@ -252,7 +252,7 @@ void LCD::FnLCDDisplayRow(std::uint8_t row, char* str)
 
     std::uint8_t str_size = strlen(str);
 
-    FnLCDCursorReset();
+    // FnLCDCursorReset();
     FnLCDCursor(row, 1);
 
     if (str_size > MAXIMUM_CHARACTER_PER_ROW)

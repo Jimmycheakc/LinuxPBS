@@ -130,6 +130,7 @@ void operation::OperationInit(io_context& ioContext)
     }
     //
     if (LoadParameter()) {
+        HandlePBSError(ParamOk);
         Initdevice(ioContext);
         //----
         writelog("EPS in operation","OPR");
@@ -164,6 +165,7 @@ void operation::OperationInit(io_context& ioContext)
         //-----
     }else {
         tProcess.gbInitParamFail = 1;
+        HandlePBSError(ParamError);
         writelog("Unable to load parameter, Please download or check!", "OPR");
         if (iRet == 1)
         {
@@ -320,6 +322,19 @@ std::chrono::steady_clock::time_point operation::FnGetLastActionTimeAfterLoopA()
     return lastActionTimeAfterLoopA_;
 }
 
+void operation::stopLoopAPeriodicTimer()
+{
+    Logger::getInstance()->FnLog(__func__, "", "OPR");
+    if (pLoopATimer_)
+    {
+        pLoopATimer_->cancel();
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Unable to stop Loop A periodic timer due to pLoopATimer is nullptr.", "", "OPR");
+    }
+}
+
 void operation::FnLoopATimeoutHandler()
 {
     Logger::getInstance()->FnLog("Loop A Operation Timeout handler.", "", "OPR");
@@ -446,11 +461,7 @@ void operation::LoopAGone()
 {
     writelog ("Loop A End","OPR");
 
-    // Cancel the loop A timer 
-    if (pLoopATimer_)
-    {
-        pLoopATimer_->cancel();
-    }
+    stopLoopAPeriodicTimer();
 
     //------
     DIO::getInstance()->FnSetLCDBacklight(0);
@@ -519,7 +530,7 @@ void operation::VehicleCome(string sNo)
 
 void operation::Openbarrier()
 {
-    FnSetLastActionTimeAfterLoopA();
+    stopLoopAPeriodicTimer();
     if (tProcess.giCardIsIn == 1) {
         ShowLEDMsg ("Please Take^CashCard.","Please Take^Cashcard.");
         return;
@@ -936,6 +947,8 @@ void operation::PBSEntry(string sIU)
     }
     if (iRet != 1) {
         ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
+        tEntry.iTransType = 1;
+        tProcess.giShowType = 1;
     }
         //---------
     SaveEntry();
@@ -951,6 +964,7 @@ void operation:: Setdefaultparameter()
     tProcess.gsDefaultIU = "1096000001";
     tProcess.glNoofOfflineData = 0;
     tProcess.giSystemOnline = -1;
+    tProcess.gbLastDBConnected = false;
     //clear error msg
      for (int i= 0; i< Errsize; ++i){
         tPBSError[i].ErrNo = 0;
@@ -1473,6 +1487,21 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
     string sCmd = "";
     
     switch(iEPSErr){
+        case ParamOk:
+        {
+            if (tPBSError[iParam].ErrNo < 0) {
+                sErrMsg = "Parameter OK";
+            }
+            tPBSError[iParam].ErrNo = 0;
+            break;
+        }
+        case ParamError:
+        {
+            tPBSError[iParam].ErrNo = -1;
+            tPBSError[iParam].ErrMsg = "Parameter Error";
+            sErrMsg = tPBSError[iParam].ErrMsg;
+            break;
+        }
         case AntennaNoError:
         {
             if (tPBSError[iAntenna].ErrNo < 0) {
@@ -1536,16 +1565,19 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         case DBNoError:
         {
             tPBSError[2].ErrNo = 0;
+            Sendmystatus();
             break;
         }
         case DBFailed:
         {
             tPBSError[2].ErrNo = -1;
+            Sendmystatus();
             break;
         }
         case DBUpdateFail:
         {
             tPBSError[2].ErrNo = -2;
+            Sendmystatus();
             break;
         }
         case UPOSNoError:
@@ -2052,7 +2084,6 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
 
 void operation::ManualOpenBarrier(bool bPMS)
 {
-    FnSetLastActionTimeAfterLoopA();
     if (bPMS == true) writelog ("Manual open barrier by PMS", "OPR");
     else writelog ("Manual open barrier by operator", "OPR");
     //------------

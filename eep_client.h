@@ -1979,8 +1979,8 @@ public:
     void FnSendGetOBUInfoReq();
     void FnSendGetOBUInfoStopReq();
     void FnSendDeductReq(const std::string& obuLabel_, const std::string& fee_, const std::string& entryTime_, const std::string& exitTime_);
-    void FnSendDeductStopReq(const std::string& obuLabel_);
-    void FnSendTransactionReq(const std::string& obuLabel_);
+    void FnSendDeductStopReq(const std::string& obuLabel_, uint16_t serialNum_);
+    void FnSendTransactionReq(const std::string& obuLabel_, uint16_t serialNum_);
     void FnSendCPOInfoDisplayReq(const std::string& obuLabel_, const std::string& dataType_, const std::string& line1_, const std::string& line2_, const std::string& line3_, const std::string& line4_, const std::string& line5_);
     void FnSendCarparkProcessCompleteNotificationReq(const std::string& obuLabel_, const std::string& processingResult_, const std::string& fee);
     void FnSendDSRCProcessCompleteNotificationReq(const std::string& obuLabel_);

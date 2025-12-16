@@ -181,7 +181,7 @@ private:
 	int LocalDB_TimeOut;
 	int SP_TimeOut;
 	int m_local_db_err_flag; // 0 -ok, 1 -error, 2 - update fail
-	int m_remote_db_err_flag; // 0 -ok, 1 -error, 2 -update fail
+	std::atomic<int> m_remote_db_err_flag; // 0 -ok, 1 -error, 2 -update fail
 
 	odbc *centraldb;
 	odbc *localdb;

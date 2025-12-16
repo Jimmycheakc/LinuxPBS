@@ -153,7 +153,9 @@ typedef enum
 	SDoorNoError = 26,
     BDoorError = 27,
 	BDoorNoError = 28,
-	BarrierStatus = 29
+	BarrierStatus = 29,
+	ParamOk = 30,
+	ParamError = 31
 } EPSError;  
 
 class trans_info {
@@ -386,6 +388,7 @@ struct  tProcess_Struct
 	int online_status;
 	int offline_status;
 	int giSystemOnline;
+	bool gbLastDBConnected;
 	bool sEnableReader;
 	//------ for fee calculation 
 	string gsLastPaidTrans;

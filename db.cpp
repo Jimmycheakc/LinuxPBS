@@ -16,7 +16,7 @@ std::mutex db::mutex_;
 
 db::db()
 {
-
+	m_remote_db_err_flag.store(0);
 }
 
 db* db::getInstance()
@@ -563,7 +563,7 @@ int db::downloadseason()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if(r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		return ret;
 	}
 	else 
@@ -572,7 +572,7 @@ int db::downloadseason()
 		{
 			return ret;
 		}
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss << "Total: " << std::string (tResult[0].GetDataItem(0)) << " Seasons to be download.";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 	}
@@ -580,12 +580,12 @@ int db::downloadseason()
 	r = centraldb->SQLSelect("SELECT TOP 10 * FROM season_mst WHERE s" + to_string(giStnid) + "_fetched = 0 ", &selResult, true);
 	if(r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -633,7 +633,7 @@ int db::downloadseason()
     			dbss.clear();   // Clear the state of the stream
 				if (r != 0) 
 				{
-					m_remote_db_err_flag = 2;
+					m_remote_db_err_flag.store(2);
 					dbss.str("");  // Set the underlying string to an empty string
     				dbss.clear();   // Clear the state of the stream
 					dbss << "update central season status failed.";
@@ -642,7 +642,7 @@ int db::downloadseason()
 				else 
 				{
 					downloadCount++;
-					m_remote_db_err_flag = 0;
+					m_remote_db_err_flag.store(0);
 					//dbss << "set central season success.";
 					//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 				}
@@ -804,13 +804,13 @@ int db::downloadvehicletype()
 	r = centraldb->SQLSelect(sqlStmt,&tResult,false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1; 
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download vehicle type fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " vehicle type to be download.";
@@ -820,12 +820,12 @@ int db::downloadvehicletype()
 	r = centraldb->SQLSelect("SELECT  * FROM Vehicle_type", &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -983,13 +983,13 @@ int db::downloadledmessage()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download LED message fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " message to be download.";
@@ -999,13 +999,13 @@ int db::downloadledmessage()
 	r = centraldb->SQLSelect("SELECT  * FROM message_mst WHERE s" + to_string(giStnid) + "_fetched = 0", &selResult, true);
 	if(r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download LED message fail.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1035,7 +1035,7 @@ int db::downloadledmessage()
 				r = centraldb->SQLExecutNoneQuery("UPDATE message_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE msg_id = '" + msg_id + "'");
 				if(r != 0) 
 				{
-					m_remote_db_err_flag = 2;
+					m_remote_db_err_flag.store(2);
 					dbss.str("");  // Set the underlying string to an empty string
     				dbss.clear();   // Clear the state of the stream
 					dbss << "update central message status failed.";
@@ -1044,7 +1044,7 @@ int db::downloadledmessage()
 				else 
 				{
 					downloadCount++;
-					m_remote_db_err_flag = 0;
+					m_remote_db_err_flag.store(0);
 					//printf("update central message success \n");
 				}
 			}
@@ -1174,13 +1174,13 @@ int db::downloadparameter()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download parameter fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " parameter to be download.";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 	}
@@ -1188,13 +1188,13 @@ int db::downloadparameter()
 	r = centraldb->SQLSelect("SELECT  * FROM parameter_mst WHERE s" + to_string(giStnid) + "_fetched = 0 and for_station=1", &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("update parameter failed.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1223,7 +1223,7 @@ int db::downloadparameter()
 				r = centraldb->SQLExecutNoneQuery("UPDATE parameter_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE name = '" + param_name + "'");
 				if(r != 0) 
 				{
-					m_remote_db_err_flag = 2;
+					m_remote_db_err_flag.store(2);
 					dbss.str("");  // Set the underlying string to an empty string
     				dbss.clear();   // Clear the state of the stream
 					dbss << "update central parameter status failed.";
@@ -1232,7 +1232,7 @@ int db::downloadparameter()
 				else 
 				{
 					downloadCount++;
-					m_remote_db_err_flag = 0;
+					m_remote_db_err_flag.store(0);
 				//	printf("set central parameter success \n");
 				}
 			}			
@@ -1363,13 +1363,13 @@ int db::downloadstationsetup()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download station setup fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " station setup to be download.";
@@ -1380,13 +1380,13 @@ int db::downloadstationsetup()
 	r = centraldb->SQLSelect("SELECT  * FROM station_setup",&selResult,true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download station setup fail.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1582,13 +1582,13 @@ int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
 		r = centraldb->SQLSelect(sqlStmt, &tResult, true);
 		if (r != 0)
 		{
-			m_remote_db_err_flag = 1;
+			m_remote_db_err_flag.store(1);
 			operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
 			return ret;
 		}
 		else if (tResult.size() == 0)
 		{
-			m_remote_db_err_flag = 0;
+			m_remote_db_err_flag.store(0);
 			operation::getInstance()->writelog("Tariff download already.", "DB");
 			return -3;
 		}
@@ -1626,13 +1626,13 @@ int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1692,7 +1692,7 @@ int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadTariff fetched=1 failed.", "DB");
         }
     }
@@ -1839,14 +1839,14 @@ int db::downloadtarifftypeinfo()
     r = centraldb->SQLSelect("SELECT * FROM tariff_type_info", &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download tariff_type_info failed.", "DB");
         return ret;
     
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -1948,13 +1948,13 @@ int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("X_Tariff download already.", "DB");
             return -3;
         }
@@ -1980,13 +1980,13 @@ int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2034,7 +2034,7 @@ int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadXTariff fetched=1 failed.", "DB");
         }
     }
@@ -2126,13 +2126,13 @@ int db::downloadholidaymst(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("holiday_mst download already.", "DB");
             return -3;
         }
@@ -2147,13 +2147,13 @@ int db::downloadholidaymst(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2187,7 +2187,7 @@ int db::downloadholidaymst(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadHoliday fetched=1 failed.", "DB");
         }
     }
@@ -2277,13 +2277,13 @@ int db::download3tariffinfo()
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download 3Tariff_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2390,13 +2390,13 @@ int db::downloadratefreeinfo(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Rate_Free_Info download already.", "DB");
             return -3;
         }
@@ -2426,13 +2426,13 @@ int db::downloadratefreeinfo(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2471,7 +2471,7 @@ int db::downloadratefreeinfo(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadRateFreeInfo fetched = 1 failed.", "DB");
         }
     }
@@ -2551,13 +2551,13 @@ int db::downloadspecialdaymst(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Special_Day_mst download already.", "DB");
             return -3;
         }
@@ -2589,13 +2589,13 @@ int db::downloadspecialdaymst(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2626,7 +2626,7 @@ int db::downloadspecialdaymst(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadSpecialDay fetched=1 failed.", "DB");
         }
     }
@@ -2703,13 +2703,13 @@ int db::downloadratetypeinfo(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &selResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Rate_Type_Info failed.", "DB");
             return ret;
         }
         else if (selResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Rate_Type_Info download already.", "DB");
             return -3;
         }
@@ -2739,13 +2739,13 @@ int db::downloadratetypeinfo(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Donwload Rate_Type_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2786,7 +2786,7 @@ int db::downloadratetypeinfo(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadRateTypeInfo fetched = 1 failed.", "DB");
         }
     }
@@ -2868,13 +2868,13 @@ int db::downloadratemaxinfo(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &selResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Rate_Max_Info failed.", "DB");
             return ret;
         }
         else if (selResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Rate_Max_Info download already.", "DB");
             return -3;
         }
@@ -2904,13 +2904,13 @@ int db::downloadratemaxinfo(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Donwload Rate_Max_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2948,7 +2948,7 @@ int db::downloadratemaxinfo(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadRateMaxInfo fetched = 1 failed.", "DB");
         }
     }
@@ -3091,13 +3091,13 @@ int db::downloadTR()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download TR fail.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");
 		dbss.clear();
 		dbss << "Total " << std::string(tResult[0].GetDataItem(0)) << " TR type to be download.";
@@ -3111,13 +3111,13 @@ int db::downloadTR()
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download TR faile.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -3143,7 +3143,7 @@ int db::downloadTR()
 			if (w == 0)
 			{
 				downloadCount++;
-				m_remote_db_err_flag = 0;
+				m_remote_db_err_flag.store(0);
 			}
 		}
 		dbss.str("");
@@ -5770,9 +5770,9 @@ void db::moveOfflineTransToCentral()
 
 
 					//-----------------------
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				}
-				else m_remote_db_err_flag=1;        
+				else m_remote_db_err_flag.store(1);  
 			}
 			operation::getInstance()->writelog("uploading trans Records: End","DB");
 		}       
@@ -5818,8 +5818,8 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Fail","DB");
 
 
-	if(r!=0) m_remote_db_err_flag=1;
-	else m_remote_db_err_flag=0;
+	if(r!=0) m_remote_db_err_flag.store(1);
+	else m_remote_db_err_flag.store(0);
 
 	return r;
 }
@@ -5856,8 +5856,8 @@ int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex)
 	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " +  tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName  +" : Fail","DB");
 
 
-	if(r!=0) m_remote_db_err_flag=1;
-	else m_remote_db_err_flag=0;
+	if(r!=0) m_remote_db_err_flag.store(1);
+	else m_remote_db_err_flag.store(0);
 
 	return r;
 }
@@ -5991,11 +5991,11 @@ int db::AddRemoteControl(string sTID,string sAction, string sRemarks)
 	
 	if (r==0) {
 		operation::getInstance()->writelog("Success insert: " + sAction,"DB");
-		m_remote_db_err_flag=0;
+		m_remote_db_err_flag.store(0);
 	}
 	else {
 		operation::getInstance()->writelog("fail to insert: " + sAction,"DB");
-		 m_remote_db_err_flag=1;
+		 m_remote_db_err_flag.store(1);
 	}
 	return r;
 }
@@ -6019,18 +6019,18 @@ int db::AddSysEvent(string sEvent)
 	
 	if (r==0) {
 		operation::getInstance()->writelog("Success insert sys event log: " + sEvent,"DB");
-		m_remote_db_err_flag=0;
+		m_remote_db_err_flag.store(0);
 	}
 	else {
 		operation::getInstance()->writelog("fail to insert sys event log: " + sEvent,"DB");
-		 m_remote_db_err_flag=1;
+		 m_remote_db_err_flag.store(1);
 	}
 	return r;
 }
 
 int db::FnGetDatabaseErrorFlag()
 {
-	return m_remote_db_err_flag;
+	return m_remote_db_err_flag.load();
 }
 
 int db::HouseKeeping()
@@ -6143,18 +6143,18 @@ int db::updateEntryTrans(string lpn, string sTransID)
 				if (centraldb->NumberOfRowsAffected > 0)
 				{
 					operation::getInstance()->writelog("Success update LPR to Entry_Trans","DB");
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				} else operation::getInstance()->writelog("No TransID for update","DB");
 			} else
 			{
 			operation::getInstance()->writelog("fail to update LPR to Entry_trans","DB");
-		 	m_remote_db_err_flag=1;
+		 	m_remote_db_err_flag.store(1);
 			}
 		}
 	}
 	else {
 		operation::getInstance()->writelog("fail to update LPR to Entry_trans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		 m_remote_db_err_flag.store(1);
 		
 	}
 	return r;
@@ -6185,18 +6185,18 @@ int db::updateExitTrans(string lpn, string sTransID)
 				if (centraldb->NumberOfRowsAffected > 0)
 				{
 					operation::getInstance()->writelog("Success update LPR to Exit_Trans","DB");
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				} else operation::getInstance()->writelog("No TransID for update","DB");
 			} else
 			{
 			operation::getInstance()->writelog("fail to update LPR to Exit_trans","DB");
-		 	m_remote_db_err_flag=1;
+		 	m_remote_db_err_flag.store(1);
 			}
 		}
 	}
 	else {
 		operation::getInstance()->writelog("fail to update LPR to Exit_trans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		 m_remote_db_err_flag.store(1);
 		
 	}
 	return r;
@@ -6358,18 +6358,18 @@ int db::updateExitReceiptNo(string sReceiptNo, string StnID)
 				if (centraldb->NumberOfRowsAffected > 0)
 				{
 					operation::getInstance()->writelog("Success update Receipt No to Exit_Trans","DB");
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				} else operation::getInstance()->writelog("No Receipt for update","DB");
 			} else
 			{
 			operation::getInstance()->writelog("fail to update Receipt to Exit_trans","DB");
-		 	m_remote_db_err_flag=1;
+		 	m_remote_db_err_flag.store(1);
 			}
 		}
 	}
 	else {
 		operation::getInstance()->writelog("fail to update Receipt to Exit_trans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		 m_remote_db_err_flag.store(1);
 		
 	}
 	return r;
@@ -6711,10 +6711,10 @@ float db::HasPaidWithinPeriod(string sTimeFrom, string sTimeTo)
 	
 	if(r!=0) 
 	{
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 		goto processLocal;
 	}
-	else m_remote_db_err_flag=0;
+	else m_remote_db_err_flag.store(0);
 
 	if (selResult.size()>0)
 	{
@@ -7769,12 +7769,12 @@ int db::FetchEntryinfo(string sIUNo)
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		goto processLocal;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	if (selResult.size()>0)
@@ -7922,7 +7922,7 @@ DBError db::updatemovementtrans(tExitTrans_Struct& tExit)
 	}
 	else {
 		operation::getInstance()->writelog("fail to match Movementtrans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		 m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -7971,7 +7971,7 @@ DBError db::insert2movementtrans(tExitTrans_Struct& tExit)
 	}
 	else {
 		operation::getInstance()->writelog("fail to insert into movement_trans_tmp", "DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -7996,14 +7996,14 @@ int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		// DB Error
 		iRet = -1;
 		return iRet;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	if (selResult.size() > 0)
@@ -8085,7 +8085,7 @@ DBError db::update99PaymentTrans()
 	else
 	{
 		operation::getInstance()->writelog("Failed to updated 99 Trans for EZPay/VCC","DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -8107,7 +8107,7 @@ DBError db::insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, c
 	else
 	{
 		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -8129,7 +8129,7 @@ DBError db::insertUPTFileSummary(const std::string& sSettleDate, const std::stri
 	else
 	{
 		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }

@@ -173,5 +173,6 @@ private:
     bool copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
                     const std::string& username, const std::string& password, const std::string& outputFolderPath);
     void startLoopAPeriodicTimer();
+    void stopLoopAPeriodicTimer();
     void handleLoopAPeriodicTimerTimeout(const boost::system::error_code &ec);
 };

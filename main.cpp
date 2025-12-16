@@ -59,6 +59,27 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 }
             }
 
+            // DB OK
+            if (db::getInstance()->FnGetDatabaseErrorFlag() == 0)
+            {
+                // state changed: error → ok
+                if (!operation::getInstance()->tProcess.gbLastDBConnected)
+                {
+                    operation::getInstance()->HandlePBSError(DBNoError);
+                }
+                operation::getInstance()->tProcess.gbLastDBConnected = true;
+            }
+            // DB Error
+            else
+            {
+                // state changed: ok → error
+                if (operation::getInstance()->tProcess.gbLastDBConnected)
+                {
+                    operation::getInstance()->HandlePBSError(DBFailed);
+                }
+                operation::getInstance()->tProcess.gbLastDBConnected = false;
+            }
+
             if (operation::getInstance()->tProcess.giSystemOnline == 0 && operation::getInstance()->tProcess.glNoofOfflineData > 0)
             {
                 db::getInstance()->moveOfflineTransToCentral();
