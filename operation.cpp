@@ -4450,8 +4450,8 @@ void operation::CloseExitOperation(TransType iStatus)
         case DeductionOK:
         {
             //---- LED MSg
-            sLEDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
-            sLCDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLEDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLCDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
             break;
         }
         case DeductionFail:
@@ -4462,8 +4462,8 @@ void operation::CloseExitOperation(TransType iStatus)
         case BalanceChange:
         {
             tExit.iStatus = 3;
-            sLEDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
-            sLCDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLEDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLCDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
             break;
         }
         case Manualopen:
@@ -4880,7 +4880,7 @@ void operation::showFee2User(bool bPaying)
     else
     {
         // "Grace Period, Free!"
-        sUpp = "Fee parking";
+        sUpp = "Free parking";
         sLow = "Have a nice day!";
     }
 
