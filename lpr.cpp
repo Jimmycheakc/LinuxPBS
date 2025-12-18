@@ -30,8 +30,8 @@ Lpr::Lpr()
     commErrorTimeCriteria_(0),
     frontCameraInitialized_(false),
     rearCameraInitialized_(false),
-    lastFrontCameraConnected_(false),
-    lastRearCameraConnected_(false)
+    lastFrontCameraConnected_(true),
+    lastRearCameraConnected_(true)
 {
 }
 

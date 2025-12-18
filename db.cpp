@@ -60,11 +60,13 @@ int db::connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOu
 		dbss << "Central DB is connected!" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 		operation::getInstance()->tProcess.giSystemOnline = 0;
+		m_remote_db_err_flag.store(0);
 		return 1;
 	}
 	else {
 		dbss << "unable to connect Central DB" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_remote_db_err_flag.store(1);
 		return 0;
 	}
 }
@@ -482,10 +484,11 @@ void db::synccentraltime()
 	{
 		dbss << "Unable to retrieve Central DB time";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
+		m_remote_db_err_flag.store(1);
 	}
 	else
 	{
+		m_remote_db_err_flag.store(0);
 		if (selResult.size()>0)
 		{
 			dt=selResult[0].GetDataItem(0);

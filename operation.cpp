@@ -964,7 +964,7 @@ void operation:: Setdefaultparameter()
     tProcess.gsDefaultIU = "1096000001";
     tProcess.glNoofOfflineData = 0;
     tProcess.giSystemOnline = -1;
-    tProcess.gbLastDBConnected = false;
+    tProcess.gbLastDBConnected = true;
     //clear error msg
      for (int i= 0; i< Errsize; ++i){
         tPBSError[i].ErrNo = 0;
@@ -1490,6 +1490,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         case ParamOk:
         {
             if (tPBSError[iParam].ErrNo < 0) {
+                sCmd = "200";
                 sErrMsg = "Parameter OK";
             }
             tPBSError[iParam].ErrNo = 0;
@@ -1499,6 +1500,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         {
             tPBSError[iParam].ErrNo = -1;
             tPBSError[iParam].ErrMsg = "Parameter Error";
+            sCmd = "200";
             sErrMsg = tPBSError[iParam].ErrMsg;
             break;
         }
@@ -1565,18 +1567,27 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         case DBNoError:
         {
             tPBSError[2].ErrNo = 0;
+            tPBSError[2].ErrMsg = "DB OK";
+            sErrMsg = tPBSError[2].ErrMsg;
+            sCmd = "201";
             Sendmystatus();
             break;
         }
         case DBFailed:
         {
             tPBSError[2].ErrNo = -1;
+            tPBSError[2].ErrMsg = "DB Error";
+            sErrMsg = tPBSError[2].ErrMsg;
+            sCmd = "201";
             Sendmystatus();
             break;
         }
         case DBUpdateFail:
         {
             tPBSError[2].ErrNo = -2;
+            tPBSError[2].ErrMsg = "DB Update Error";
+            sErrMsg = tPBSError[2].ErrMsg;
+            sCmd = "201";
             Sendmystatus();
             break;
         }
