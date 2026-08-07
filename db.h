@@ -94,6 +94,7 @@ public:
     DBError insertentrytrans(tEntryTrans_Struct& tEntry);
 	DBError insertexittrans(tExitTrans_Struct& tExit);
     DBError updatemovementtrans(tExitTrans_Struct& tExit);
+    DBError updateUsedTicket(tExitTrans_Struct& tExit); 
     DBError DeleteBeforeInsertMT(tExitTrans_Struct& tExit); 
     DBError insert2movementtrans(tExitTrans_Struct& tExit); 
 	DBError insertbroadcasttrans(string sid,string iu_No,string cardno = "",string paidamt = "0.00",string itype = "1");
@@ -111,7 +112,7 @@ public:
     DBError ClearHoliday();
     DBError LoadTariffTypeInfo();
     DBError LoadXTariff();
-
+    
     int FnGetVehicleType(std::string IUCode);
     string GetPartialSeasonMsg(int iTransType);
     int FetchEntryinfo(string sIUNo);
@@ -122,17 +123,24 @@ public:
 	int deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl);
     int clearseason();
     int IsBlackListIU(string sIU);
+    int GetSeasonHolder(string sIUNo);
+    int HasAXS(std::string sIUNo);
+    int HasEZpay(std::string sIUNo);
     int CheckCardOK(string sCardNo);
     int AddRemoteControl(string sTID,string sAction, string sRemarks);
-    int AddSysEvent(string sEvent);
+    int AddSysEvent(string sEvent,int iEventType = 0, string sOccurTime = ""); 
+    int UpdateSysEvent(string sEvent,int iEventType, string sOccurTime);
+    bool HasAlertNotification();
 
     int FnGetDatabaseErrorFlag();
     int HouseKeeping();
     int clearexpiredseason();
     int updateEntryTrans(string lpn, string sTransID);
     int updateExitTrans(string lpn, string sTransID);
+    int UpdateEEPExitTrans(string OBU, string sDSerialNo,string sCardNo,float sfee, float sTopupAmt,int TransRoute,int Result); 
     int updateExitReceiptNo(string sReceiptNo, string StnID); 
     int isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, double& gbRedeemAmt, int& giRedeemTime);
+    int HasValidTicket(std::string sIUNo, std::string sLPN);
     DBError update99PaymentTrans();
     DBError insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate);
     DBError insertUPTFileSummary(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate);
@@ -181,7 +189,7 @@ private:
 	int LocalDB_TimeOut;
 	int SP_TimeOut;
 	int m_local_db_err_flag; // 0 -ok, 1 -error, 2 - update fail
-	int m_remote_db_err_flag; // 0 -ok, 1 -error, 2 -update fail
+	std::atomic<int> m_remote_db_err_flag; // 0 -ok, 1 -error, 2 -update fail
 
 	odbc *centraldb;
 	odbc *localdb;

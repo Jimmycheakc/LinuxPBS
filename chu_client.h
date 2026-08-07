@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include "tcp_client.h"
 #include <boost/json.hpp>
+#include <atomic>
 
 class CHUClient
 {
@@ -20,6 +21,7 @@ public:
     void FnCHUClientInit(const std::string& serverIP, unsigned short serverPort);
     void FnSendMsgToCHU(const std::string& sMsg);
     void FnCHUClose();
+    std::atomic<bool> shutting_down{false};
    
 private:
         static CHUClient* CHUClient_;
@@ -29,14 +31,14 @@ private:
         boost::asio::strand<boost::asio::io_context::executor_type> strand_;
         std::thread ioContextThread_;
         std::unique_ptr<AppTcpClient> client_;
-        boost::asio::steady_timer connectTimer_;
+        boost::asio::steady_timer ReConnectTimer_;
         std::string serverIP_;
         unsigned short serverPort_;
-
+        std::string gbCHUstatus;
 
         CHUClient();
         void startReConnectTimer();
-        void handleConnectTimerTimeout(const boost::system::error_code& error);
+        void handleReConnectTimerTimeout(const boost::system::error_code& error);
         void startIoContextThread();
         void handleConnect(bool success, const std::string& message);
         void handleSend(bool success, const std::string& message);

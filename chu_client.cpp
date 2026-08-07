@@ -12,6 +12,7 @@
 #include "log.h"
 #include <unordered_set>
 #include "event_manager.h"
+#include "event_handler.h"
 #include "operation.h"
 
 
@@ -25,7 +26,7 @@ CHUClient::CHUClient()
     workGuard_(boost::asio::make_work_guard(ioContext_)),
     serverIP_(""),
     serverPort_(0),
-    connectTimer_(ioContext_)
+    ReConnectTimer_(ioContext_)
 {
 }
 
@@ -45,6 +46,7 @@ void CHUClient::FnCHUClientInit(const std::string& serverIP, unsigned short serv
     client_ = std::make_unique<AppTcpClient>(ioContext_, serverIP, serverPort);
     serverIP_ = serverIP;
     serverPort_ = serverPort;
+    gbCHUstatus = "connecting";
     //-------
     if (client_ )
     {
@@ -75,7 +77,7 @@ void CHUClient::FnCHUClientInit(const std::string& serverIP, unsigned short serv
     }
     else
     {
-    
+         operation::getInstance()->writelog("Failed to create CHU Client.", "CHU");
     }
 }
 
@@ -91,23 +93,42 @@ void CHUClient::startIoContextThread()
 
 void CHUClient::startReConnectTimer()
 {
-    connectTimer_.expires_after(std::chrono::seconds(5));
-    connectTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&CHUClient::handleConnectTimerTimeout, this, std::placeholders::_1)));
+    ReConnectTimer_.expires_after(std::chrono::seconds(5));
+    ReConnectTimer_.async_wait(boost::asio::bind_executor(strand_,
+        std::bind(&CHUClient::handleReConnectTimerTimeout, this, std::placeholders::_1)));
 }
 
-void CHUClient::handleConnectTimerTimeout(const boost::system::error_code& error)
+void CHUClient::handleReConnectTimerTimeout(const boost::system::error_code& error)
 {
+    if (shutting_down == true)  return;
+    //--------
     if (error)
     {
-        
+        operation::getInstance()->writelog ("Reconnect Timer error","CHU");
+    }
+
+    if (!client_) 
+    {
+        FnCHUClientInit(serverIP_, serverPort_);
+        return;
     }
 
     if (!client_->isConnected())
     {
+        if (gbCHUstatus != "lost") {
+            gbCHUstatus = "lost";
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleCHUClientConnectionState", gbCHUstatus);
+        }
         client_->connect();
+        operation::getInstance()->writelog("ReconnectCHUGateWay at IP: " + serverIP_ + ", Port: " + std::to_string(serverPort_), "CHU");
     }
-
+    else
+    {
+        if (gbCHUstatus != "connected") {
+            gbCHUstatus = "connected";
+            EventManager::getInstance()->FnEnqueueEvent("Evt_handleCHUClientConnectionState", gbCHUstatus);
+        }
+    }
     startReConnectTimer();
     
 }
@@ -151,11 +172,26 @@ void CHUClient::handleClose(bool success, const std::string& message)
 
 void CHUClient::handleReceivedData(bool success, const std::vector<uint8_t>& data)
 {
-   
+    if (success)
+    {
+        std::string receiveDataStr(reinterpret_cast<const char*>(data.data()), data.size());
+        EventManager::getInstance()->FnEnqueueEvent("Evt_handleCHUReceived", receiveDataStr);
+    }
+    else
+    {
+        operation::getInstance()->writelog("Failed to receive CHU Data.", "CHU");
+    }
+
 }
 
 void CHUClient::FnSendMsgToCHU(const std::string& sMsg)
 {
+    if (!client_) 
+    {
+        FnCHUClientInit(serverIP_, serverPort_);
+        return;
+    }
+    
     if (client_->isConnected())
     {
         try
@@ -187,7 +223,7 @@ void CHUClient::FnSendMsgToCHU(const std::string& sMsg)
 
 void CHUClient::FnCHUClose()
 {
-   
+    ReConnectTimer_.cancel();
     if (client_)
     {
         client_->close();

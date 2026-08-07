@@ -233,12 +233,12 @@ int Antenna::antennaCmd(AntCmdID cmdID)
                                             SET_ANTENNA_DATA_COMMAND_NO,
                                             SEQUENCE_NO,
                                             antennaID,
-                                            0x01,
+                                            0x0001,
                                             0x01,
                                             0x01,
                                             0xE1,
-                                            0x12C,
-                                            0x3C);
+                                            0x012C,
+                                            0x003C);
                 break;
             }
             case AntCmdID::GET_ANTENNA_DATA_CMD:
@@ -695,7 +695,7 @@ std::vector<unsigned char> Antenna::loadSetAntennaData(unsigned char destID,
     // Data Start
     dataBuf[7] = antennaID;
     dataBuf[8] = static_cast<unsigned char>(placeID & 0x00FF);
-    dataBuf[9] = static_cast<unsigned char>(placeID & 0xFF00);
+    dataBuf[9] = static_cast<unsigned char>((placeID >> 8) & 0xFF);
     dataBuf[10] = parkingNo;
     dataBuf[11] = antennaMode;
     dataBuf[12] = 0x00;

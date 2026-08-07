@@ -28,10 +28,22 @@ void EventManager::FnStartEventThread()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "EVT");
 
-    if (!isEventThreadRunning_)
+    // exchange() returns the previous value.
+    // If it was already true, the thread is already running.
+    if (isEventThreadRunning_.exchange(true))
     {
-        isEventThreadRunning_ = true;
+        return;
+    }
+
+    try
+    {
         eventThread_ = std::thread(&EventManager::processEventsFromQueue, this);
+    }
+    catch (...)
+    {
+        // Restore the state if std::thread construction fails.
+        isEventThreadRunning_.store(false);
+        throw;
     }
 }
 
@@ -39,10 +51,17 @@ void EventManager::FnStopEventThread()
 {
     Logger::getInstance()->FnLog(__func__, logFileName_, "EVT");
 
-    if (isEventThreadRunning_)
+    // Change true to false and get the previous value.
+    // If it was already false, there is nothing to stop.
+    if (!isEventThreadRunning_.exchange(false))
     {
-        isEventThreadRunning_ = false;
-        condition_.notify_one();
+        return;
+    }
+
+    condition_.notify_one();
+
+    if (eventThread_.joinable())
+    {
         eventThread_.join();
     }
 }
@@ -73,11 +92,11 @@ void EventManager::FnEnqueueEvent(const std::string& eventName, EventType eventD
 
 void EventManager::processEventsFromQueue()
 {
-    while (isEventThreadRunning_)
+    while (isEventThreadRunning_.load())
     {
         std::unique_lock<std::mutex> lock(eventThreadMutex_);
 
-        condition_.wait(lock, [this] { return !eventQueue.empty() || !isEventThreadRunning_;});
+        condition_.wait(lock, [this] { return !eventQueue.empty() || !isEventThreadRunning_.load();});
 
         while (!eventQueue.empty())
         {

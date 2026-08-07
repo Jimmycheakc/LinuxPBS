@@ -43,6 +43,8 @@ public:
     std::chrono::system_clock::time_point FnParseDateTime(const std::string& dateTime);
     int64_t FnGetDateDiffInSeconds(const std::string& dateTime);
     int64_t FnCompareDateDiffInMinutes(const std::string& dateTime1, const std::string& dateTime2);
+    uint16_t FnStringToUint16(const std::string& s); 
+    std::string FnStringConvertDBTime(const std::string& s); 
     std::string FnGetFileName(const std::string& str);
     std::string FnGetLittelEndianUCharArrayToHexString(const unsigned char* array, std::size_t pos, std::size_t size);
     std::string FnGetUCharArrayToHexString(const unsigned char* array, std::size_t size);
@@ -64,6 +66,7 @@ public:
     std::string FnConvertuint8ToString(uint8_t value);
     std::string FnConvertuint8ToHexString(uint8_t value);
     std::string FnConvertVectorUint8ToHexString(const std::vector<uint8_t>& data, bool little_endian = false);
+    std::string FnConvertVectorUint8ToUpperCaseHexString(const std::vector<uint8_t>& data);
     std::string FnConvertVectorUint8ToBcdString(const std::vector<uint8_t>& data);
     std::vector<uint8_t> FnConvertAsciiToUint8Vector(const std::string& asciiStr);
     std::vector<uint8_t> FnGetDateInArrayBytes();
@@ -86,6 +89,10 @@ public:
     uint32_t FnConvertStringToDecimal(const std::string& data);
     std::string FnConvertHexStringToString(const std::string& data);
     std::string FnConvertVectorUint8ToString(const std::vector<uint8_t>& data);
+    std::string FnConvertVectorUint8ToRawString(const std::vector<uint8_t>& data);
+    std::string ConvertVectorUint8ToHex(const std::vector<uint8_t>& data);
+    std::string longToHex(long value);
+    std::string buildTimeUTC8();
     std::vector<uint8_t> FnConvertStringToVector(const std::string& str);
     std::string SetFeeFormat(float fee);
     std::string FnFormatToFloatString(const std::string& str);
@@ -95,6 +102,7 @@ public:
     void FnAppendUint32LE(std::vector<uint8_t>& buffer, uint32_t value);
     uint16_t FnReadUint16LE(const std::vector<uint8_t>& buffer, std::size_t offset);
     uint32_t FnReadUint24LE(const std::vector<uint8_t>& buffer, std::size_t offset);
+    uint32_t FnReadUint24BE(const std::vector<uint8_t>& buffer, std::size_t offset);
     uint32_t FnReadUint32LE(const std::vector<uint8_t>& buffer, std::size_t offset);
     uint32_t FnReadUint32BE(const std::vector<uint8_t>& buffer, std::size_t offset);
     uint64_t FnReadUint40BE(const std::vector<uint8_t>& buffer, std::size_t offset);
@@ -103,9 +111,11 @@ public:
     uint64_t FnReadUint56BE(const std::vector<uint8_t>& buffer, std::size_t offset);
     uint64_t FnReadUint64LE(const std::vector<uint8_t>& buffer, std::size_t offset);
     uint64_t FnReadUint64BE(const std::vector<uint8_t>& buffer, std::size_t offset);
-    bool FnConvertDecimalStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian = false);
+    bool FnConvertHexStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian = false);
     bool FnDecimalStringToTwoBytes(const std::string& decimalString, uint8_t output[2], bool littleEndian = false);
     bool FnParseDateTimeString(const std::string& dateTimeStr, std::tm& outTm);
+    std::string FnDecimalIntToHexString(uint64_t value, std::size_t byteSize);
+    bool FnUint32ToByteString(uint32_t value, std::string& output, std::size_t outputSize, bool littleEndian = false);
 
     /**
      * Singleton Common should not be cloneable.

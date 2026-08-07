@@ -89,6 +89,8 @@ void BARCODE_READER::stopBarcodeMonitoring()
     {
         isBarcodeMonitoringThreadRunning_.store(false);
         
+        cv_.notify_all();   // Wake sleeping thread immediately
+
         if (barcodeMonitoringThread_.joinable())
         {
             barcodeMonitoringThread_.join();
@@ -200,6 +202,7 @@ void BARCODE_READER::monitoringBarcodeThreadFunction()
             if (!barcode.empty())
             {
                 Logger::getInstance()->FnLog("INFO: Barcode Scanned | Barcode: " +  barcode, logFileName_, "BCODE");
+                Ticket_In = 1;
                 EventManager::getInstance()->FnEnqueueEvent("Evt_handleBarcodeReceived", barcode);
             }
         }
@@ -214,7 +217,10 @@ void BARCODE_READER::monitoringBarcodeThreadFunction()
             }
 
             // Wait before retrying
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            std::unique_lock<std::mutex> lock(cvMutex_);
+            cv_.wait_for(lock, std::chrono::seconds(5), [this] {
+                return !isBarcodeMonitoringThreadRunning_.load();
+            });
         }
     }
 }

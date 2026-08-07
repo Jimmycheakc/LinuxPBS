@@ -534,7 +534,8 @@ public:
         TIME_CALIBRATION_REQ_CMD,
         SET_CARPARK_AVAIL_REQ_CMD,
         CD_DOWNLOAD_REQ_CMD,
-        EEP_RESTART_INQUIRY_REQ_CMD
+        EEP_RESTART_INQUIRY_REQ_CMD,
+        EEP_idle
     };
 
     struct Command
@@ -1479,6 +1480,7 @@ public:
         uint32_t chargeReportCounter;
         uint8_t bepKeyVersion;
         uint32_t rsv14;
+        uint8_t lenOfBepCertificate;
         std::vector<uint8_t> bepCertificate;
 
         // Serialize to JSON
@@ -1560,6 +1562,7 @@ public:
             obj["chargeReportCounter"] = chargeReportCounter;
             obj["bepKeyVersion"] = bepKeyVersion;
             obj["rsv14"] = rsv14;
+            obj["lenOfBepCertificate"] = lenOfBepCertificate;
 
             boost::json::array bepCertificateArray;
             for (auto bc : bepCertificate) bepCertificateArray.push_back(bc);
@@ -1656,6 +1659,7 @@ public:
             td.chargeReportCounter = static_cast<uint32_t>(obj.at("chargeReportCounter").as_int64());
             td.bepKeyVersion = static_cast<uint8_t>(obj.at("bepKeyVersion").as_int64());
             td.rsv14 = static_cast<uint32_t>(obj.at("rsv14").as_int64());
+            td.lenOfBepCertificate = static_cast<uint8_t>(obj.at("lenOfBepCertificate").as_int64());
             
             const boost::json::array& bepCertificateArray = obj.at("bepCertificate").as_array();
             td.bepCertificate.clear();
@@ -1735,6 +1739,7 @@ public:
                 << ", bepTimeOfReport=" << vec_to_hex(bepTimeOfReport)
                 << ", chargeReportCounter=" << chargeReportCounter
                 << ", bepKeyVersion=" << static_cast<int>(bepKeyVersion)
+                << ", lenOfBepCertificate=" << static_cast<int>(lenOfBepCertificate)
                 << ", bepCertificate=" << vec_to_hex(bepCertificate)
                 << " }";
             return oss.str();
@@ -1979,8 +1984,8 @@ public:
     void FnSendGetOBUInfoReq();
     void FnSendGetOBUInfoStopReq();
     void FnSendDeductReq(const std::string& obuLabel_, const std::string& fee_, const std::string& entryTime_, const std::string& exitTime_);
-    void FnSendDeductStopReq(const std::string& obuLabel_);
-    void FnSendTransactionReq(const std::string& obuLabel_);
+    void FnSendDeductStopReq(const std::string& obuLabel_, uint16_t serialNum_);
+    void FnSendTransactionReq(const std::string& obuLabel_, uint16_t serialNum_);
     void FnSendCPOInfoDisplayReq(const std::string& obuLabel_, const std::string& dataType_, const std::string& line1_, const std::string& line2_, const std::string& line3_, const std::string& line4_, const std::string& line5_);
     void FnSendCarparkProcessCompleteNotificationReq(const std::string& obuLabel_, const std::string& processingResult_, const std::string& fee);
     void FnSendDSRCProcessCompleteNotificationReq(const std::string& obuLabel_);
@@ -1991,6 +1996,11 @@ public:
     void FnSendCDDownloadReq();
     void FnSendRestartInquiryResponseReq(uint8_t response);
     void FnEEPClientClose();
+    //------ added on 15/07/2026
+    int EEPData_In;
+
+    // Getter function - Return status
+    std::string FnGetStatusData();
 
     /**
      * Singleton EEPClient should not be cloneable
@@ -2040,6 +2050,8 @@ private:
     static std::mutex deductCmdSerialNoMutex_;
     int watchdogMissedRspCount_;
     bool lastConnectionState_;
+    mutable std::mutex statusDataMutex_;
+    std::vector<uint8_t> status_data_;
     EEPClient();
     void startIoContextThread();
     void handleConnect(bool success, const std::string& message);
@@ -2098,7 +2110,7 @@ private:
     bool isValidSourceDestination(uint8_t source, uint8_t destination);
     std::string getFieldDescription(uint8_t value, const std::unordered_map<uint8_t, std::string>& map);
     void showParsedMessage(const MessageHeader& header, const std::vector<uint8_t>& body);
-    void handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg);
+    void handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg, const std::vector<uint8_t>& data);
     void handleParsedNotificationMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg);
     void handleInvalidMessage(const std::vector<uint8_t>& data, uint8_t reasonCode_);
     bool isResponseMatchedDataTypeCode(Command cmd, const uint8_t& dataTypeCode_, const std::vector<uint8_t>& msgBody);

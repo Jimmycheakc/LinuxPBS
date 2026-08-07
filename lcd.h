@@ -62,4 +62,6 @@ private:
     void FnLCDDeinitDriver();
     void startIoContextThread();
     void sendCommandDataToDriver(int fd, char* data, bool value);
+    void formatAndPostData(const char* raw_data, bool is_data);
+    void clearDisplayLineWithPostData();
 };

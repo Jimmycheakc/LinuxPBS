@@ -303,6 +303,8 @@ public:
      */
     void operator=(const LCSCReader&) = delete;
 
+    int LCSCCard_In;
+
 private:
     static LCSCReader* lcscReader_;
     static std::mutex mutex_;

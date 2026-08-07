@@ -33,6 +33,7 @@ void Common::FnLogExecutableInfo(const std::string& str)
 {
     std::ostringstream info;
     info << "start " << Common::getInstance()->FnGetFileName(str) << " , version: " << SW_VERSION << " build:" << __DATE__ << " " << __TIME__;
+    //info << "start " << Common::getInstance()->FnGetFileName(str) << " , version: " << SW_VERSION << " build:" << __DATE__ << " " << buildTimeUTC8();
     Logger::getInstance()->FnLog(info.str());
 }
 
@@ -725,6 +726,29 @@ std::string Common::FnConvertVectorUint8ToHexString(const std::vector<uint8_t>& 
     return oss.str();
 }
 
+std::string Common::FnConvertVectorUint8ToUpperCaseHexString(const std::vector<uint8_t>& data)
+{
+    if (data.empty()) {
+        return "";
+    }
+
+    std::string hexString;
+
+    // 2. Lookup table for O(1) character mapping
+    static const char hexChars[] = "0123456789ABCDEF";
+
+    for (const uint8_t byte : data)
+    {
+        // High nibble (0x1A -> 1)
+        hexString.push_back(hexChars[(byte >> 4) & 0x0F]);
+        
+        // Low nibble (0x1A -> A)
+        hexString.push_back(hexChars[byte & 0x0F]);
+    }
+
+    return hexString;
+}
+
 std::string Common::FnConvertVectorUint8ToBcdString(const std::vector<uint8_t>& data)
 {
     std::ostringstream oss;
@@ -1114,6 +1138,22 @@ std::string Common::SetFeeFormat(float fee)
 
 std::string Common::FnConvertVectorUint8ToString(const std::vector<uint8_t>& data)
 {
+    std::string result;
+    result.reserve(data.size()); // optional, improves performance
+
+    for (uint8_t c : data)
+    {
+        if (std::isprint(c)) // keep only printable characters
+        {
+            result += static_cast<char>(c);
+        }
+    }
+
+    return result;
+}
+
+std::string Common::FnConvertVectorUint8ToRawString(const std::vector<uint8_t>& data)
+{
     return std::string(data.begin(), data.end());
 }
 
@@ -1186,6 +1226,13 @@ uint32_t Common::FnReadUint24LE(const std::vector<uint8_t>& buffer, std::size_t 
     return static_cast<uint32_t>(buffer[offset]) |
         (static_cast<uint32_t>(buffer[offset + 1]) << 8) |
         (static_cast<uint32_t>(buffer[offset + 2]) << 16);
+}
+
+uint32_t Common::FnReadUint24BE(const std::vector<uint8_t>& buffer, std::size_t offset)
+{
+    return static_cast<uint32_t>(buffer[offset] << 16) |
+        (static_cast<uint32_t>(buffer[offset + 1]) << 8) |
+        (static_cast<uint32_t>(buffer[offset + 2]));
 }
 
 uint32_t Common::FnReadUint32LE(const std::vector<uint8_t>& buffer, std::size_t offset)
@@ -1268,37 +1315,38 @@ uint64_t Common::FnReadUint64BE(const std::vector<uint8_t>& buffer, std::size_t 
         static_cast<uint64_t>(buffer[offset + 7]);
 }
 
-bool Common::FnConvertDecimalStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian)
+bool Common::FnConvertHexStringToByteArray(const std::string& input, uint8_t* outputArray, std::size_t outputSize, bool littleEndian)
 {
     try
     {
-        // Convert the decimal string to an unsigned 64-bit integer
-        uint64_t value = std::stoull(input);
+        std::string hexStr;
 
-        // Fill the byte array from the least significant byte
+        // Remove space if input is like "12 20 02 41 93"
+        for (char c : input)
+        {
+            if (!std::isspace(static_cast<unsigned char>(c)))
+            {
+                hexStr += c;
+            }
+        }
+
+        // Example: "1220024193" length must be 10 for 5 bytes
+        if (hexStr.length() != outputSize * 2)
+        {
+            return false;
+        }
+
         for (std::size_t i = 0; i < outputSize; ++i)
         {
-            outputArray[outputSize - 1 - i] = static_cast<uint8_t>(value & 0xFF);
-            value >>= 8;
-        }
-
-        // Check if the value fits in the given output size
-        if (value != 0)
-        {
-            return false; // overflow, number too large
-        }
-
-        // Reverse for little-endian if required
-        if (littleEndian)
-        {
-            std::reverse(outputArray, outputArray + outputSize);
+            std::string byteStr = hexStr.substr(i * 2, 2);
+            outputArray[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
         }
 
         return true;
     }
     catch (...)
     {
-        return false; // invalid string
+        return false;
     }
 }
 
@@ -1339,5 +1387,106 @@ bool Common::FnParseDateTimeString(const std::string& dateTimeStr, std::tm& outT
     {
         return false;
     }
+    return true;
+}
+
+uint16_t Common:: FnStringToUint16(const std::string& s) 
+{
+    unsigned long value = std::stoul(s);
+    if (value > UINT16_MAX) {
+        throw std::out_of_range("Value exceeds uint16_t range");
+    }
+    return static_cast<uint16_t>(value);
+}
+
+std::string Common::FnStringConvertDBTime(const std::string& s) 
+{
+    if(s.length() < 14) return "";
+    //-------
+    return s.substr(0,4) + "-" +
+           s.substr(4,2) + "-" +
+           s.substr(6,2) + " " +
+           s.substr(8,2) + ":" +
+           s.substr(10,2) + ":" +
+           s.substr(12,2);
+}
+
+std::string Common:: ConvertVectorUint8ToHex(const std::vector<uint8_t>& data)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+
+    for (uint8_t b : data)
+        oss << std::setw(2) << static_cast<int>(b);
+
+    return oss.str();
+}
+
+std::string Common:: longToHex(long value) {
+    std::stringstream ss;
+    ss << std::hex << value;
+    return ss.str();
+}
+
+std::string Common:: buildTimeUTC8()
+{
+    std::string time = __TIME__; // "HH:MM:SS"
+
+    int h, m, s;
+    sscanf(time.c_str(), "%d:%d:%d", &h, &m, &s);
+
+    h = (h + 8) % 24;
+
+    char buf[16];
+    sprintf(buf, "%02d:%02d:%02d", h, m, s);
+    return buf;
+}
+
+std::string Common::FnDecimalIntToHexString(uint64_t value, std::size_t byteSize)
+{
+    std::ostringstream oss;
+    oss << std::uppercase
+        << std::hex
+        << std::setfill('0')
+        << std::setw(byteSize * 2)
+        << value;
+
+    return oss.str();
+}
+
+bool Common::FnUint32ToByteString(uint32_t value,
+                                  std::string& output,
+                                  std::size_t outputSize,
+                                  bool littleEndian)
+{
+    if (outputSize == 0 || outputSize > 4)
+    {
+        return false;
+    }
+
+    // Check whether value can fit into outputSize bytes
+    uint64_t maxValue = (1ULL << (outputSize * 8)) - 1;
+
+    if (value > maxValue)
+    {
+        return false;
+    }
+
+    std::vector<uint8_t> bytes(outputSize);
+
+    // Big-endian by default
+    for (std::size_t i = 0; i < outputSize; ++i)
+    {
+        std::size_t shift = (outputSize - 1 - i) * 8;
+        bytes[i] = static_cast<uint8_t>((value >> shift) & 0xFF);
+    }
+
+    if (littleEndian)
+    {
+        std::reverse(bytes.begin(), bytes.end());
+    }
+
+    output.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+
     return true;
 }

@@ -11,6 +11,7 @@
 #include "udp.h"
 #include "lpr.h"
 #include "upt.h"
+#include "eep_client.h"
 
 typedef enum : unsigned int
 {
@@ -18,19 +19,26 @@ typedef enum : unsigned int
     SeasonParking      = 1,
     GracePeriod        = 2,
     DeductionOK        = 3,
-    DeductionFail      = 4,
-    Manualopen         = 5,
-    BalanceChange      = 6
+    Complimentary      = 4,
+    AXSParking         = 5,
+    EZPayParking       = 6,
+    DeductionFail      = 7,
+    Manualopen         = 8,
+    BalanceChange      = 9,
+    RejectCode7        = 10,
+    UpdateCHUTrans     = 11,
+   
 } TransType;
 
 typedef enum : unsigned int
 {
-    // device type : 0 = PMS(EntryTime), 1 = Ant, 2 = LCSC, 3 = UPOS, 4 = CHU
+    // device type : 0 = PMS(EntryTime), 1 = Ant, 2 = CHU, 3 = EEP, 4 = LCSC, 5 = UPOS
     PMSEntrytime        = 0,
     Ant                 = 1,
-    LCSC                = 2,
-    UPOS                = 3,
-    CHU                 = 4
+    CHU                 = 2,
+    EEP                 = 3,
+    LCSC                = 4,
+    UPOS                = 5
 } DeviceType;
 
 class operation
@@ -45,6 +53,7 @@ public:
     struct  tstation_struct gtStation;
     struct  tEntryTrans_Struct tEntry; 
     struct  tExitTrans_Struct tExit;
+    struct  tExitTrans_Struct tExit1;
     struct  tProcess_Struct tProcess;
     struct  tParas_Struct tParas;
 	struct  tMsg_Struct tMsg;
@@ -91,6 +100,7 @@ public:
     int  GetVTypeFromLoop();
     void SaveEntry();
     void SaveExit();
+    void UpdateExit();
     void CloseExitOperation(TransType iStatus);
     void ShowTotalLots(std::string totallots, std::string LEDId = "***");
     void FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires=-1);
@@ -130,7 +140,7 @@ public:
     void  RedeemTime2Amt();
     void  ReceivedEntryRecord();
     
-    void Openbarrier();
+    void Openbarrier(int iReason = 0);
     void closeBarrier();
     void continueOpenBarrier();
 
@@ -140,6 +150,21 @@ public:
     std::chrono::steady_clock::time_point FnGetLastActionTimeAfterLoopA();
 
     void processEEP(const std::string& eventData);
+    void ProcessOUBInformation(EEPClient::obuInformationNotification OBUInfo);
+    void processEEPTransData(EEPClient::transactionData transData);
+   
+    void EndEEPprocess(int ProcessingResult = 0);
+    void EEPInq(int delay = 0);
+    void EEPDebit(string OBU, float lFee, string entryTime, string exitTime);
+    void SendMsg2OBU(std::string OBU, int DType, std::string line1,std::string line2, std::string line3, std::string line4, std::string line5);
+
+    void CHUInq(int delay = 0);
+    void CHUDebit(string OBU, float lFee,string sCardNo,float sCardBal);
+    void SendMsg2CHU(eCHUCmd sCmd, string sData = "");
+    void processCHU(const std::string& eventData);
+ //   void ProcessCHUInformation(const std::string& CHUInfoData);
+ //   void processCHUTransData(const std::string& CHUTransData);
+   
 
     void Clearme();
     void RetryLCSCLastCommand();
@@ -173,5 +198,6 @@ private:
     bool copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
                     const std::string& username, const std::string& password, const std::string& outputFolderPath);
     void startLoopAPeriodicTimer();
+    void stopLoopAPeriodicTimer();
     void handleLoopAPeriodicTimerTimeout(const boost::system::error_code &ec);
 };

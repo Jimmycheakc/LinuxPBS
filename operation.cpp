@@ -16,6 +16,7 @@
 #include "operation.h"
 #include "ini_parser.h"
 #include "structuredata.h"
+#include "parsedata.h"
 #include "db.h"
 #include "led.h"
 #include "lcd.h"
@@ -31,6 +32,7 @@
 #include "barcode_reader.h"
 #include "boost/algorithm/string.hpp"
 #include "eep_client.h"
+#include "chu_client.h"
 
 operation* operation::operation_ = nullptr;
 std::mutex operation::mutex_;
@@ -67,7 +69,9 @@ void operation::OperationInit(io_context& ioContext)
     {
         try
         {
-            m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, 2001, 2001, true);
+            unsigned short remoteUDPPort_ = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetRemoteUDPPort()));
+            unsigned short localUDPPort_ = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetLocalUDPPort()));
+            m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, remoteUDPPort_, localUDPPort_, true);
         }
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
@@ -131,11 +135,20 @@ void operation::OperationInit(io_context& ioContext)
     //
     if (LoadParameter()) {
         Initdevice(ioContext);
+        HandlePBSError(ParamOk);
         //----
         writelog("EPS in operation","OPR");
         //------
-        tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-        tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+        if (gtStation.iType == tientry)
+        {
+            tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+            tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+        }
+        else
+        {
+            tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+            tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+        }
         //-------
         Clearme();
         CheckReader();
@@ -156,6 +169,7 @@ void operation::OperationInit(io_context& ioContext)
         //-----
     }else {
         tProcess.gbInitParamFail = 1;
+        HandlePBSError(ParamError);
         writelog("Unable to load parameter, Please download or check!", "OPR");
         if (iRet == 1)
         {
@@ -163,6 +177,12 @@ void operation::OperationInit(io_context& ioContext)
             m_db->loadstationsetup();
         }
     }
+    //----- testing
+   // tExit.sIUNo = "1220024193";
+  //  tExit.sEntryTime = "2026-06-30 13:55:00";
+  //  tExit.sExitTime = "2026-06-30 14:55:00";
+  // iRet = db::getInstance()->GetSeasonHolder("1043126506");
+  //writelog("Season Holder: "+ std::to_string(iRet), "OPR");
 }
 
 bool operation::LoadParameter()
@@ -312,6 +332,19 @@ std::chrono::steady_clock::time_point operation::FnGetLastActionTimeAfterLoopA()
     return lastActionTimeAfterLoopA_;
 }
 
+void operation::stopLoopAPeriodicTimer()
+{
+    Logger::getInstance()->FnLog(__func__, "", "OPR");
+    if (pLoopATimer_)
+    {
+        pLoopATimer_->cancel();
+    }
+    else
+    {
+        Logger::getInstance()->FnLog("Unable to stop Loop A periodic timer due to pLoopATimer is nullptr.", "", "OPR");
+    }
+}
+
 void operation::FnLoopATimeoutHandler()
 {
     Logger::getInstance()->FnLog("Loop A Operation Timeout handler.", "", "OPR");
@@ -372,8 +405,17 @@ void operation::LoopACome()
     startLoopAPeriodicTimer();
     FnSetLastActionTimeAfterLoopA();
 
-    ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
+    if (gtStation.iType == tientry)
+    {
+        ShowLEDMsg(tMsg.Msg_LoopA[0], tMsg.Msg_LoopA[1]);
+    }
+    else
+    {
+        ShowLEDMsg(tExitMsg.MsgExit_XLoopA[0], tExitMsg.MsgExit_XLoopA[1]);
+    }
     Clearme();
+    //---- added on 02/03/2026
+    tProcess.gsTailgateOBU = "";
     DIO::getInstance()->FnSetLCDBacklight(1);
     //----
     int vechicleType = 7;
@@ -404,13 +446,22 @@ void operation::LoopACome()
     }
     */
     // For miniPC testing
-    useFrontCamera = true;
-    transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
-    tProcess.gsTransID = transID;
-    Lpr::getInstance()->FnSendTransIDToLPR(tProcess.gsTransID, useFrontCamera);
+    if (IniParser::getInstance()->FnGetLPRIP4Front() != "1.1.1.1" && IniParser::getInstance()->FnGetLPRIP4Rear() != "1.1.1.1") 
+    {
+        if (IniParser::getInstance()->FnGetLPRIP4Front() != "1.1.1.1") useFrontCamera = true;
+        transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
+        tProcess.gsTransID = transID;
+        Lpr::getInstance()->FnSendTransIDToLPR(tProcess.gsTransID, useFrontCamera);
+    }
 
-    //----
-    if (tParas.giEPS == 0)
+    //---- added on 01/12/2025
+    writelog ("EPS:" + std::to_string(tParas.giEPS), "OPR");
+
+    if (tParas.giEPS == 3) {
+        EEPInq();
+        ShowLEDMsg("Reading OBU...^Please wait", "Reading OBU...^Please wait");
+    }
+    else if (tParas.giEPS == 0)
     {
         operation::getInstance()->EnableCashcard(true);
         ShowLEDMsg("Insert/Tap Card", "Insert/Tap Card");
@@ -431,11 +482,7 @@ void operation::LoopAGone()
 {
     writelog ("Loop A End","OPR");
 
-    // Cancel the loop A timer 
-    if (pLoopATimer_)
-    {
-        pLoopATimer_->cancel();
-    }
+    stopLoopAPeriodicTimer();
 
     //------
     DIO::getInstance()->FnSetLCDBacklight(0);
@@ -448,8 +495,18 @@ void operation::LoopAGone()
         if (tExit.sIUNo == "") {
             Antenna::getInstance()->FnAntennaStopRead();
         }
+        //------
+        if (tExit.sRedeemAmt == 0) {
+            if (tExit.bPayByEZPay == true) CloseExitOperation(EZPayParking);
+            else if (tExit.bPayByAXS == true) CloseExitOperation(AXSParking);
+        }
     }
     EnableCashcard(false);
+    //------- added on 01/12/2025
+   if (tParas.giEPS == 3) {
+        writelog ("Send OBU information stop request" ,"OPR");
+        EEPClient::getInstance()->FnSendGetOBUInfoStopReq();
+    } 
 }
 void operation::LoopCCome()
 {
@@ -464,6 +521,22 @@ void operation::LoopCGone()
     //------
     if (tProcess.gbLoopApresent.load() == true)
     {
+       writelog("Loop C gone, Loop A come", "OPR");
+       if(tParas.giEPS == 3) 
+       {
+            for (int i = 0; i < 50; ++i)
+            {
+                if (tProcess.fiLastEEPCmd == EEPClient:: CommandType::EEP_idle) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            writelog("Send stop Request of related information distribution", "OPR");
+            EEPClient::getInstance()->FnSendStopReqOfRelatedInfoDistributionReq(tProcess.getLastIUNo());
+            for (int i = 0; i < 50; ++i)
+            {
+                if (tProcess.fiLastEEPCmd == EEPClient:: CommandType::EEP_idle) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+       }
         LoopACome();
     }else{
         //shwo default Msg
@@ -492,8 +565,15 @@ void operation::VehicleCome(string sNo)
     if (sNo.length() == 10) EnableCashcard(false);
     //----
     if (gtStation.iType == tientry) {
-
-        if(tEntry.gbEntryOK == false) PBSEntry (sNo);
+        auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tProcess.getLastIUEntryTime());
+        if ((sNo.length() == 10) && (tProcess.getLastIUNo() == sNo) && (sameAsLastIUDuration.count() <= tParas.giMaxTransInterval))
+        {
+            writelog ("Same as last OBU", "OPR");
+            ShowLEDMsg("Same as last OBU^Please Proceed","Same as last OBU^Please Proceed");
+            Openbarrier(2);
+        }else {
+            if(tEntry.gbEntryOK == false) PBSEntry (sNo);
+        }  
     } 
     else{
         //check IU or card status
@@ -502,9 +582,10 @@ void operation::VehicleCome(string sNo)
     return;
 }
 
-void operation::Openbarrier()
+//---- default 0, 2-- same as last card
+void operation::Openbarrier(int iReason)
 {
-    FnSetLastActionTimeAfterLoopA();
+    stopLoopAPeriodicTimer();
     if (tProcess.giCardIsIn == 1) {
         ShowLEDMsg ("Please Take^CashCard.","Please Take^Cashcard.");
         return;
@@ -524,6 +605,8 @@ void operation::Openbarrier()
     std::this_thread::sleep_for(std::chrono::milliseconds(tParas.gsBarrierPulse));
     
     DIO::getInstance()->FnSetOpenBarrier(0);
+    //------ added on 08/01/2025
+    if (tParas.giEPS == 3) EndEEPprocess(iReason);
 }
 
 void operation::closeBarrier()
@@ -561,6 +644,9 @@ void operation::Clearme()
     tProcess.gbsavedtrans = false;
     tProcess.sEnableReader = false;
     tProcess.gbBarrierOpened = false;
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
+    tProcess.fiLastCHUCmd = iInit; 
+
     //---
     if (gtStation.iType == tientry)
     {
@@ -585,6 +671,7 @@ void operation::Clearme()
         tEntry.iVehicleType = 0;
         tEntry.gbEntryOK = false;
         tProcess.gsTransID = ""; 
+        tEntry.VCC = "";
     }
     else
     {
@@ -639,10 +726,24 @@ void operation::Clearme()
 	    tExit.video1_location = "";
 
 	    tExit.giDeductionStatus = init;
-        tExit.gbPaid.store(false);
+        tExit.gbPaid = false;
         tExit.bNoEntryRecord = -1;
-        tExit.bPayByEZPay.store(false);
-
+        tExit.bPayByEZPay = false;
+        tExit.bPayByAXS = false;
+        //----- added on 08/12/2025
+        tExit.iCardStatus = 1 ;          //default: 1: No card, 0: valid card, other: invalid card    
+	    tExit.iBackendAccount = 0;
+	    tExit.iBackendSetting = 0;
+	    tExit.iBFunctionStatus = 0;
+	    tExit.iOBUType = 0;
+	    tExit.sDSerialNo = "";
+	    tExit.iEEPTransRoute = 0;
+	    tExit.iEEPPaymentResult = 0;
+	    tExit.sEEPpaymentTime = "";
+        tExit.VCC = "";
+        //-------
+        tExit.iUsedTicketBy = 0;
+        tExit1 = tExit;
     }
 
 }
@@ -768,7 +869,13 @@ void operation::Initdevice(io_context& ioContext)
         BARCODE_READER::getInstance()->FnBarcodeReaderInit();
     }
 
-    //EEPClient::getInstance()->FnEEPClientInit(IniParser::getInstance()->FnGetEEPClientIp(), IniParser::getInstance()->FnGetEEPClientPort(), IniParser::getInstance()->FnGetStationID());
+    if (tParas.giEPS  == 3) 
+    {
+        EEPClient::getInstance()->FnEEPClientInit(IniParser::getInstance()->FnGetEEPClientIp(), IniParser::getInstance()->FnGetEEPClientPort(), IniParser::getInstance()->FnGetStationID());
+    } 
+    else if (tParas.giEPS == 2) {
+        CHUClient::getInstance()->FnCHUClientInit(tParas.gsCHUIP,gtStation.iCHUPort);
+    }
 
     // Loop A timer
     pLoopATimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);
@@ -869,8 +976,13 @@ void operation::PBSEntry(string sIU)
         return;
     }
 
-    if(sIU.length()==10) 
-	    tEntry.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
+    if(sIU.length()==10) {
+        if (tParas.giEPS == 3 and tEntry.VCC != "") {
+             tExit.iTransType= db::getInstance()->FnGetVehicleType(tEntry.VCC.substr(0,3));
+        }else {
+	         tEntry.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
+        }
+    }
 	else {
         tEntry.iTransType=GetVTypeFromLoop();
     }
@@ -894,12 +1006,14 @@ void operation::PBSEntry(string sIU)
     {   
         writelog ("VIP Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^VIP Season Only", "Carpark Full!^VIP Season Only");
+        if (tParas.giEPS == 3) SendMsg2OBU(tExit.sIUNo,0,"Car Park Full", "","","","");
         return;
     } 
     if (tProcess.gbcarparkfull.load() == true && iRet != 1 )
     {   
         writelog ("Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^Season only", "Carpark Full!^Season only");
+        if (tParas.giEPS == 3) SendMsg2OBU(tExit.sIUNo,0,"Car Park Full", "","","","");
         return;
     } 
     if (iRet == 6 && sIU.length()>10)
@@ -920,14 +1034,25 @@ void operation::PBSEntry(string sIU)
         tProcess.giShowType = 2;
     }
     if (iRet != 1) {
+        if (tParas.giEPS != 3) {
+            writelog ("Check EZ-Link Member","OPR");
+            if (db::getInstance()->HasEZpay(sIU) == 1) ShowLEDMsg("EZ-Link Motoring^Service Nember","EZ-Link Motoring^Service Nember");
+            else {
+                if (db::getInstance()->HasAXS(sIU) == 1) ShowLEDMsg("AXS Drive Member^Please Proceed","AXS Drive Member^Please Proceed");
+                else ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
+            }
+        }
         ShowLEDMsg(tMsg.Msg_WithIU[0],tMsg.Msg_WithIU[1]);
+        tEntry.iTransType = 1;
+        tProcess.giShowType = 1;
     }
         //---------
     SaveEntry();
     tEntry.gbEntryOK = true;
     Openbarrier();
+    //-------added on 03/12/2025
+    //writelog ("testing eep1" + tParas.giEPS,"OPR");
 }
-
 
 void operation:: Setdefaultparameter()
 {
@@ -936,6 +1061,7 @@ void operation:: Setdefaultparameter()
     tProcess.gsDefaultIU = "1096000001";
     tProcess.glNoofOfflineData = 0;
     tProcess.giSystemOnline = -1;
+    tProcess.gbLastDBConnected = true;
     //clear error msg
      for (int i= 0; i< Errsize; ++i){
         tPBSError[i].ErrNo = 0;
@@ -966,7 +1092,7 @@ void operation:: Setdefaultparameter()
     tProcess.setLastTransTime(std::chrono::steady_clock::now());
     //---
     tProcess.fbReadIUfromAnt.store(false);
-    tProcess.fiLastCHUCmd = 0;
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
     tProcess.gsLastDebitFailTime = "";
     tProcess.gsLastPaidTrans = "";
 	tProcess.gsLastCardNo = "";
@@ -1458,6 +1584,23 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
     string sCmd = "";
     
     switch(iEPSErr){
+        case ParamOk:
+        {
+            if (tPBSError[iParam].ErrNo < 0) {
+                sCmd = "200";
+                sErrMsg = "Parameter OK";
+            }
+            tPBSError[iParam].ErrNo = 0;
+            break;
+        }
+        case ParamError:
+        {
+            tPBSError[iParam].ErrNo = -1;
+            tPBSError[iParam].ErrMsg = "Parameter Error";
+            sCmd = "200";
+            sErrMsg = tPBSError[iParam].ErrMsg;
+            break;
+        }
         case AntennaNoError:
         {
             if (tPBSError[iAntenna].ErrNo < 0) {
@@ -1521,16 +1664,28 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
         case DBNoError:
         {
             tPBSError[2].ErrNo = 0;
+            tPBSError[2].ErrMsg = "DB OK";
+            sErrMsg = tPBSError[2].ErrMsg;
+            sCmd = "201";
+            Sendmystatus();
             break;
         }
         case DBFailed:
         {
             tPBSError[2].ErrNo = -1;
+            tPBSError[2].ErrMsg = "DB Error";
+            sErrMsg = tPBSError[2].ErrMsg;
+            sCmd = "201";
+            Sendmystatus();
             break;
         }
         case DBUpdateFail:
         {
             tPBSError[2].ErrNo = -2;
+            tPBSError[2].ErrMsg = "DB Update Error";
+            sErrMsg = tPBSError[2].ErrMsg;
+            sCmd = "201";
+            Sendmystatus();
             break;
         }
         case UPOSNoError:
@@ -1806,6 +1961,10 @@ void operation::ShowTotalLots(std::string totallots, std::string LEDId)
        
         LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401)))->FnLEDSendLEDMsg(LEDId, totallots, LED::Alignment::RIGHT);
     }
+    if(tParas.giEPS == 3) 
+    {
+        EEPClient::getInstance()->FnSendSetCarparkAvailabilityReq(totallots, std::to_string(gtStation.iZoneLots));
+    }
 }
 
 void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires)
@@ -1834,106 +1993,203 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
         sMsgPartialSeason = "Season";
     }
 
-    switch (iReturn) {
-            case -1: 
-                writelog("DB error when Check season", "OPR");
-                break;
-            case 0:  
+    switch (iReturn)
+    {
+        case -1:
+        {
+            writelog("DB error when Check season", "OPR");
+            break;
+        }
+        case 0:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonInvalid[0];
                 sLCD = tMsg.Msg_SeasonInvalid[1];
-                break;
-            case 1:  
-                if (gtStation.iType == tientry) {
-                    sMsg = tMsg.Msg_ValidSeason[0];
-                    sLCD = tMsg.Msg_ValidSeason[1];
-                } else{
-                    sMsg = tExitMsg.MsgExit_XValidSeason[0];
-                    sLCD = tExitMsg.MsgExit_XValidSeason[1];
-                } 
-                break;
-            case 2: 
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonInvalid[0];
+                sLCD = tExitMsg.MsgExit_SeasonInvalid[1];
+            }
+            break;
+        }
+        case 1:
+        {
+            if (gtStation.iType == tientry)
+            {
+                sMsg = tMsg.Msg_ValidSeason[0];
+                sLCD = tMsg.Msg_ValidSeason[1];
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_XValidSeason[0];
+                sLCD = tExitMsg.MsgExit_XValidSeason[1];
+            }
+            break;
+        }
+        case 2:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonExpired[0];
                 sLCD = tMsg.Msg_SeasonExpired[1];
-                writelog("Season Expired", "OPR");
-                break;
-            case 3: 
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonExpired[0];
+                sLCD = tExitMsg.MsgExit_SeasonExpired[1];
+            }
+            writelog("Season Expired", "OPR");
+            break;
+        }
+        case 3:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonTerminated[0];
                 sLCD = tMsg.Msg_SeasonTerminated[1];
-                writelog ("Season terminated", "OPR");
-                break;
-            case 4:  
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonTerminated[0];
+                sLCD = tExitMsg.MsgExit_SeasonTerminated[1];
+            }
+            writelog ("Season terminated", "OPR");
+            break;
+        }
+        case 4:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonBlocked[0];
                 sLCD = tMsg.Msg_SeasonBlocked[1];
-                writelog ("Season Blocked", "OPR");
-                break;
-            case 5:  
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonBlocked[0];
+                sLCD = tExitMsg.MsgExit_SeasonBlocked[1];
+            }
+            writelog ("Season Blocked", "OPR");
+            break;
+        }
+        case 5:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonInvalid[0];
                 sLCD = tMsg.Msg_SeasonInvalid[1];
-                writelog ("Season Lost", "OPR");
-                break;
-            case 6:
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonInvalid[0];
+                sLCD = tExitMsg.MsgExit_SeasonInvalid[1];
+            }
+            writelog ("Season Lost", "OPR");
+            break;
+        }
+        case 6:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonPassback[0];
                 sLCD = tMsg.Msg_SeasonPassback[1];
-                writelog ("Season Passback", "OPR");
-                break;
-            case 7:  
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonBlocked[0];
+                sLCD = tExitMsg.MsgExit_SeasonBlocked[1];
+            }
+            writelog ("Season Passback", "OPR");
+            break;
+        }
+        case 7:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_SeasonNotStart[0];
                 sLCD = tMsg.Msg_SeasonNotStart[1];
-                writelog ("Season Not Start", "OPR");
-                break;
-            case 8: 
-                sMsg = "Wrong Season Type";
-                sLCD = "Wrong Season Type";
-                writelog ("Wrong Season Type", "OPR");
-                break;
-            case 9: 
-                sMsg = "Complimentary";
-                sLCD = "Complimentary";
-                writelog ("Complimentary!", "OPR");
-                break;
-            case 10:     
-                sMsg = tMsg.Msg_SeasonAsHourly[0];
-                sLCD = tMsg.Msg_SeasonAsHourly[1];
-                writelog ("Season As Hourly", "OPR");
-                break;
-            case 11:     
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_SeasonNotStart[0];
+                sLCD = tExitMsg.MsgExit_SeasonNotStart[1];
+            }
+            writelog ("Season Not Start", "OPR");
+            break;
+        }
+        case 8:
+        {
+            sMsg = "Wrong Season Type";
+            sLCD = "Wrong Season Type";
+            writelog ("Wrong Season Type", "OPR");
+            break;
+        }
+        case 9:
+        {
+            sMsg = "Complimentary";
+            sLCD = "Complimentary";
+            writelog ("Complimentary!", "OPR");
+            break;
+        }
+        case 10:
+        {
+            sMsg = tMsg.Msg_SeasonAsHourly[0];
+            sLCD = tMsg.Msg_SeasonAsHourly[1];
+            writelog ("Season As Hourly", "OPR");
+            break;
+        }
+        case 11:
+        {
+            if (gtStation.iType == tientry)
+            {
                 sMsg = tMsg.Msg_ESeasonWithinAllowance[0];
                 sLCD = tMsg.Msg_ESeasonWithinAllowance[1];
-                writelog ("Season within allowance", "OPR");
-                break;
-            case 12:
-                sMsg = tExitMsg.MsgExit_MasterSeason[0];
-                sLCD = tExitMsg.MsgExit_MasterSeason[1];
-                writelog ("Master Season", "OPR");
-                break;
-            case 13:     
-                sMsg = tMsg.Msg_WholeDayParking[0];
-                sLCD = tMsg.Msg_WholeDayParking[1];
-                writelog ("Whole Day Season", "OPR");
-                break;
-            default:
-                break;
+            }
+            else
+            {
+                sMsg = tExitMsg.MsgExit_XSeasonWithinAllowance[0];
+                sLCD = tExitMsg.MsgExit_XSeasonWithinAllowance[1];
+            }
+            writelog ("Season within allowance", "OPR");
+            break;
         }
+        case 12:
+        {
+            sMsg = tExitMsg.MsgExit_MasterSeason[0];
+            sLCD = tExitMsg.MsgExit_MasterSeason[1];
+            writelog ("Master Season", "OPR");
+            break;
+        }
+        case 13:
+        {
+            sMsg = tMsg.Msg_WholeDayParking[0];
+            sLCD = tMsg.Msg_WholeDayParking[1];
+            writelog ("Whole Day Season", "OPR");
+            break;
+        }
+        default:
+            break;
+    }
 
-        size_t pos = sMsg.find("Season");
-        if (pos != std::string::npos) sMsg.replace(pos, 6, sMsgPartialSeason);
-        pos=sLCD.find("Season");
-        if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
-        
-        if (iReturn = 1 && std::stoi(tSeason.rate_type) != 0) {
-            sMsg = sMsgPartialSeason;
-            sLCD = sMsgPartialSeason;
-        }
-        
-        ShowLEDMsg(sMsg,sLCD);
-        
-        if (iReturn != 1 || std::stoi(tSeason.rate_type) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    size_t pos = sMsg.find("Season");
+    if (pos != std::string::npos) sMsg.replace(pos, 6, sMsgPartialSeason);
+    pos=sLCD.find("Season");
+    if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
+    
+    if (iReturn = 1 && std::stoi(tSeason.rate_type) != 0) {
+        sMsg = sMsgPartialSeason;
+        sLCD = sMsgPartialSeason;
+    }
+    
+    ShowLEDMsg(sMsg,sLCD);
+    
+    if (iReturn != 1 || std::stoi(tSeason.rate_type) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 }
 
 void operation::ManualOpenBarrier(bool bPMS)
 {
-    FnSetLastActionTimeAfterLoopA();
     if (bPMS == true) writelog ("Manual open barrier by PMS", "OPR");
     else writelog ("Manual open barrier by operator", "OPR");
     //------------
@@ -2159,7 +2415,9 @@ void operation:: EnableLCSC(bool bEnable)
     int iRet;
     
     if (tParas.giCommPortLCSC == 0)  return;
-
+    //------ added on 15/07/2026
+    LCSCReader::getInstance()->LCSCCard_In = 0;
+    //-----
     if (tPBSError[iLCSC].ErrNo != 0)
     {
         return;
@@ -2217,6 +2475,7 @@ void operation::EnableUPOS(bool bEnable)
         if (tProcess.gbUPOSStatus != ReadCardTimeout) writelog("Send Card Detect Request to UPOS", "OPR");
         Upt::getInstance()->FnUptSendCardDetectRequest();
         tProcess.gbUPOSStatus = Enable;
+        Upt::getInstance()->UOPSCard_In = 0;
     }else{
         if (tProcess.gbUPOSStatus == Disable) return;
         writelog ("Disable UPOS Reader", "OPR");
@@ -2412,9 +2671,10 @@ void operation::ProcessLCSC(const std::string& eventData)
             }
             else
             {
-                EnableUPOS(false);
+                EnableCashcard(false);
                 Antenna::getInstance()->FnAntennaStopRead();
-                CheckIUorCardStatus(sCardNo, LCSC, sCardNo,LCSC, std::stof(sBal)/100);
+                tExit.iCardStatus = 0;
+                CheckIUorCardStatus(sCardNo, LCSC, sCardNo,1, std::stof(sBal)/100);
             }
 
             break;
@@ -2474,7 +2734,7 @@ void operation::ProcessLCSC(const std::string& eventData)
             }
 
             std::ostringstream oss;
-            oss << "LCSC deduct successfully: Card No: " << sCardNo << ", Card Serial Number: " << card_serial_num << ", Balance After Deduction: $" << Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans);
+            oss << "LCSC deduct successfully: Card No: " << sCardNo << ", Balance After Deduction: $" << Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans);
             writelog(oss.str(), "OPR");
             //-------
             operation::getInstance()->DebitOK("", sCardNo, "", Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans), 1, "", LCSC, "");
@@ -2596,9 +2856,8 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         default:
         {
-              
-                writelog ("Received Error Event" + std::to_string(static_cast<int>(msg_status)), "OPR");
-                RetryLCSCLastCommand();
+            writelog ("Received Error Event" + std::to_string(static_cast<int>(msg_status)), "OPR");
+            RetryLCSCLastCommand();
             break;
         }
     }
@@ -2613,9 +2872,18 @@ void operation:: RetryLCSCLastCommand()
         else sMsg = "Reading Card^Error";
         ShowLEDMsg(sMsg, sMsg);
         SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,," + sMsg);
+        //--------
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        //-------
         tExit.giDeductionStatus = WaitingCard;
+        //---
+         if (sMsg == "Deduction Error") showFee2User();
+
         EnableCashcard(true);
-        if (sMsg == "Deduction Error") showFee2User();
+        if (tParas.giEPS == 3) EEPInq(3);
+        else if (tParas.giEPS == 2) CHUInq(3);
+        //-----------
+       
     }
     else
     {
@@ -2703,7 +2971,7 @@ void operation::KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardE
 
 bool operation::AntennaOK() {
     
-    if (tParas.giEPS == 0) {
+    if (tParas.giEPS == 0 or tParas.giEPS == 3) {
         writelog ("Antenna: Non-EPS", "OPR");
         return false;
     } else {
@@ -2749,7 +3017,7 @@ void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string
 
     if (tEntry.sIUTKNo != "")
     {
-        SendMsg2Server("90",","+tEntry.sIUTKNo+",,"+LPN+ ",,Entry OK");
+        SendMsg2Server("90",tEntry.sIUTKNo+",,,"+LPN+ ",,Entry OK");
     }
 }
 
@@ -3119,6 +3387,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         //---------
                         EnableLCSC(false);
                         Antenna::getInstance()->FnAntennaStopRead();
+                        tExit.iCardStatus = 0;
                         CheckIUorCardStatus(card_can,UPOS,card_can,std::stoi(card_type) + 6, std::round(card_balance)/100);
                         FnSetLastActionTimeAfterLoopA();
 
@@ -3491,7 +3760,7 @@ void operation::PrintTR(bool bForSeason)
         }
         else if (gsTR_lowercase == "card")
         {
-            if (tExit.bPayByEZPay.load() == false)
+            if (tExit.bPayByEZPay == false && tExit.bPayByAXS == false)
             {
                 
                 if ((tProcess.giEntryDebit == 2) && (gtStation.iType == tientry))
@@ -3505,8 +3774,9 @@ void operation::PrintTR(bool bForSeason)
                         cardNo = tExit.sCardNo;
                     }
                 }
+                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + cardNo;
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + cardNo;
+           
         }
         else if (gsTR_lowercase == "et")
         {
@@ -3570,9 +3840,12 @@ void operation::PrintTR(bool bForSeason)
                     }
                 }
 
-                if (tExit.bPayByEZPay.load() == true)
+                if (tExit.bPayByEZPay == true)
                 {
                     payType = " (by EZPay)";
+                }
+                if (tExit.bPayByAXS == true) {
+                    payType = " (by AXS)";
                 }
                 
             }
@@ -3582,11 +3855,16 @@ void operation::PrintTR(bool bForSeason)
             }
             gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + amt + payType;
         }
+        else if (gsTR_lowercase == "ezlink"){
+            gsTR[i] = "";
+            if (tExit.bPayByEZPay == true) gsTR[i] = operation::getInstance()->tTR[i].gsTR0 ;
+        }
         else if (gsTR_lowercase == "bal")
         {
             if (tExit.sPaidAmt > 0)
             {
-                if ((tExit.bPayByEZPay.load() == false) && (tProcess.gfLastCardBal > 0))
+               gsTR[i] = "";
+                if ((tExit.bPayByEZPay == false) && (tProcess.gfLastCardBal > 0))
                 {
                     std::stringstream ss;
                     ss << "card type: " << tExit.iCardType << ", fsCardBal: " << tProcess.gfLastCardBal;
@@ -3596,10 +3874,9 @@ void operation::PrintTR(bool bForSeason)
                     formattedCardBalStream << std::fixed << std::setprecision(2) << tProcess.gfLastCardBal;
 
                     cardBal = formattedCardBalStream.str();
-                    
+                   gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + cardBal; 
                 }
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + cardBal;
         }
         else if (gsTR_lowercase == "owefee")
         {
@@ -3801,9 +4078,11 @@ void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo,
 {
 
     //---------
+    tExit.gbPaid = true;
     tExit.sCardNo = sCardNo;
     if (sPaidAmt != "") tExit.sPaidAmt = GfeeFormat(std::stof(sPaidAmt));
     tExit.iCardType = iCardType;
+    if (sTopupAmt != "") tExit.sTopupAmt = GfeeFormat(std::stof(sTopupAmt));
     //--------
     tProcess.gsLastPaidTrans = tExit.sIUNo;
     tProcess.gbLastPaidStatus.store(true);
@@ -3813,7 +4092,14 @@ void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo,
     //-------
     tExit.giDeductionStatus = DeductionSuccessed;
 
-    CloseExitOperation(DeductionOK);
+    if (sIUNO != "" && tExit.sIUNo != sIUNO && iDevicetype == CHU){
+        tExit.sIUNo = sIUNO;
+        CloseExitOperation(UpdateCHUTrans);
+    }
+    else{
+        CloseExitOperation(DeductionOK);
+    }
+    
 
 }
 
@@ -3847,44 +4133,64 @@ std::string operation::GetVTypeStr(int iVType)
 
  void operation::CheckIUorCardStatus(string sCheckNo, DeviceType iDevicetype,string sCardNo, int sCardType, float sCardBal)
  {
-    // device type : 0 = PMS(EntryTime), 1 = Ant, 2 = LCSC, 3 = UPOS, 4 = CHU
+    // device type : 0 = PMS(EntryTime), 1 = Ant, 2 = CHU, 3 = EEP, 4 = LCSC, 5 = UPOS
 
     string gsCompareNo;
     int iRet;
     string sMsg;
     //--------
-    if (tExit.giDeductionStatus == CardExpired || tExit.giDeductionStatus == CardFault) {
+    writelog ("Enter check IU/Card status","OPR");
+    if (tExit.giDeductionStatus == CardExpired || tExit.giDeductionStatus == CardFault || tExit.giDeductionStatus == InsufficientBalance) {
         if( tProcess.gsLastCardNo == sCheckNo) {
-            writelog ("Fault card! Change another", "OPR");
-            ShowLEDMsg("Card Fault!","Card Fault!");
+            if (tExit.giDeductionStatus == InsufficientBalance){
+                writelog ("Insufficient Balance! Change another", "OPR");
+                ShowLEDMsg("Insufficient Bal","Insufficient Bal");
+            }else {
+                writelog ("Fault card! Change another", "OPR");
+                ShowLEDMsg("Card Fault!","Card Fault!");
+            }
             EnableCashcard(true);
+            EEPInq(2);
             return;
         }
         tExit.giDeductionStatus = WaitingCard;
     }
     //-------- check paid status
-    if (tExit.gbPaid.load() == true ) {
+    if (tExit.gbPaid == true ) {
         writelog ("Paid already!","OPR");
         ShowLEDMsg("Paid already^Have a nice Day!","Paid already^Have a nice day!");
         EnableCashcard(false);
-        Openbarrier();
+        Openbarrier(2);
         return;
     }
     //--------check balance
-    if (GfeeFormat(sCardBal) != GfeeFormat(tProcess.gfLastCardBal) && sCardNo == tProcess.gsLastCardNo && tProcess.gbLastPaidStatus.load()  == false ) {
+    if (sCardNo != "" && GfeeFormat(sCardBal) != GfeeFormat(tProcess.gfLastCardBal) && sCardNo == tProcess.gsLastCardNo && tProcess.gbLastPaidStatus.load()  == false ) {
         tProcess.gfLastCardBal= GfeeFormat(sCardBal);
         EnableCashcard(false);
+        writelog ("balance change case.","OPR");
         if (tExit.sPaidAmt == 0){
-            //----Loop A come again
-            Openbarrier();
+            //----Loop A come again, no need save trans
+            Openbarrier(2);
         }else {
             CloseExitOperation(BalanceChange);
          }
         return;
     }
-    //---------
-    if (tExit.giDeductionStatus == WaitingCard) {
+    //--------------
+    if (tExit.giDeductionStatus == WaitingCard  && tExit.iCardStatus != 00 ) {
+        if (tExit.iCardStatus == 1) sMsg = "Fee:$" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^Tap/Insert Card";
+        else sMsg = "Fee:$" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^Invalid Card!";
+        ShowLEDMsg(sMsg,sMsg);
+        EnableCashcard(true);
+        if (iDevicetype == EEP) EEPInq(2);
+        else if (iDevicetype == CHU) CHUInq(2);
+        return;
+    }
+    //--------
+    if (tExit.giDeductionStatus == WaitingCard) 
+    {
         //CheckCardOK 
+        writelog ("check card OK!", "OPR");
         iRet = m_db->CheckCardOK(sCardNo);
         if (iRet > 0) {
             if (iRet == 5) {
@@ -3903,17 +4209,43 @@ std::string operation::GetVTypeStr(int iVType)
             CloseExitOperation(FreeParking);
             return;
         } 
-       if (GfeeFormat(tExit.sPaidAmt) <= GfeeFormat(sCardBal))
+
+        if (tExit.iCardStatus == 00 && sCardNo != "") 
         {
-            debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+            if (iDevicetype == EEP) {
+                tExit.sCardNo = sCardNo;
+                tProcess.gsLastCardNo = sCardNo;
+                tProcess.gfLastCardBal= GfeeFormat(sCardBal);
+                //-----
+                EEPDebit(tExit.sIUNo,tExit.sPaidAmt, tExit.sEntryTime, tExit.sExitTime);
+                return;
+            }
+            if (iDevicetype == CHU && sCardType == 1) {
+                CHUDebit(tExit.sIUNo, tExit.sPaidAmt,sCardNo,sCardBal);
+                return;
+            }
+            if (GfeeFormat(tExit.sPaidAmt) <= GfeeFormat(sCardBal))
+            {
+                if (iDevicetype == CHU) CHUDebit(tExit.sIUNo, tExit.sPaidAmt,sCardNo,sCardBal);
+                else debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+            }
+            else
+            {
+                ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Insufficient Bal","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Insufficient Bal");
+                writelog("insufficient balance", "OPR");
+                EnableCashcard(true);
+                return;
+            }
         }
         else
         {
-            ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Insufficient Bal","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Insufficient Bal");
-            writelog("insufficient balance", "OPR");
+            if (tExit.iCardStatus == 01) writelog ("No card","OPR");
+            else writelog ("Invalid card","OPR");
+            if (iDevicetype == EEP) EEPInq(1);
+            else CHUInq(1);
             EnableCashcard(true);
-            return;
         }
+
     }
     else {
         gsCompareNo = tProcess.gsLastPaidTrans;
@@ -3927,16 +4259,54 @@ std::string operation::GetVTypeStr(int iVType)
                 //--------
                 ShowLEDMsg(sMsg,sMsg);
                 EnableCashcard(false);
-                Openbarrier();
+                Openbarrier(2);
+                ShowLEDMsg("Have A Nice Day","Have A Nice Day");
             }else
             {
                 if (tExit.sPaidAmt > 0) {
-                    if (iDevicetype == Ant) EnableCashcard(true);
-                    else debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+                    if (iDevicetype == Ant) 
+                    {   writelog("Enable full EPS for deduciton", "OPR");
+                        CHUDebit(tExit.sIUNo, tExit.sPaidAmt,sCardNo,sCardBal);
+                    }
+                    else 
+                    {
+                        if (iDevicetype == EEP) {
+                            if (tExit.iBFunctionStatus == 01 )
+                            {
+                                if (tExit.iBackendAccount == 1 || (tExit.sCardNo != "" && tExit.iCardStatus == 0 ))
+                                {
+                                    if (sCardNo != "") {
+                                        tProcess.gsLastCardNo = sCardNo;
+                                        tProcess.gfLastCardBal= GfeeFormat(sCardBal);
+                                    }
+                                    EEPDebit(tExit.sIUNo, tExit.sPaidAmt, tExit.sEntryTime, tExit.sExitTime);
+                                }else
+                                {
+                                    if (tExit.iCardStatus == 01) writelog ("No card","OPR");
+                                    else writelog ("Invalid card","OPR");
+                                    tExit.giDeductionStatus = WaitingCard;
+                                    EEPInq(1);
+                                    EnableCashcard(true);
+                                }
+                            } else
+                            {   
+                                writelog("Business Function Status is stopping.(OBU cannot debit) ", "OPR");
+                                tExit.giDeductionStatus = WaitingCard;
+                                EnableCashcard(true);
+                            }
+                        }else {
+                            if (iDevicetype == CHU){
+                                if (sCardNo == ""){
+                                    CHUInq(1);
+                                }else CHUDebit(tExit.sIUNo, tExit.sPaidAmt,sCardNo,sCardBal);
+                            } 
+                            else debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+                        }
+                    }
                 } 
                 else PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);   
             }
-        } else{
+        }else{
             PBSExit (sCheckNo,iDevicetype,sCardNo,sCardType,sCardBal);
         }
     }
@@ -3978,11 +4348,14 @@ std::string operation::GetVTypeStr(int iVType)
         }
     } 
     //-----
-    if(sIU.length()==10) 
-	    tExit.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
-	else {
-        tExit.iTransType=GetVTypeFromLoop();
+    if(sIU.length()==10) {
+        if (tParas.giEPS == 3 and tExit.VCC != "") {
+             tExit.iTransType= db::getInstance()->FnGetVehicleType(tExit.VCC.substr(0,3));
+        }else {
+            tExit.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
+        }
     }
+        tExit.iTransType=GetVTypeFromLoop();
 
     if (tExit.iTransType == 9) {
         ShowLEDMsg(tMsg.Msg_authorizedvehicle[0],tMsg.Msg_authorizedvehicle[1]);
@@ -3996,7 +4369,7 @@ std::string operation::GetVTypeStr(int iVType)
 
     if (iRet == 1 or iRet == 12 or iRet == 9)
     {   
-        if (tParas.giSeasonCharge == 0 || tExit.bNoEntryRecord == 1)  {
+        if (tParas.giSeasonCharge == 0 || tExit.bNoEntryRecord == 1) {
             if (iRet == 9){tExit.iTransType = 10;}
             tExit.sFee = 0;
             tExit.sPaidAmt = 0;
@@ -4029,6 +4402,11 @@ std::string operation::GetVTypeStr(int iVType)
         }else{
             SendMsg2Server("07",sIU);
             ShowLEDMsg("No Entry Record^Press Intercom","No Entry Record^Press Intercom");
+            //----- added on 03/08/2026
+            if(tParas.giEPS == 3) {
+                if (tExit.iOBUType == 0)  SendMsg2OBU(tExit.sIUNo,0,"No Entry Record","Pls Press Intercom", "For Assist","","");
+                else SendMsg2OBU(tExit.sIUNo,0,"Press Intercom", "For Assist","","","");
+            }
             return;
         }
     }else
@@ -4080,6 +4458,11 @@ std::string operation::GetVTypeStr(int iVType)
             CloseExitOperation(SeasonParking);
             return;
         }
+        //-------- eComplimentary ticket
+        if (tExit.iTransType == 10) {
+            CloseExitOperation(Complimentary);
+            return;
+        }
     }
     //-------
     if (tExit.iRedeemTime > 0) RedeemTime2Amt();
@@ -4104,37 +4487,110 @@ std::string operation::GetVTypeStr(int iVType)
    } 
     if (tExit.sPaidAmt > 0) 
     {
-        if(iDevicetype > Ant){
-            if (GfeeFormat(tExit.sPaidAmt) <= GfeeFormat(sCardBal)){
-                 debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+        //----- added on 05/08/2026
+        if (tParas.giEPS != 3 && tExit.sIUNo.length() == 10 ) {
+            if (db::getInstance()->HasEZpay(tExit.sIUNo) == 1) {
+                if (tExit.sPaidAmt > 500){
+                    ShowLEDMsg("Press Intercom^To Verify Fee","Press Intercom^To Verify Fee");
+                    SendMsg2Server("90", tExit.sIUNo + ",," + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + ",,,Fee To High");
+                    return;
+                }
+                 tExit.bPayByEZPay = true;
+                if (tExit.sRedeemAmt == 0){
+                    ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + " EZL^Motoring Service","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + " EZL^Motoring Service");
+                      //------- delay 
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+                    //-------
+                    ShowLEDMsg("Pls Insert Tix^Complimentary","Pls Insert Tix^Complimentary");
+                }else{
+                    ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
+                    CloseExitOperation(EZPayParking);
+                }
+               return;
             }
-            else{
+            if (db::getInstance()->HasAXS(tExit.sIUNo) == 1) {
+                if (tExit.sPaidAmt > 500) {
+                    ShowLEDMsg("Press Intercom^To Verify Fee","Press Intercom^To Verify Fee");
+                    SendMsg2Server("90", tExit.sIUNo + ",," + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + ",,,Fee To High");
+                    return;
+                }
+                tExit.bPayByAXS = true;
+                if (tExit.sRedeemAmt == 0) {
+                    ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^AXS Drive","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^AXS Drive");
+                     //------- delay 
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+                    //-------
+                    ShowLEDMsg("Fee Paid.^OR Scan Ticket","Fee Paid.^OR Scan Ticket");
+                    return;
+                }else {
+                    ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
+                    CloseExitOperation(AXSParking);
+                }
+                return;
+            }
+        } 
+        if (iDevicetype == Ant) {
+            writelog("Enable full EPS for deduciton", "OPR");
+            CHUDebit(tExit.sIUNo, tExit.sPaidAmt,sCardNo,sCardBal);
+            return;
+        }
+        if (iDevicetype == EEP) {
+            if (tExit.iBFunctionStatus == 01 )
+            {
+                if (tExit.iBackendAccount == 1 || (tExit.sCardNo != "" && tExit.iCardStatus == 0 ))
+                {
+                    if (sCardNo != "") {
+                        tProcess.gsLastCardNo = sCardNo;
+                        tProcess.gfLastCardBal= GfeeFormat(sCardBal);
+                    }
+                    EEPDebit(tExit.sIUNo, tExit.sPaidAmt, tExit.sEntryTime, tExit.sExitTime);
+                }else
+                {
+                    tExit.giDeductionStatus = WaitingCard;
+                    ShowLEDMsg("Fee:$" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^Tap/Insert Card", "Fee:$" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^Tap/Insert Card");
+                    EEPInq(1);
+                }
+            } else
+            {
+                 writelog("Business Function Status is stopping.(OBU cannot debit) ", "OPR");
+                 tExit.giDeductionStatus = WaitingCard;
+                 ShowLEDMsg("OBU Cannot Debit^Tap/Insert Card","OBU Cannot Debit^Tap/Insert Card");
+                 EnableCashcard(true);
+            }
+            return;
+        }
+        if (iDevicetype == LCSC || iDevicetype == UPOS ) 
+        {
+            if (GfeeFormat(tExit.sPaidAmt) <= GfeeFormat(sCardBal))
+            {
+                debitfromReader(tExit.sIUNo, tExit.sPaidAmt, iDevicetype,sCardType,sCardBal);
+            }else
+            {
                 tExit.giDeductionStatus = WaitingCard;
                 writelog ("Insufficient balance", "OPR");
                 writelog("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "Bal: $" + Common::getInstance()->SetFeeFormat(sCardBal) , "OPR");
                 ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Insufficient Balance","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Insufficient Balance");
                 EnableCashcard(true);
             }
-           
-        }else
-        {
-            tExit.giDeductionStatus = WaitingCard;
-           // ShowLEDMsg("Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Waiting for Card","Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) +"^Waiting for Card");
-            EnableCashcard(true);
-                //enable EPS
+            return;
         }
     }
     else
     {
        CloseExitOperation(FreeParking);
     } 
-
+    return;
 }
 
 void operation::debitfromReader(string CardNo, float sFee,DeviceType iDevicetype,int sCardType, float sCardBal)
 {
     long glDebitAmt;
     //---
+    if (tExit.giDeductionStatus == Doingdeduction) {
+        writelog ("Doing deduction while send Deduction to Reader", "OPR");
+        return;
+    }
+    //---------
     tExit.giDeductionStatus = Doingdeduction;
     tProcess.gbLastPaidStatus.store(false);
     tProcess.gsLastCardNo = CardNo;
@@ -4171,6 +4627,24 @@ float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bNo
     float parkingfee;
     
     parkingfee = m_db->CalFeeRAM2G(eTime,payTime,iTransType);
+    //----- added on 29/07/2026
+    if (parkingfee >= 0.01 and tExit.sRedeemAmt == 0 and tExit.iRedeemTime == 0)
+    {
+        int iRet;
+        if (tExit.sIUNo.length() == 10) {
+            writelog ("check valid ticket for IU No: " + tExit.sIUNo, "OPR");
+            iRet = m_db->HasValidTicket(tExit.sIUNo, "");
+            if (iRet == 0) {
+                tExit.iUsedTicketBy = 2;
+            } else{
+                if (tExit.sLPN[0] != "" && tExit.sLPN[0] != "0000000000")
+                {
+                    iRet = m_db->HasValidTicket("",tExit.sLPN[0]);
+                    if (iRet == 0) tExit.iUsedTicketBy = 3;
+                }
+            }    
+        } 
+    }
    
     return parkingfee;
 }
@@ -4178,28 +4652,33 @@ float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bNo
 void operation::SaveExit()
 {
     int iRet;
-    int giPMSEntryRecord = 0;
     std::string sLPRNo = "";
     CE_Time pt,pd,calTime;
     
     if (tExit.sIUNo== "") return;
     writelog ("Save Exit trans:"+ tExit.sIUNo, "OPR");
     //----
-    if (tExit.sRedeemAmt > (tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt)) tExit.sRedeemAmt = tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt;
+    if (GfeeFormat(tExit.sRedeemAmt) > GfeeFormat(tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt)) tExit.sRedeemAmt = GfeeFormat(tExit.sFee - tExit.sRebateAmt + tExit.sOweAmt);
+     tExit.sPaidAmt = GfeeFormat(tExit.sFee - tExit.sRebateAmt - tExit.sRedeemAmt + tExit.sOweAmt);
     //----
-    if (tExit.bNoEntryRecord == 0 && tExit.lParkedTime <= 0) {
-        if (tExit.lParkedTime == -1 ) giPMSEntryRecord = 1;
+    if (tExit.lParkedTime <= 0 && tExit.sEntryTime != "") {
         pt.SetTime(tExit.sEntryTime);
         pd.SetTime(tExit.sExitTime);
         tExit.lParkedTime = calTime.diffmin(pt.GetUnixTimestamp(), pd.GetUnixTimestamp());
     }
-    //----
+    //---- added on 22/12/2025
+    tExit.sGSTAmt = GfeeFormat(tExit.sPaidAmt * tParas.gfGSTRate / (1 + tParas.gfGSTRate));
+    //---
     iRet = db::getInstance()->insertexittrans(tExit);
     if (iRet == iCentralSuccess){
-        if (tExit.bNoEntryRecord == 0 && giPMSEntryRecord == 0 ) {
+        if (tExit.bNoEntryRecord == 0 ) {
             iRet = db::getInstance()->updatemovementtrans(tExit);
         }else  {
             iRet = db::getInstance()->insert2movementtrans(tExit);
+        }
+        //------- update used complimentary/Redemption ticket 
+        if (tExit.sRedeemAmt > 0 or tExit.iTransType == 10){
+            iRet = db::getInstance()->updateUsedTicket(tExit);
         }
     }
     //------ delete Local Entry
@@ -4234,7 +4713,7 @@ void operation::SaveExit()
         SendMsg2Server("90", sMsg2Send);
     }
     tProcess.gbsavedtrans = true;
-    tExit.gbPaid.store(true);
+    tExit.gbPaid = true;
     if (tExit.sPaidAmt == 0) {
         tProcess.gsLastCardNo = tExit.sCardNo;
         tProcess.gbLastPaidStatus.store(true);
@@ -4255,7 +4734,7 @@ void operation::PrintReceipt()
         return;
     }
     //-------
-   if (tExit.iflag4Receipt == 1 && tExit.gbPaid.load() == true && tExit.sPaidAmt > 0) {
+   if (tExit.iflag4Receipt == 1 && tExit.gbPaid == true && tExit.sPaidAmt > 0) {
         
         PrintTR(false);
         tExit.iflag4Receipt = 2;
@@ -4273,7 +4752,7 @@ void operation::CloseExitOperation(TransType iStatus)
     string sLEDMsg = "";
     string sLCDMsg = "";
     //-----
-    if (iStatus < 4){
+    if (iStatus < 7){
         tExit.iStatus = 0;
     }
     switch (iStatus){
@@ -4286,8 +4765,8 @@ void operation::CloseExitOperation(TransType iStatus)
         }
         case SeasonParking:
         {
-            //sLEDMsg = "Season Parking ^ Have A Nice Day!";
-            //sLCDMsg = "Season parking ^ Have A Nice Day!";
+            sLEDMsg = "Season Parking ^ Have A Nice Day!";
+            sLCDMsg = "Season parking ^ Have A Nice Day!";
             break;
         }
         case GracePeriod:
@@ -4300,8 +4779,8 @@ void operation::CloseExitOperation(TransType iStatus)
         case DeductionOK:
         {
             //---- LED MSg
-            sLEDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
-            sLCDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLEDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLCDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
             break;
         }
         case DeductionFail:
@@ -4312,8 +4791,15 @@ void operation::CloseExitOperation(TransType iStatus)
         case BalanceChange:
         {
             tExit.iStatus = 3;
-            sLEDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
-            sLCDMsg = "Paid Amt: " + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLEDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            sLCDMsg = "Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^ Have A Nice Day!";
+            break;
+        }
+        case RejectCode7:
+        {
+            tExit.iStatus = 3;
+            sLEDMsg = "Have A Nice Day!";
+            sLCDMsg = "Have A Nice Day!";
             break;
         }
         case Manualopen:
@@ -4322,6 +4808,21 @@ void operation::CloseExitOperation(TransType iStatus)
             sLEDMsg = "Please process^ Have A Nice Day!";
             sLCDMsg = "Please Process^ Have A Nice Day!";
             break;
+        }
+        case Complimentary:
+        {
+            tExit.iStatus = 0;
+            sLEDMsg = "Complimentary Ticket^ Have A Nice Day!";
+            sLCDMsg = "Complimentary Ticket ^ Have A Nice Day!";
+            break; 
+        }
+        case EZPayParking:
+        {
+            tExit.iCardType = 5;
+        }
+        case AXSParking:
+        {
+            tExit.iCardType = 4;
         }
         default:
 			break;
@@ -4332,7 +4833,7 @@ void operation::CloseExitOperation(TransType iStatus)
 
     writelog ("Enter close Exit for: " + tExit.sIUNo, "OPR");
     SaveExit();
-    Openbarrier();
+    if (iStatus != UpdateCHUTrans) Openbarrier();
 }
 
 void operation::RedeemTime2Amt() 
@@ -4470,7 +4971,7 @@ void operation::ticketScan(std::string skeyedNo)
                     }
                 }
 
-                ShowLEDMsg(tExitMsg.MsgExit_CardIn[0], tExitMsg.MsgExit_CardIn[1]);
+              //  ShowLEDMsg(tExitMsg.MsgExit_CardIn[0], tExitMsg.MsgExit_CardIn[1]);
             }
         }
     }
@@ -4496,7 +4997,7 @@ void operation::ticketScan(std::string skeyedNo)
                 }
             }
 
-            ShowLEDMsg(tExitMsg.MsgExit_CardIn[0], tExitMsg.MsgExit_CardIn[1]);
+         //   ShowLEDMsg(tExitMsg.MsgExit_CardIn[0], tExitMsg.MsgExit_CardIn[1]);  remove on 03/07/2026
         }
     }
     
@@ -4510,7 +5011,13 @@ void operation::ticketScan(std::string skeyedNo)
 
     // Ret : 0 = Expired, 1 = Valid, 2 = Used, 6 = Not Started, -1 = DB Error, 4 = Not Found
     iRet = db::getInstance()->isValidBarCodeTicket(isRedemptionTicket, skeyedNo, dtExpireTime, gbRedeemAmt, giRedeemTime);
-   
+
+    if (iRet != 1){
+        if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket", "Pls Present","Valid Payment","","");
+        else SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket","","","","");
+        sMsg = "Invalid Ticket^ Pls Present Valid Payment";
+        ShowLEDMsg(sMsg, sMsg);
+    }
     switch (iRet)
     {
         // DB Error
@@ -4528,12 +5035,12 @@ void operation::ticketScan(std::string skeyedNo)
             writelog("Ticket Expired: " + sCardTkNo, "OPR");
             if (isRedemptionTicket == true)
             {
-                ShowLEDMsg(tExitMsg.MsgExit_RedemptionExpired[0], tExitMsg.MsgExit_RedemptionExpired[1]);
+              //  ShowLEDMsg(tExitMsg.MsgExit_RedemptionExpired[0], tExitMsg.MsgExit_RedemptionExpired[1]);
                 SendMsg2Server("90", sCardTkNo + ",,,,,Redemption Expired");
             }
             else
             {
-                ShowLEDMsg(tExitMsg.MsgExit_CompExpired[0], tExitMsg.MsgExit_CompExpired[1]);
+             //   ShowLEDMsg(tExitMsg.MsgExit_CompExpired[0], tExitMsg.MsgExit_CompExpired[1]);
                 SendMsg2Server("90", sCardTkNo + ",,,,,Complimentary Expired");
             }
             goto Exit_Sub;
@@ -4547,7 +5054,7 @@ void operation::ticketScan(std::string skeyedNo)
             if (isRedemptionTicket == true)
             {
                 writelog("Redemption Ticket: " + sCardTkNo + ", Expire: " + Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M:%S"), "OPR");
-
+                
                 if (giRedeemTime > 0)
                 {
                     tExit.iRedeemTime = giRedeemTime;
@@ -4562,12 +5069,23 @@ void operation::ticketScan(std::string skeyedNo)
                     tExit.sRedeemAmt = GfeeFormat(gbRedeemAmt);
                     sMsg = "Redemption: ^$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt);
                 }
-
                 writelog(sMsg, "OPR");
                 ShowLEDMsg(sMsg, sMsg);
+                //-------- added on 06/08/2026
+                if (tExit.bPayByAXS == true or tExit.bPayByEZPay == true){
+                    if (GfeeFormat(tExit.sFee) < GfeeFormat(tExit.sRedeemAmt + tExit.sRebateAmt))  tExit.sRedeemAmt = GfeeFormat(tExit.sFee - tExit.sRebateAmt);
+                    if (tExit.bPayByAXS == true){
+                        ShowLEDMsg("Redemption^Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt), "Redemption^Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt));
+                        CloseExitOperation(AXSParking);
+                    }else{
+                         ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^Refunded to EZpay", "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^Refunded to EZpay");
+                         CloseExitOperation(EZPayParking);
+                    }
+                    return;
+                }
+                //---------
                 if (tExit.sIUNo == "" && tExit.sCardNo == "")
                 {
-                    tExit.sTag = "Redemption";
                     SendMsg2Server("90", sCardTkNo + ",,,,,Redemption. Ticket Wait for Card");
                     EnableCashcard(true);
                     return;
@@ -4590,7 +5108,16 @@ void operation::ticketScan(std::string skeyedNo)
                 }
                 else
                 {
+                    //----- added on 03/08/2026
+                    if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Ticket Accepted.", "Fee Paid:$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt),"Present Payment","","");
+                    else SendMsg2OBU(tExit.sIUNo,0,"Fee Paid","$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt),"","","");
                     EnableCashcard(true);
+                    //----- added on 14/07/2026
+                    sMsg = "Fee Paid $" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Present Payment";
+                    ShowLEDMsg(sMsg, sMsg);
+                    //--------
+                    if (tParas.giEPS == 3) EEPInq(2);
+                    else if (tParas.giEPS == 2) CHUInq(1);
                     return;
                 }
 
@@ -4600,6 +5127,20 @@ void operation::ticketScan(std::string skeyedNo)
             {
                 writelog("Complimentary Ticket: " + sCardTkNo + ", Expire: " + Common::getInstance()->FnFormatDateTime(dtExpireTime, "%Y-%m-%d %H:%M:%S"), "OPR");
 
+                //-------- added on 06/08/2026
+                if (tExit.bPayByAXS == true or tExit.bPayByEZPay == true){
+                    tExit.sRedeemAmt = GfeeFormat(tExit.sFee - tExit.sRebateAmt);
+                    tExit.iTransType = 10;
+                    tExit.sCardNo = tExit.sRedeemNo;
+                    if (tExit.bPayByAXS == true){
+                        ShowLEDMsg("Complimentary^Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sFee), "Complimentary^Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sFee));
+                        CloseExitOperation(AXSParking);
+                    }else{
+                         ShowLEDMsg("Complimentary^Refunded","Complimentary^Refunded" );
+                         CloseExitOperation(EZPayParking);
+                    }
+                    return;
+                } 
                 if (tParas.giNeedCard4Complimentary  == 0)
                 {
                     ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
@@ -4607,40 +5148,15 @@ void operation::ticketScan(std::string skeyedNo)
                     {
                         tExit.sIUNo = "N/A";
                     }
-                    if (tExit.bPayByEZPay == true)
-                    {
-                        ShowLEDMsg("Complimentary^EZPay refunded", "");
-                        writelog("Complimentary, $" + Common::getInstance()->SetFeeFormat(tExit.sFee) + " refunded to VCC/EZPay", "OPR");
-                        tExit.sRedeemAmt = GfeeFormat(tExit.sFee);
-                        tExit.sPaidAmt = 0;
-                        tExit.sGSTAmt = 0;
-                        db::getInstance()->update99PaymentTrans();
-                        return;
-                    }
                 }
                 else
                 {
                     if (tExit.sIUNo == "")
                     {
                         ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
-                        tExit.sTag = "Complimentary";
                         SendMsg2Server("90", sCardTkNo + ",,,,,Compl. Ticket Wait for Card");
                         EnableCashcard(true);
                         return;
-                    }
-                    else
-                    {
-                        if (tExit.bPayByEZPay == true)
-                        {
-                            ShowLEDMsg("Complimentary^EZpay refunded", "");
-                            writelog("Complimentary, $" + Common::getInstance()->SetFeeFormat(tExit.sFee) + " refunded to VCC/EZPay", "OPR");
-                            tExit.sRedeemAmt = GfeeFormat(tExit.sFee);
-                            tExit.sPaidAmt = 0;
-                            tExit.sGSTAmt = 0;
-                            db::getInstance()->update99PaymentTrans();
-                            return;
-                        }
-                        ShowLEDMsg(tExitMsg.MsgExit_Complimentary[0], tExitMsg.MsgExit_Complimentary[1]);
                     }
                 }
                ticketOK();
@@ -4652,7 +5168,7 @@ void operation::ticketScan(std::string skeyedNo)
         case 2:
         {
             writelog("Used Ticket: " + sCardTkNo, "OPR");
-            ShowLEDMsg(tExitMsg.MsgExit_UsedTicket[0], tExitMsg.MsgExit_UsedTicket[1]);
+           // ShowLEDMsg(tExitMsg.MsgExit_UsedTicket[0], tExitMsg.MsgExit_UsedTicket[1]);
             SendMsg2Server("90", sCardTkNo + ",,,,,Used Ticket");
             goto Exit_Sub;
             break;
@@ -4661,7 +5177,7 @@ void operation::ticketScan(std::string skeyedNo)
         case 4:
         {
             writelog("Ticket Not Found " + sCardTkNo, "OPR");
-            ShowLEDMsg("Ticket Not Found", "Ticket Not Found");
+            //ShowLEDMsg("Ticket Not Found", "Ticket Not Found");
             SendMsg2Server("90", sCardTkNo + ",,,,,Ticket Not Found");
             goto Exit_Sub;
             break;
@@ -4670,7 +5186,7 @@ void operation::ticketScan(std::string skeyedNo)
         case 6:
         {
             writelog("Ticket Not Start: " + sCardTkNo, "OPR");
-            ShowLEDMsg("Ticket Not Start", "Ticket Not Start");
+           // ShowLEDMsg("Ticket Not Start", "Ticket Not Start");
             SendMsg2Server("90", sCardTkNo + ",,,,,Ticket Not Start");
             goto Exit_Sub;
             break;
@@ -4683,15 +5199,20 @@ void operation::ticketScan(std::string skeyedNo)
     }
 
 Exit_Sub:
-
+    //------ added on 14/07/2026
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    //--------
     showFee2User();
 
     if (tExit.bPayByEZPay == true)
     {
         ShowLEDMsg("You may scan^Compl Ticket", "");
     }
-
+    
     EnableCashcard(true);
+    //----- added on 14/07/2026
+    if (tParas.giEPS == 3) EEPInq(2);
+    else if (tParas.giEPS == 2) CHUInq(1);
 
     return;
 }
@@ -4725,18 +5246,20 @@ void operation::showFee2User(bool bPaying)
     if (sFee2Pay > 0)
     {
         sUpp = "Fee:$" + Common::getInstance()->SetFeeFormat(sFee2Pay);
-        sLow = tExitMsg.MsgExit_XNoCard[0];
+        //sLow = tExitMsg.MsgExit_XNoCard[0];
+        sLow = "Please Wait....";
     }
     else
     {
         // "Grace Period, Free!"
-        sUpp = "Fee parking";
+        sUpp = "Free parking";
         sLow = "Have a nice day!";
     }
 
     std::string sMsg = sUpp + "^" + sLow;
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+   // std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
     ShowLEDMsg(sMsg, sMsg);
 
     std::string exit_entry_time = "00:00";
@@ -4757,6 +5280,8 @@ void operation::showFee2User(bool bPaying)
     ss << Common::getInstance()->SetFeeFormat(sFee2Pay) << "," << ",";
     ss << tProcess.giShowType << "," << "Fee OK";
     SendMsg2Server("90", ss.str());
+    //------ added on 27/07/2026
+    if (tParas.giEPS == 3) SendMsg2OBU(tExit.sIUNo,0,"Parking Fee" , "$"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "","","");
     //------
     tExit.sPaidAmt = GfeeFormat(sFee2Pay);
 }
@@ -4811,7 +5336,7 @@ void operation::processEEP(const std::string& eventData)
 
             std::ostringstream oss;
             oss << "EEP Payload [" << label << "] " << outputField.to_string();
-            writelog(oss.str(), "OPR");
+       //     writelog(oss.str(), "OPR");
         };
 
         auto toString = [](uint32_t value) -> std::string {
@@ -4869,7 +5394,47 @@ void operation::processEEP(const std::string& eventData)
                         auto it = map.find(value);
                         return it != map.end() ? it->second : "Unknown";
                     };
+                    //---- added on 23/03/2026  
+                    string sEvent;
 
+                    std::ostringstream ossEventTime;
+                    ossEventTime << std::setfill('0')
+                                << std::setw(4) << static_cast<int>(NotifLog.year) << "-"
+                                << std::setw(2) << static_cast<int>(NotifLog.month) << "-"
+                                << std::setw(2) << static_cast<int>(NotifLog.day) << " "
+                                << std::setw(2) << static_cast<int>(NotifLog.hour) << ":"
+                                << std::setw(2) << static_cast<int>(NotifLog.minute) << ":"
+                                << std::setw(2) << static_cast<int>(NotifLog.second);
+                    std::string sEventTime = ossEventTime.str();
+
+                
+                    if (NotifLog.notificationType == 0x00){
+                        sEvent = getFieldDescription(NotifLog.errorCode, errorCodeMap);
+                        m_db->AddSysEvent(sEvent,NotifLog.errorCode, sEventTime);
+                        if (NotifLog.errorCode == 0x01 || NotifLog.errorCode == 0x20 || NotifLog.errorCode == 0x22 || NotifLog.errorCode == 0x23 || NotifLog.errorCode == 0x24)
+                        {
+                            if (tPBSError[0].ErrNo == 0 ) {
+                                tPBSError[0].ErrNo = -1;
+                                Sendmystatus();
+                                writelog("Received Alert from DSRC", "OPR");
+                            }
+
+                        }
+                    }
+                    else
+                    {
+                        m_db->UpdateSysEvent(sEvent,NotifLog.errorCode, sEventTime);
+                       
+                        if (m_db->HasAlertNotification() == false)
+                        {
+                           if ( tPBSError[0].ErrNo == -1 ) {
+                                tPBSError[0].ErrNo = 0;
+                                Sendmystatus();
+                                writelog("Clear DSRC Alert", "OPR");
+                            }
+                        }
+                    }
+                    
                     break;
                 }
                 case EEPClient::MESSAGE_CODE::DI_STATUS_NOTIFICATION:
@@ -4888,12 +5453,28 @@ void operation::processEEP(const std::string& eventData)
                 {
                     EEPClient::transactionData transDataNotif;
                     parsePayload(transDataNotif, eventParsed.payload, "TRANSACTION_DATA");
+                    //------ added on 17/12/2025
+                    processEEPTransData(transDataNotif);
                     break;
                 }
                 case EEPClient::MESSAGE_CODE::OBU_INFORMATION_NOTIFICATION:
                 {
                     EEPClient::obuInformationNotification obuInfoNotif;
                     parsePayload(obuInfoNotif, eventParsed.payload, "OBU_INFORMATION_NOTIFICATION");
+                    //----- added on 02/03/2026
+                    if (tProcess.gbLoopApresent.load() == true && tProcess.gsTailgateOBU == "")
+                    {
+                        tProcess.gsTailgateOBU = Common::getInstance()->longToHex(obuInfoNotif.obulabel);
+                        writelog ("Set Tailgate OBU: " + tProcess.gsTailgateOBU, "OPR");
+                    } 
+                    else
+                    {
+                        if (tProcess.gsTailgateOBU == Common::getInstance()->longToHex(obuInfoNotif.obulabel)) 
+                        {
+                            ProcessOUBInformation(obuInfoNotif);
+                        }
+                    } 
+
                     break;
                 }
                 case EEPClient::MESSAGE_CODE::CPO_INFORMATION_DISPLAY_RESULT:
@@ -4930,6 +5511,23 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::startResponse startResp;
                             parsePayload(startResp, eventParsed.payload, "START_RESPONSE");
+                            //------ added on 24/03/2026
+                            if (startResp.resultCode == 0x01 || startResp.resultCode == 0x02)
+                            {
+                                 if ( tPBSError[0].ErrNo == -1 ) {
+                                    tPBSError[0].ErrNo = 0;
+                                    Sendmystatus();
+                                }
+                                 writelog("DSRC state is In-Operation", "OPR");
+
+                            }else
+                            {
+                                if ( tPBSError[0].ErrNo == 0 ) {
+                                    tPBSError[0].ErrNo = -1;
+                                    Sendmystatus();
+                                }
+                                writelog("DSRC state is Out-Operation", "OPR");
+                            }
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
@@ -5085,18 +5683,23 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::obuInformationNotification OBUInfoNotif;
                             parsePayload(OBUInfoNotif, eventParsed.payload, "OBU_INFORMATION_NOTIFICATION");
+                            //----- added on 01/12/2025
+                            EnableCashcard(false);
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::GET_OBU_INFO_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
+                            if (tProcess.gbLoopApresent.load() == true) ProcessOUBInformation(OBUInfoNotif);
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::ACK:
                         {
                             EEPClient::ack OBUInfoReqAck;
                             parsePayload(OBUInfoReqAck, eventParsed.payload, "GET_OBU_INFO_REQ_ACK");
+                            //------ added on 10/12/2025
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
                         {
                             EEPClient::nak OBUInfoReqNak;
-                            parsePayload(OBUInfoReqNak, eventParsed.payload, "GET_OBU_INFO_REQ_NAK");
+                            parsePayload(OBUInfoReqNak, eventParsed.payload, "GET_OBU_INFO_REQ_NAK");    
                             break;
                         }
                         default:
@@ -5109,6 +5712,17 @@ void operation::processEEP(const std::string& eventData)
                 else
                 {
                     writelog("EEP Request Cmd: GET_OBU_INFO_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                    //------ added on 19/12/2025 ?? need check with KC??
+                   // if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::RSP_TIMEOUT)){
+                         if (tProcess.gbLoopApresent.load() == true)
+                         {
+                            writelog ("No OBU detected!", "OPR");
+                            SendMsg2Server("90",",,,,,No OBU Detected");
+                            if (gtStation.iType == tiExit) ShowLEDMsg("No OBU. Present^Valid Payment", "No OBU. Present^Valid Payment");
+                            else ShowLEDMsg("No OBU. Present^Card For Entry", "No OBU. Present^Card For Entry");
+                            EnableCashcard(true);
+                         }
+                  //  }
                 }
                 break;
             }
@@ -5122,6 +5736,7 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::ack getOBUInfoStopReqAck;
                             parsePayload(getOBUInfoStopReqAck, eventParsed.payload, "GET_OBU_INFO_STOP_REQ_ACK");
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::GET_OBU_INFO_STOP_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
@@ -5153,18 +5768,24 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::transactionData transData;
                             parsePayload(transData, eventParsed.payload, "TRANSACTION_DATA");
+                            //----- added on 01/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::DEDUCT_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
+                            processEEPTransData(transData);
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::ACK:
                         {
                             EEPClient::ackDeduct deductReqAck;
                             parsePayload(deductReqAck, eventParsed.payload, "DEDUCT_REQ_ACK");
+                            //----- added on 17/12/2025
+                            tExit.sDSerialNo = std::to_string(deductReqAck.deductSerialNo);
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
                         {
                             EEPClient::nak deductReqNak;
                             parsePayload(deductReqNak, eventParsed.payload, "DEDUCT_REQ_NAK");
+                            //----- added on 08/12/2025
                             break;
                         }
                         default:
@@ -5177,6 +5798,16 @@ void operation::processEEP(const std::string& eventData)
                 else
                 {
                     writelog("EEP Request Cmd: DEDUCT_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
+                    //------ added on 19/12/2025
+                    if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::RSP_TIMEOUT)){
+                        if (tProcess.gbLoopApresent.load() == true && (tExit.gbPaid == false || tExit.giDeductionStatus == Doingdeduction))
+                        {
+                            writelog ("unable to make a deduction via OBU", "OPR");
+                            ShowLEDMsg("Insert/Tap Card", "Insert/Tap Card");
+                            tExit.giDeductionStatus = WaitingCard;
+                            EnableCashcard(true);
+                        }
+                    }
                 }
                 break;
             }
@@ -5221,6 +5852,9 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::transactionData transData;
                             parsePayload(transData, eventParsed.payload, "TRANSACTION_DATA");
+                            //----- added on 01/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::TRANSACTION_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
+                            processEEPTransData(transData);
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::ACK:
@@ -5233,6 +5867,7 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::nak transReqNak;
                             parsePayload(transReqNak, eventParsed.payload, "TRANSACTION_REQ_NAK");
+                            //------ added on 08/12/2025
                             break;
                         }
                         default:
@@ -5258,6 +5893,8 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::cpoInformationDisplayResult cpoInfoDisplayResult;
                             parsePayload(cpoInfoDisplayResult, eventParsed.payload, "CPO_INFORMATION_DISPLAY_RESULT");
+                            //---- added on 08/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::CPO_INFO_DISPLAY_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::ACK:
@@ -5270,6 +5907,7 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::nak cpoInformationDisplayNak;
                             parsePayload(cpoInformationDisplayNak, eventParsed.payload, "CPO_INFO_DISPLAY_REQ_NAK");
+                            //----- added on 08/12/2025
                             break;
                         }
                         default:
@@ -5295,6 +5933,8 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::carparkProcessCompleteResult processCompleteResult;
                             parsePayload(processCompleteResult, eventParsed.payload, "CARPARK_PROCESS_COMPLETE_RESULT");
+                            //----- added on 10/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::ACK:
@@ -5332,6 +5972,8 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::ack dsrcProcessCompleteNotifAck;
                             parsePayload(dsrcProcessCompleteNotifAck, eventParsed.payload, "DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_ACK");
+                             //---- added on 10/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
@@ -5363,6 +6005,8 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::ack stopReqOfRelatedInfoDistAck;
                             parsePayload(stopReqOfRelatedInfoDistAck, eventParsed.payload, "STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_ACK");
+                             //---- added on 10/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
@@ -5456,6 +6100,8 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::ack setCarparkAvailReqAck;
                             parsePayload(setCarparkAvailReqAck, eventParsed.payload, "SET_CARPARK_AVAIL_REQ_ACK");
+                             //---- added on 10/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::SET_CARPARK_AVAIL_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
@@ -5487,6 +6133,8 @@ void operation::processEEP(const std::string& eventData)
                         {
                             EEPClient::ack cdDownloadReqAck;
                             parsePayload(cdDownloadReqAck, eventParsed.payload, "CD_DOWNLOAD_REQ_ACK");
+                            //---- added on 10/12/2025
+                            if (tProcess.fiLastEEPCmd == EEPClient::CommandType::CD_DOWNLOAD_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::NAK:
@@ -5545,4 +6193,680 @@ void operation::processEEP(const std::string& eventData)
     {
         writelog("Exception in " + std::string(__func__) + ": " + std::string(ex.what()), "EEP");
     }
+}
+
+void operation::EEPInq(int delay)
+{
+    //---- added on 03/07/2026
+    BARCODE_READER::getInstance()->Ticket_In = 0;
+    //---------
+    if (tProcess.gbLoopApresent.load() == false) 
+    {
+        writelog ("No Loop A while OBU Inq", "OPR");
+        return;
+    }
+    if (tExit.giDeductionStatus == Doingdeduction) {
+        writelog ("Doing deduction while send Inq to EEP", "OPR");
+        return;
+    }
+    if  (tProcess.fiLastEEPCmd == EEPClient:: CommandType::GET_OBU_INFO_REQ_CMD)
+    {
+        writelog("last OBU Inq not return. Don't Inq Again.", "OPR");
+        return;
+    }
+    //------- added on 14/07/2026
+    if (delay > 0) {
+        for (int i = 0; i < delay * 100; ++i)
+        {
+           // writelog ("Card in status:" + to_string(BARCODE_READER::getInstance()->Ticket_In), "OPR");
+            if (BARCODE_READER::getInstance()->Ticket_In == 1 or LCSCReader::getInstance()->LCSCCard_In == 1 or Upt::getInstance()->UOPSCard_In == 1) {
+                writelog("Ticket/Card detected. Skip sending GET_OBU_INFO_REQ.", "OPR");
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    //---------
+    writelog ("Send Inq to EEP", "OPR");
+    EEPClient::getInstance()->FnSendGetOBUInfoReq();
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::GET_OBU_INFO_REQ_CMD;
+}
+
+void operation::EEPDebit(string OBU, float lFee, string entryTime, string exitTime)
+{
+    if (tProcess.gbLoopApresent.load() == false)
+    {
+        writelog ("No loop A while send Deduction", "OPR");
+        return;
+    }
+    if (tExit.giDeductionStatus == Doingdeduction) {
+        writelog ("Doing deduction while send Deduction to EEP", "OPR");
+        return;
+    }
+    EnableCashcard(false);
+    //-------
+    tExit.giDeductionStatus = Doingdeduction;
+    tProcess.gbLastPaidStatus.store(false);
+    //--------
+    if (entryTime == "")  entryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss(); 
+    //-------
+    int ideductAmt = lFee* 100;
+    //------
+    writelog ("Send EEP Deduction. OBU:" + OBU + " fee:" + std::to_string(ideductAmt), "OPR");
+    //-----
+    EEPClient::getInstance()->FnSendDeductReq(OBU,std::to_string(ideductAmt), entryTime, exitTime);
+    
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::DEDUCT_REQ_CMD; 
+}
+
+void operation::SendMsg2OBU(std::string OBU, int DType, std::string line1,std::string line2, std::string line3, std::string line4, std::string line5)
+{
+
+    EEPClient::getInstance()->FnSendCPOInfoDisplayReq(OBU, std::to_string(DType), line1,line2,line3,line4,line5);
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::CPO_INFO_DISPLAY_REQ_CMD;  
+}
+
+void operation::ProcessOUBInformation(EEPClient::obuInformationNotification OBUInfo)
+{
+    std::string gsLogMsg;
+    std::string gsOBU = Common::getInstance()->longToHex(OBUInfo.obulabel);
+    std::string gsVCC;
+    Common::getInstance()->FnUint32ToByteString(OBUInfo.vcc, gsVCC, 3);
+    //-------
+    writelog ("Receive EEP Information","OPR");
+    if (tExit.giDeductionStatus == Doingdeduction) {
+        writelog ("Doing Deduction, ignore it","OPR");
+        return;
+    }
+    //------added on 02/03/2026
+    if (tProcess.gsTailgateOBU == gsOBU) tProcess.gsTailgateOBU = "";
+    //-------
+    gsLogMsg = "OBU: " + gsOBU + ", LPN: " + Common::getInstance()->FnConvertVectorUint8ToString(OBUInfo.vechicleNumber);
+    if (Common::getInstance()->ConvertVectorUint8ToHex(OBUInfo.can) == "0000000000000000")
+    {
+        gsLogMsg = gsLogMsg + ", CardNo: , CardValidity: ";
+    }else {
+        gsLogMsg = gsLogMsg + ", CardNo: " + Common::getInstance()->ConvertVectorUint8ToHex(OBUInfo.can) + ", CardValidity: ";
+    }
+    switch (OBUInfo.cardValidity) {
+        case 0:
+        {
+            gsLogMsg = gsLogMsg + "Vaid Card, Card Balance: $" + Common::getInstance()->SetFeeFormat(((float)OBUInfo.cardBalance / 100.0f));
+            break;
+        }
+        case 1:
+        {
+             gsLogMsg = gsLogMsg + "No Card";
+             break;
+        }
+        case 2:
+        {
+             gsLogMsg = gsLogMsg + "InVaid Card";
+             break;
+        }
+        case 3:
+        {
+            gsLogMsg = gsLogMsg + "Card issuer error";
+            break;
+        }
+        case 4:
+        {
+            gsLogMsg = gsLogMsg + "Blacklist card";
+            break;
+        }
+        default:
+        {
+            break;
+        }
+    }
+    gsLogMsg = gsLogMsg + ", VCC: " + gsVCC;
+    writelog (gsLogMsg, "OPR");
+    //----------
+    gsLogMsg = "Backend Account: " + std::string((OBUInfo.backendAccount == 1) ? "Valid" : "Invalid");
+    gsLogMsg = gsLogMsg + ", Backend Setting: " + std::string((OBUInfo.backendSetting == 1) ? "ON" : "OFF");
+    gsLogMsg = gsLogMsg + ", OBU Business Function: " + std::string((OBUInfo.businessFunctionStatus == 1) ? "Normal" : "OBU cannot debit");
+    
+    writelog (gsLogMsg, "OPR");
+    //----------
+    if (gtStation.iType == tientry){
+
+        tEntry.sLPN[0]=Common::getInstance()->FnConvertVectorUint8ToString(OBUInfo.vechicleNumber);
+        tEntry.sLPN[1]=Common::getInstance()->FnConvertVectorUint8ToString(OBUInfo.vechicleNumber);
+        tEntry.VCC = gsVCC;
+        VehicleCome(gsOBU);
+    }else{
+        tExit.iBackendAccount = OBUInfo.backendAccount;
+        tExit.iBackendSetting = OBUInfo.backendSetting;
+	    tExit.iBFunctionStatus= OBUInfo.businessFunctionStatus;
+	    tExit.iOBUType = OBUInfo.typeObu;
+        tExit.lpn = Common::getInstance()->FnConvertVectorUint8ToString(OBUInfo.vechicleNumber);
+        tExit.sLPN[0] = tExit.lpn;
+        tExit.sLPN[1] = tExit.lpn;
+        tExit.VCC = gsVCC;
+
+        if (Common::getInstance()->ConvertVectorUint8ToHex(OBUInfo.can) != "0000000000000000"){
+             tExit.sCardNo =Common::getInstance()->ConvertVectorUint8ToHex(OBUInfo.can);
+        }else tExit.sCardNo = "";
+        tExit.iCardStatus = OBUInfo.cardValidity;
+        if (tExit.iEEPPaymentResult == 5 && tExit.sDSerialNo != "") {
+             EEPClient::getInstance()->FnSendTransactionReq(gsOBU, Common::getInstance()->FnStringToUint16(tExit.sDSerialNo));
+        } else CheckIUorCardStatus(gsOBU,EEP,tExit.sCardNo,1,float(OBUInfo.cardBalance));
+    }
+
+}
+
+void operation::processEEPTransData(EEPClient::transactionData transData)
+{
+    writelog ("Receive EEP Trans Data","OPR");
+
+    std::string sObuLabel = Common::getInstance()->FnDecimalIntToHexString(transData.obuLabel, 5);
+    std::string sCan = Common::getInstance()->FnConvertVectorUint8ToHexString(transData.can);
+    //-----------
+    if (transData.resultDeduction == 1 || transData.resultDeduction == 2 ||transData.resultDeduction == 8)
+    {
+        if (sObuLabel == tExit.sIUNo && tProcess.gbLoopApresent.load() == true)
+        {
+            writelog ("Deduction successful", "OPR");
+            if (sCan != "0000000000000000" ) {
+                tExit.sCardNo = sCan;
+                writelog ("Card Number: " + tExit.sCardNo, "OPR");
+            }else tExit.sCardNo = "";
+            tExit.sPaidAmt = float(transData.paymentFee) / 100.0f;
+            tExit.sDSerialNo = std::to_string(transData.deductCommandSerialNum);
+            tExit.iEEPPaymentResult = transData.resultDeduction;
+            if(transData.indicationLastAutoLoad > 0) tExit.sTopupAmt = float(transData.autoLoadAmount) / 100.0f;
+            tExit.iEEPTransRoute = transData.transactionRoute;
+            //------
+            if (transData.resultDeduction == 1) {
+                tExit.sEEPpaymentTime = Common::getInstance()->longToHex(transData.fepTime);
+                writelog ("Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "(FE-Pay)", "OPR");
+                writelog ("Card Number: " + tExit.sCardNo, "OPR");
+                writelog ("Payment time: " + tExit.sEEPpaymentTime, "OPR");
+            }else
+            {
+                if (transData.resultDeduction == 2) {
+                    tExit.sEEPpaymentTime = Common::getInstance()->ConvertVectorUint8ToHex(transData.bepTimeOfReport);
+                    writelog ("Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "(BE-Pay)", "OPR");
+                    writelog ("Payment time: " + tExit.sEEPpaymentTime, "OPR");
+                }
+                else{
+                    tExit.sEEPpaymentTime = "";
+                    writelog ("Paid Amt: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "(later)", "OPR");
+                }
+            }
+            if (tExit.sEEPpaymentTime != "")
+            {
+               tExit.sEEPpaymentTime = Common::getInstance()->FnStringConvertDBTime(tExit.sEEPpaymentTime);
+            }
+            DebitOK(tExit.sIUNo, tExit.sCardNo,Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), Common::getInstance()->SetFeeFormat(float(transData.purseBalanceAfterTransaction / 100.0)), 1, Common::getInstance()->SetFeeFormat(tExit.sTopupAmt), EEP, tExit.sEEPpaymentTime);
+        } else
+        {
+           // updateEEPtrans
+          writelog ("Update Successful deduction trans", "OPR");
+          m_db->UpdateEEPExitTrans(sObuLabel, std::to_string(transData.deductCommandSerialNum),sCan,float(transData.paymentFee) / 100.0f,float(transData.autoLoadAmount) / 100.0f,transData.transactionRoute,transData.resultDeduction); 
+        }
+        return;
+    }
+
+    if (transData.resultDeduction == 7){
+        writelog ("No Deduction for double deduction is suspected", "OPR");
+        tExit.sIUNo = sObuLabel;
+        tExit.iEEPPaymentResult = transData.resultDeduction;
+        if (sCan != "0000000000000000" ) {
+                tExit.sCardNo = sCan;
+                writelog ("Card Number: " + tExit.sCardNo, "OPR");
+                tExit.iCardType = 1;
+        }else tExit.sCardNo = "";
+        //--------
+        CloseExitOperation(RejectCode7);
+        return;
+    } 
+
+    if (transData.resultDeduction == 9){
+        writelog ("No Deduction for DSRC failure", "OPR");
+        EnableCashcard(true);
+        EEPInq(2);
+        return;
+    } 
+
+    if (transData.resultDeduction == 5){
+        writelog ("Unknown due to  DSRC disconnection", "OPR");
+        tExit.iEEPPaymentResult = 5;
+        tProcess.fiLastEEPCmd = EEPClient:: CommandType::GET_OBU_INFO_REQ_CMD;
+        return;
+    } 
+    if (transData.resultDeduction == 0){
+        if (transData.frontendPaymentViolation != 0 )
+        {   
+            if (transData.frontendPaymentViolation == 8) 
+            {
+                writelog("No deduction for Insufficient Balance","OPR");
+                SendMsg2Server ("90", tExit.sIUNo + ",,,,,Insufficient Balance");
+                ShowLEDMsg("Insufficient Bal^Pls Top Up", "Insufficient Bal^Pls Top Up");
+                 if (tExit.iOBUType == 1 ) SendMsg2OBU(tExit.sIUNo,0,"Bal $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt),"Pls Top UP","","","");
+                 else SendMsg2OBU(tExit.sIUNo,0,"Card Bal $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt),"Insufficient Bal","Pls Top UP","","");
+                 tExit.giDeductionStatus = InsufficientBalance;
+            }
+            else
+            {
+                writelog("No deduction for Invalid Card","OPR");
+                SendMsg2Server ("90", tExit.sIUNo + ",,,,,Invalid card");
+                ShowLEDMsg("Invalid Card ^ Pls Present Valid Payment", "Invalid Card ^ Pls Present Valid Payment");
+                if (tExit.iOBUType == 1 ) SendMsg2OBU(tExit.sIUNo,0,"Invalid Card","","","","");
+                else SendMsg2OBU(tExit.sIUNo,0,"Invalid Card","Pls Present","Valid Payment","","");
+                tExit.giDeductionStatus = CardFault;
+            }
+            EnableCashcard(true);
+            EEPInq(2);
+            return;
+        }
+        if (transData.backendPaymentViolation != 0) 
+        {
+           writelog("No deduction for invalid Backend Payment","OPR");
+           SendMsg2Server ("90", tExit.sIUNo + ",,,,,Invalid Backend Payment");
+           ShowLEDMsg("Fee: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "pls^Present Valid Payment", "Fee: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "pls^Present Valid Payment");
+           if (tExit.iOBUType == 1 ) SendMsg2OBU(tExit.sIUNo,0,"Pls Present","Valid Payment","","","");
+           else SendMsg2OBU(tExit.sIUNo,0,"Fee: $" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt),"Pls Present", "Valid Payment","","");
+           tExit.giDeductionStatus = WaitingCard;
+           EnableCashcard(true);
+           EEPInq(2);
+           return;
+        }
+    }
+
+}
+//--------
+// Processing Result :   0 = allow enter  1 = block enter  2 = same as lastIU
+void operation::EndEEPprocess(int ProcessingResult)
+{
+    std::string gsIUNo;
+    std::string sFee;
+    std::string s1,s2,s3,s4,s5;
+    int iRet;
+    //----------
+    tProcess.fbEEPEndProcessing = true;
+    //--------
+    if (gtStation.iType == tientry) {
+        gsIUNo = tEntry.sIUTKNo;
+        sFee = "00";
+    }else {
+        gsIUNo = tExit.sIUNo;
+        sFee = std::to_string(tExit.sPaidAmt * 100);
+    }
+    //------
+    writelog("send carpark process complete Notification","OPR");
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD;
+    //------ added on 15/07/2026
+    EEPClient::getInstance()->EEPData_In = 0;
+    EEPClient::getInstance()->FnSendCarparkProcessCompleteNotificationReq(gsIUNo,std::to_string(ProcessingResult),sFee);
+    //--------
+    for (int i = 0; i < 50; ++i)
+    {
+        if (EEPClient::getInstance()->EEPData_In == 1) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    //-------
+    writelog ("send Display message to OBU","OPR");
+    //------ added on 15/07/2026
+    EEPClient::getInstance()->EEPData_In = 0;
+    //------
+    if (gtStation.iType == tientry) SendMsg2OBU(gsIUNo,0, "Welcome To EEP","","","","");
+    else{
+        if (ProcessingResult < 2) {
+            if (ProcessingResult == 0)
+            {
+                if (tExit.iTransType != 1 && tExit.iTransType!= 4 && tExit.iTransType != 7 && tExit.sPaidAmt == 0 && tExit.iTransType != 10 ) 
+                {
+                    iRet = db::getInstance()->GetSeasonHolder(gsIUNo);
+                    if (iRet == 11 ||iRet == 9 || iRet == 1) {
+                        s1= "Authorised";
+                        s2= "Parking";
+
+                    }else{
+                        s1 = "Season Parking";
+                    }
+                }
+                else 
+                {
+                    if (tExit.sPaidAmt == 0) 
+                    {
+                        if (tExit.sFee == 0) s1 = "Grace Period";
+                        else {
+                            if (tExit.iEEPPaymentResult == 7) s1 = "Have a Nice Day!";
+                            else{
+                                if (tExit.iTransType == 10) s1= "Complimentary";
+                                else{
+                                    if (tExit.iOBUType == 0) {
+                                        s1 = "Ticket Accepted.";
+                                        s2 = "Fee Paid $" + sFee;
+                                    }
+                                    else{
+                                        s1 = "Fee Paid";
+                                        s2 = "$" + sFee;
+                                    }
+                                }
+                            }      
+                        }
+                    }
+                    else{
+                        if (tExit.iOBUType == 1) {
+                            s1 = "Have A";
+                            s2 = "Nice Day";
+                        }
+                        else {
+                            //s1 = "Entry Time : " + tExit.sEntryTime;
+                            //s2 = "Paid Amt: $" + std::to_string(tExit.sPaidAmt);
+                            s1 = "Have A Nice Day";
+                        }
+                    } 
+                }
+            }else 
+            {
+                s1 = "No Deduction, Pls pay by OBU";
+            }
+
+            SendMsg2OBU(gsIUNo,0, s1,s2,s3,s4,s5);
+        }
+    }
+    //------
+     for (int i = 0; i < 50; ++i)
+    {
+        if (EEPClient::getInstance()->EEPData_In == 1) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    //--------
+    writelog ("send DSRC Process complete Notification", "OPR");
+    tProcess.fiLastEEPCmd = EEPClient:: CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD;
+    EEPClient::getInstance()->FnSendDSRCProcessCompleteNotificationReq(gsIUNo);
+    //------added on 02/03/2026
+    if (tProcess.gsTailgateOBU !="")
+    {
+        Clearme();
+        writelog("Clear me for Enq Tailgate OBU", "OPR");
+        EEPInq();
+    }
+    tProcess.fbEEPEndProcessing = false;
+
+}
+
+void operation::CHUInq(int delay)
+{
+    //------ add on 14/07/2026
+    BARCODE_READER::getInstance()->Ticket_In = 0;
+    //-------
+    if  (tProcess.fiLastCHUCmd == iEntryInq )
+    {
+        writelog("last OBU Inq not return. Don't Inq Again.", "OPR");
+        return;
+    }
+    if (delay > 0) {
+        for (int i = 0; i < delay * 100; ++i)
+        {
+            if (BARCODE_READER::getInstance()->Ticket_In == 1) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    //---------
+    SendMsg2CHU(iEntryInq, std::to_string(gtStation.iAntID));
+    
+}
+
+void operation::CHUDebit(string OBU, float lFee, string sCardNo,float sCardBal)
+{
+    long lAmt;
+    std::string sData;
+
+    if (tExit.giDeductionStatus == Doingdeduction) {
+        writelog ("Doing deduction while send Msg to CHU", "OPR");
+        return;
+    }
+
+    if (lFee == 0){
+        lAmt = (tExit.sFee - tExit.sRedeemAmt) * 100;
+    }else{
+        lAmt = lFee * 100;
+    }
+    if (lAmt == 0) {
+        writelog ("Exit fee not set","OPR");
+        return;
+    }
+    
+    tExit.giDeductionStatus = Doingdeduction;
+    tExit.sCardNo = sCardNo;
+    tProcess.gbLastPaidStatus.store(false);
+    tProcess.gsLastCardNo = sCardNo;
+    tProcess.gfLastCardBal= GfeeFormat(sCardBal);
+
+    sData = std::to_string(gtStation.iAntID) + "," + OBU + "," + std::to_string(lAmt);
+
+    SendMsg2CHU(iDebit,sData);
+
+}
+
+void operation::SendMsg2CHU(eCHUCmd sCmd, string sData)
+{
+    std::string sMsg;
+
+    if (tProcess.gbLoopApresent.load() == false) 
+    {
+        writelog ("No Loop A while send Msg to CHU", "OPR");
+        return;
+    }
+
+    sMsg = "["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|" + std::to_string(sCmd) + "|"+ sData +"|]";
+
+    CHUClient::getInstance()->FnSendMsgToCHU(sMsg);
+
+    writelog("Send to CHU: " + sMsg, "OPR");
+
+    tProcess.fiLastCHUCmd = sCmd;
+}
+
+void operation::processCHU(const std::string& eventData)
+{
+    writelog ("Received CHU Data:" + eventData, "OPR");
+    //---------
+    int rxcmd;
+	int n,i;
+    int iRC;
+    string sCHUDebitTime;
+    string R4;
+    string L4;
+    string sMsg;
+	//-------
+
+	ParseData pField('[',']','|');
+	n=pField.Parse(eventData.c_str());
+		
+	if(n < 4){
+		writelog("Invalid data format", "OPR");
+		return;
+	}
+		
+	rxcmd = std::stoi(pField.Field(2));
+    std::vector<std::string> tmpStr;
+	boost::algorithm::split(tmpStr, pField.Field(3), boost::algorithm::is_any_of(","));
+    iRC = std::stoi(tmpStr[0]);
+    if (iRC == ChuRC_CNNBroken) {
+        tProcess.fiLastCHUCmd = iInit;
+        SendMsg2Server("90",",,,,,CHU Connection Down");
+        return;
+    }
+    if ( tProcess.fiLastCHUCmd + 1 == rxcmd ) 
+    {
+        tProcess.fiLastCHUCmd = iInit;
+        switch(rxcmd)
+        {
+            case iRes_EntryInq:
+            {
+                if (tExit.giDeductionStatus == Doingdeduction) {
+                    writelog ("Doing Deduction, ignore it","OPR");
+                    return;
+                }
+                //--------
+                if (iRC == ChuRC_EntryWithCashcard || iRC == ChuRC_EntryWithoutCashcard)
+                {   
+                    if (std::stoi(tmpStr[1]) != gtStation.iAntID)
+                    {
+                        writelog ("Wrong Antenna ID", "OPR");
+                        tProcess.fiLastCHUCmd = iInit;
+                        CHUInq(3);
+                        return;
+                    }
+                    tExit.sIUNo = tmpStr[2];
+                    if (iRC == ChuRC_EntryWithCashcard) {
+                        tExit.sCardNo = tmpStr[3];
+                        tExit.iCardStatus = 00;
+                    }
+                    else {
+                        tExit.sCardNo = "";
+                        tExit.iCardStatus = 01;
+                    }
+                    CheckIUorCardStatus(tExit.sIUNo,CHU,tExit.sCardNo,std::stoi(tmpStr[5]),std::stof(tmpStr[4])/100);
+                }else
+                {
+                    if (iRC == ChuRC_NAK) writelog("Received NACK!", "OPR");
+                    else {
+                        if (iRC == ChuRC_ACK) writelog("Received ACK!", "OPR");
+                        else writelog ("Not valid Response", "OPR");
+                    }
+                    tProcess.fiLastCHUCmd = iInit;
+                    CHUInq(2);
+                    return;
+                }
+                break;
+            }
+            case iRes_Debit:
+            {
+               if(iRC == ChuRC_DebitOk)
+               {
+                    if (std::stoi(tmpStr[1]) != gtStation.iAntID || tExit.sIUNo != tmpStr[2])
+                    {
+                        if (std::stoi(tmpStr[1]) != gtStation.iAntID) writelog ("Wrong Antenna ID or IU ", "OPR");
+                        else writelog ("Wrong IU when debit ", "OPR");
+                        tProcess.fiLastCHUCmd = iInit;
+                        CHUInq(2);
+                        return;
+                    }
+                    sCHUDebitTime = Common::getInstance()->FnStringConvertDBTime(tmpStr[9]);
+                    DebitOK(tmpStr[2], tmpStr[4],Common::getInstance()->SetFeeFormat(float(std::stoi(tmpStr[3])/100.0)), Common::getInstance()->SetFeeFormat(float(std::stoi(tmpStr[5]) / 100.0)), std::stoi(tmpStr[7]), Common::getInstance()->SetFeeFormat(float(std::stoi(tmpStr[8])/100.0)), CHU, sCHUDebitTime);
+                    return;
+               }
+               if (iRC == ChuRC_DebitFail)
+               {
+                    tExit.sCHUDebitCode = tmpStr[6];
+                    writelog ("CHU Debit Fail, Error Code: "+ tmpStr[6], "OPR");
+                    SendMsg2Server ("90",tmpStr[2] + "," + tmpStr[4] + ",,,1, Debit Fail: " + tmpStr[6]);
+                    tExit.giDeductionStatus = WaitingCard;
+                    //----- added on 12/03/2026
+                    if (tmpStr[6] == "00000001") {
+                        sMsg = "Fee:$" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^Tap/Insert Card";
+                        ShowLEDMsg(sMsg, sMsg);
+                        EnableCashcard(true);
+                        CHUInq(2);
+                        return;
+                    }
+                    //----- added on 03/03/2026
+                    L4 = tmpStr[6].substr(1,4);
+                    R4 = tmpStr[6].substr(5,8);
+                    if (R4 == "0004") {
+                        writelog ("Reversed Command Sequence.", "OPR");
+                        if (tParas.giProcessReversedCMD == 0)
+                        {
+                            DebitOK(tmpStr[2], tmpStr[4],"", "", std::stoi(tmpStr[7]), "", CHU, sCHUDebitTime);
+                            return;
+                        }
+                    }
+                    else if (R4.substr(R4.length() - 1, 1) == "8"){
+                        writelog ("CHU Return Low Balance.", "OPR");
+                        ShowLEDMsg("Deduction Error^Check bal By TS","Deduction Error^Check bal By TS");
+                    }
+                    else if(L4 == "0004" || R4 == "0010" )
+                    {
+                        writelog ("CHU return Insufficient balance.", "OPR");
+                        tExit.giDeductionStatus = InsufficientBalance;
+                        tProcess.gsLastCardNo = "";
+                        ShowLEDMsg("Deduction Error^Check bal By TS","Deduction Error^Check bal By TS");
+                    }
+                    else if (R4 == "0020" || R4 == "0040" || R4 == "00C0" || L4 > "0400")
+                    {
+                        writelog("IU problem.", "OPR");
+                        ShowLEDMsg("IU Problem^Insert/Tap Card","IU Problem^Insert/Tap Card");
+                    }
+                    else 
+                    {
+                        ShowLEDMsg("Deduction Error^Check bal By TS","Deduction Error^Check bal By TS");
+                    }
+                    EnableCashcard(true);
+                    return;
+                }
+                if (iRC == ChuRC_NAK)
+                {
+                    writelog("NAK,Try again.","OPR");
+                    //ShowLEDMsg(tExitMsg.MsgExit_DebitNak[0], tExitMsg.MsgExit_DebitNak[1]);
+                    tExit.giDeductionStatus = WaitingCard;
+                    EnableCashcard(true);
+                    CHUInq(3);
+                }else
+                {
+                    writelog("unknown error,Check balance by TS", "OPR");
+                    ShowLEDMsg("Deduction Error^Check bal By TS","Deduction Error^Check bal By TS");
+                    tExit.giDeductionStatus = WaitingCard;
+                    EnableCashcard(true);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    } 
+    else
+    {
+        writelog("Wrong Response", "OPR");
+        if (rxcmd == iRes_Debit && iRC == ChuRC_DebitOk){
+            sCHUDebitTime = Common::getInstance()->FnStringConvertDBTime(tmpStr[9]);
+            if (tExit.sIUNo == tmpStr[2]) 
+            {
+                DebitOK(tmpStr[2], tmpStr[4],Common::getInstance()->SetFeeFormat(float(std::stoi(tmpStr[3])/100.0)), Common::getInstance()->SetFeeFormat(float(std::stoi(tmpStr[5]) / 100.0)), std::stoi(tmpStr[7]), Common::getInstance()->SetFeeFormat(float(std::stoi(tmpStr[8])/100.0)), CHU, sCHUDebitTime);
+            }
+            else
+            {
+                tExit1.sIUNo = tmpStr[2];
+                tExit1.sCardNo = tmpStr[4];
+                tExit1.sPaidAmt = float(std::stoi(tmpStr[3])/100.0);
+                tExit1.sFee = tExit1.sPaidAmt;
+                tExit1.iCardType = std::stoi(tmpStr[7]);
+                tExit1.sTopupAmt = float(std::stoi(tmpStr[8])/100.0);
+                tExit1.sExitTime = sCHUDebitTime;
+                tExit1.sEntryTime = sCHUDebitTime;
+                //------
+                UpdateExit();
+                //----
+                writelog ("Update CHU return Trans", "OPR");
+                tProcess.fiLastCHUCmd = iInit;
+                CHUInq(2);
+            }
+        }
+        return;
+    }
+    
+}
+
+void operation::UpdateExit()
+{
+    int iRet;
+    //------- for CHU outstanding trans 
+    if (tExit1.sIUNo == "") return;
+    writelog ("Update Exit trans:"+ tExit1.sIUNo, "OPR");
+    //--------
+    tExit1.sGSTAmt = tExit1.sPaidAmt * tParas.gfGSTRate / (1 + tParas.gfGSTRate);
+    //---
+    iRet = db::getInstance()->insertexittrans(tExit1);
+    // if (iRet == iCentralSuccess){
+    //     iRet = db::getInstance()->updatemovementtrans(tExit1);
+    // }
+    //------ delete Local Entry
+    // db::getInstance()->UpdateLocalEntry(tExit1.sIUNo);
+    //----
+    return;
 }

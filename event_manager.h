@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <iostream>
 #include <string>
 #include <mutex>
@@ -61,7 +62,7 @@ private:
     std::deque<std::pair<std::string, std::unique_ptr<BaseEvent>>> eventQueue;
     std::mutex eventThreadMutex_;
     std::condition_variable condition_;
-    bool isEventThreadRunning_;
+    std::atomic<bool> isEventThreadRunning_{false};
     std::thread eventThread_;
     std::string logFileName_;
     EventManager();

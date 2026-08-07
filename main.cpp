@@ -27,6 +27,8 @@
 #include "udp.h"
 #include "ksm_reader.h"
 #include "eep_client.h"
+#include "chu_client.h"
+#include "shutdown_manager.h"
 
 
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
@@ -56,6 +58,27 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 {
                     operation::getInstance()->tProcess.giSystemOnline = 0;
                 }
+            }
+
+            // DB OK
+            if (db::getInstance()->FnGetDatabaseErrorFlag() == 0)
+            {
+                // state changed: error → ok
+                if (!operation::getInstance()->tProcess.gbLastDBConnected)
+                {
+                    operation::getInstance()->HandlePBSError(DBNoError);
+                }
+                operation::getInstance()->tProcess.gbLastDBConnected = true;
+            }
+            // DB Error
+            else
+            {
+                // state changed: ok → error
+                if (operation::getInstance()->tProcess.gbLastDBConnected)
+                {
+                    operation::getInstance()->HandlePBSError(DBFailed);
+                }
+                operation::getInstance()->tProcess.gbLastDBConnected = false;
             }
 
             if (operation::getInstance()->tProcess.giSystemOnline == 0 && operation::getInstance()->tProcess.glNoofOfflineData > 0)
@@ -105,8 +128,16 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
                 operation::getInstance()->tProcess.gbInitParamFail = 0;
                 operation::getInstance()->Initdevice(*(operation::getInstance()->iCurrentContext));
                 operation::getInstance()->isOperationInitialized_.store(true);
-                operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-                operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+                if (operation::getInstance()->gtStation.iType == tientry)
+                {
+                    operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+                    operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+                }
+                else
+                {
+                    operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+                    operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+                }
                 operation::getInstance()->writelog("EPS in operation","OPR");
             }
         }
@@ -129,6 +160,21 @@ void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::
 
 void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* logStrand_)
 {
+    if (ec == boost::asio::error::operation_aborted)
+    {
+        return;
+    }
+
+    if (ec)
+    {
+        Logger::getInstance()->FnLog("Daily log timer error: " + ec.message(), "", "OPR");
+        return;
+    }
+
+    static bool isFirstRun = true;
+    const bool runOnStartup = isFirstRun;
+    isFirstRun = false;
+
     auto start = std::chrono::steady_clock::now(); // Measure the start time of the handler execution
 
     // Get today's date
@@ -144,8 +190,10 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
         lastLoggedDayOfYear = localToday.tm_yday;
     }
 
-    // Check if it's past 12 AM (midnight)
-    if (localToday.tm_hour == 0 && localToday.tm_min >= 1 && localToday.tm_min < 30)
+    const bool isMidnightWindow = localToday.tm_hour == 0 && localToday.tm_min >= 1 && localToday.tm_min < 30;
+
+    // Check if it's startup OR past 12 AM (midnight)
+    if (runOnStartup || isMidnightWindow)
     {
         std::string logFilePath = Logger::getInstance()->LOG_FILE_PATH;
         std::string LPRDbLogFilePath = "/home/root/evas_web/db_files";
@@ -229,6 +277,7 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
         }
 
         int foundDSRCFeSettleFile_ = 0;
+        int foundDSRCBeSettleFile_ = 0;
         if (std::filesystem::exists(EEPSettleFilePath) && std::filesystem::is_directory(EEPSettleFilePath))
         {
             for (const auto& entry : std::filesystem::directory_iterator(EEPSettleFilePath))
@@ -243,12 +292,18 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
                     {
                         foundDSRCFeSettleFile_++;
                     }
+                    // Count BE files
+                    else if (filename.find("BE_") != std::string::npos)
+                    {
+                        foundDSRCBeSettleFile_++;
+                    }
+
                 }
             }
         }
         else
         {
-            Logger::getInstance()->FnLog("LCSC settlement directory does not exist: " + EEPSettleFilePath, "", "OPR");
+            Logger::getInstance()->FnLog("EEP settlement directory does not exist: " + EEPSettleFilePath, "", "OPR");
         }
 
         std::string details;
@@ -700,12 +755,19 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
             }
 
 
-            if (foundDSRCFeSettleFile_ > 0)
+            if (foundDSRCFeSettleFile_ > 0 || foundDSRCBeSettleFile_ > 0)
             {
                 if (foundDSRCFeSettleFile_ > 0)
                 {
                     std::stringstream ss;
                     ss << "Found " << foundDSRCFeSettleFile_ << " DSRC Frontend settlement files.";
+                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                }
+
+                if (foundDSRCBeSettleFile_ > 0)
+                {
+                    std::stringstream ss;
+                    ss << "Found " << foundDSRCBeSettleFile_ << " DSRC Backend settlement files.";
                     Logger::getInstance()->FnLog(ss.str(), "", "OPR");
                 }
 
@@ -786,7 +848,13 @@ void dailyLogHandler(const boost::system::error_code &ec, boost::asio::steady_ti
                             if (filename.find(dsrcFormattedDate) == std::string::npos) // not today
                             {
                                 if (filename.find("FE_") != std::string::npos)
+                                {
                                     copyAndRemove(entry.path(), "DSRCFE");
+                                }
+                                else if (filename.find("BE_") != std::string::npos)
+                                {
+                                    copyAndRemove(entry.path(), "DSRCBE");
+                                }
                             }
                         }
                     }
@@ -865,7 +933,9 @@ void signalHandler(const boost::system::error_code& ec, int signal, boost::asio:
     {
         Logger::getInstance()->FnLog("Terminal signal received. Station Program terminated.");
         operation::getInstance()->SendMsg2Server("09","11Stopping...");
-
+        CHUClient::getInstance()->shutting_down = true;
+        ShutdownManager::getInstance()->gracefulShutdown();
+        /*
         // Display Station Stopped on LCD
         std::string LCDLine1Msg = ">>> STN STOPPED <<< ";
         std::string LCDLine2Msg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
@@ -882,6 +952,7 @@ void signalHandler(const boost::system::error_code& ec, int signal, boost::asio:
 
         // Stop the io_context to allow the run() loop to exit
         ioContext.stop();
+        */
     }
 }
 
@@ -890,6 +961,8 @@ int main (int agrc, char* argv[])
     // Initialization
     boost::asio::io_context ioContext;
     auto workGuard = boost::asio::make_work_guard(ioContext);
+
+    ShutdownManager::getInstance()->set(&ioContext, &workGuard);
 
     boost::asio::strand<boost::asio::io_context::executor_type> strand_ = boost::asio::make_strand(ioContext);
     boost::asio::strand<boost::asio::io_context::executor_type> logStrand_ = boost::asio::make_strand(ioContext);
@@ -948,6 +1021,7 @@ int main (int agrc, char* argv[])
     LCSCReader::getInstance()->FnLCSCReaderClose();
     Printer::getInstance()->FnPrinterClose();
     Lpr::getInstance()->FnLprClose();
+    CHUClient::getInstance()->FnCHUClose();
     //EEPClient::getInstance()->FnEEPClientClose();
 
     return 0;

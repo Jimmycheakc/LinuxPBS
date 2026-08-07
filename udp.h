@@ -36,7 +36,8 @@ typedef enum : unsigned int
     CmdAvailableLots        = 68,
     CmdBroadcastSaveTrans   = 90,
     CmdFeeTest              = 301,
-    CmdSetDioOutput         = 303
+    CmdSetDioOutput         = 303,
+    CmdEEPStatus            = 800
 } udp_rx_command;
 
 typedef enum : unsigned int

@@ -13,6 +13,7 @@
 #include "log.h"
 #include "version.h"
 #include "common.h"
+#include "shutdown_manager.h"
 
 void udpclient::processmonitordata (const char* data, std::size_t length) 
 {
@@ -207,6 +208,8 @@ void udpclient::processdata (const char* data, std::size_t length)
 				operation::getInstance()->SendMsg2Server("09","11Stopping...");
 				operation::getInstance()->writelog("Exit by PMS", "UDP");
 
+				ShutdownManager::getInstance()->gracefulShutdown();
+				/*
 				// Display Station Stopped on LCD
 				std::string LCDMsg = "Station Stopped!";
 				char* sLCDMsg = const_cast<char*>(LCDMsg.data());
@@ -214,6 +217,7 @@ void udpclient::processdata (const char* data, std::size_t length)
 				LCD::getInstance()->FnLCDDisplayRow(1, sLCDMsg);
 
 				std::exit(0);
+				*/
 				break;
 			}
 			case CmdStatusEnquiry:
@@ -270,9 +274,18 @@ void udpclient::processdata (const char* data, std::size_t length)
 				}
 				operation::getInstance()->m_db->loadmessage();
 				operation::getInstance()->m_db->loadExitmessage();
-				if (operation::getInstance()->tProcess.gbcarparkfull.load() == false){
-					operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-					operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+				if (operation::getInstance()->tProcess.gbcarparkfull.load() == false)
+				{
+					if (operation::getInstance()->gtStation.iType == tientry)
+					{
+						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+					}
+					else
+					{
+						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+					}
 				}
 				break;
 			}
@@ -432,13 +445,24 @@ void udpclient::processdata (const char* data, std::size_t length)
 					operation::getInstance()->tProcess.gbcarparkfull.store(bCarparkFull);
 					if (bCarparkFull == false) {
 						string sIUNo = operation:: getInstance()->tEntry.sIUTKNo; 
-						if (operation::getInstance()->tProcess.gbLoopApresent.load() == true and sIUNo != "" ){
+						if (operation::getInstance()->tProcess.gbLoopApresent.load() == true and sIUNo != "" )
+						{
 							operation::getInstance()->PBSEntry(sIUNo);
 						}
-						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+
+						if (operation::getInstance()->gtStation.iType == tientry)
+						{
+							operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
+							operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+						}
+						else
+						{
+							operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
+							operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+						}
 					}
-					else {
+					else
+					{
 						operation::getInstance()->tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_CarParkFull2LED[0]);
 						operation::getInstance()->tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_CarParkFull2LED[1]);
 					}
@@ -554,6 +578,11 @@ void udpclient::processdata (const char* data, std::size_t length)
 				}
 				break;
 			}
+			case CmdEEPStatus:
+			{
+				operation::getInstance()->writelog("Received data:"+std::string(data,length), "UDP");
+				operation::getInstance()->SendMsg2Server("801", EEPClient::getInstance()->FnGetStatusData());
+			}
 			default:
 				break;
 		}
@@ -591,7 +620,7 @@ void udpclient::startreceive()
 		//	operation::getInstance()->writelog("Local IP:"+ operation:: getInstance()->tParas.gsLocalIP, "UDP");  
 				         
             if (sender_ip != operation:: getInstance()->tParas.gsLocalIP) {
-                if (socket_.local_endpoint().port() == 2001)
+                if (socket_.local_endpoint().port() == static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetLocalUDPPort())))
                 {
                     processdata(data_, bytes_received);
                 }

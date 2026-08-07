@@ -4372,7 +4372,8 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << ",cardCan=" << cardCanStr;
             oss << ",cardBalance=" << cardBalanceStr;
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
+            //------ added on 15/07/2026
+            UOPSCard_In = 1;
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCardDetect", oss.str());
         }
     }

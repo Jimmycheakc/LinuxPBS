@@ -4,6 +4,7 @@
 #include <chrono>
 #include <mutex>
 #include "ce_time.h"
+#include "eep_client.h"
 
 typedef enum {
 	_Online,
@@ -51,8 +52,19 @@ typedef enum : unsigned int
 	DeductionSuccessed     	= 3,
 	Deductionfailed			= 4,
 	CardExpired 			= 5,
-	CardFault				= 6
+	CardFault				= 6,
+	InsufficientBalance     = 7
 } eProcessStatus;
+
+typedef enum : unsigned int
+{
+    iInit 				= 0,
+	iEntryInq           = 100,
+    iRes_EntryInq       = 101,
+    iDebit              = 102,
+    iRes_Debit          = 103,
+    iRes_Comm           = 105
+} eCHUCmd;
 
 typedef enum {
 	ChuRC_None = 0,                     // None
@@ -153,7 +165,9 @@ typedef enum
 	SDoorNoError = 26,
     BDoorError = 27,
 	BDoorNoError = 28,
-	BarrierStatus = 29
+	BarrierStatus = 29,
+	ParamOk = 30,
+	ParamError = 31
 } EPSError;  
 
 class trans_info {
@@ -185,6 +199,7 @@ struct  tstation_struct
 	int iVirtualID;
 	string sZoneName;
 	int iVExitID;
+	int iZoneLots;
 };
 
 struct tariff_struct
@@ -307,8 +322,8 @@ struct  tEntryTrans_Struct
 //	string sRPLPN;
 //	string sPaidtime;
 	bool gbEntryOK;
-	string sTag;
 	string sCHUDebitCode;
+	string VCC;
 };
 
 struct  tExitTrans_Struct
@@ -368,11 +383,24 @@ struct  tExitTrans_Struct
 	string video_location;
 	string video1_location;
 	string sRPLPN;
-	//-----
+	//----- added on 08/12/2025
+	int iCardStatus;
+	int iBackendAccount;
+	int iBackendSetting;
+	int iBFunctionStatus;
+	int iOBUType;
+	string sDSerialNo;
+	int iEEPTransRoute;
+	int iEEPPaymentResult;
+	string sEEPpaymentTime;
+	//------
 	eProcessStatus giDeductionStatus;        // 0: init    1: waiting card   2: doing deduction  3: deduction succeed 4: deduction failed
-	std::atomic<bool> gbPaid;
-	std::atomic<bool> bPayByEZPay;
-	string sTag;
+	bool gbPaid;
+	bool bPayByEZPay;
+	bool bPayByAXS;
+	string VCC;
+	//----- added on 29/07/2026
+	int iUsedTicketBy;                   // 0: not used    1:scan Ticket  2: by IU  3: by LPN
 };
 
 
@@ -386,6 +414,7 @@ struct  tProcess_Struct
 	int online_status;
 	int offline_status;
 	int giSystemOnline;
+	bool gbLastDBConnected;
 	bool sEnableReader;
 	//------ for fee calculation 
 	string gsLastPaidTrans;
@@ -419,11 +448,15 @@ struct  tProcess_Struct
 	int giBarrierContinueOpened;
 //	bool gbwaitLoopA;
 	std::atomic<bool> fbReadIUfromAnt;
-	int fiLastCHUCmd;
-	int giCardType;
+	EEPClient::CommandType fiLastEEPCmd;
+	bool fbEEPEndProcessing;
+	string gsTailgateOBU;
+	//int giCardType;
 	std::chrono::time_point<std::chrono::steady_clock> lastTransTime;
 	std::mutex lastTransTimeMutex;
-
+	//----- CHU   
+	eCHUCmd fiLastCHUCmd;
+	//
 	std::string IdleMsg[2];
 	std::mutex idleMsgMutex;
 	std::string gsLastIUNo;
@@ -494,8 +527,6 @@ struct  tProcess_Struct
 		return lastTransTime;
 	}
 };
-
-
 
 
 struct tVType_Struct

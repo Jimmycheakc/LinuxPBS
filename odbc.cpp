@@ -152,6 +152,8 @@ int odbc::Connect()
 
     std::vector<ReaderItem> mList;
 
+	if (result) result->clear();
+
     try
     {
         if (IsConnected()!=1)
@@ -198,10 +200,10 @@ int odbc::Connect()
 
                 if (!(ret==SQL_SUCCESS||ret==SQL_SUCCESS_WITH_INFO))
                 {
-                  GetError("SQLGetData", stmt, SQL_HANDLE_STMT);
-
-                return -1;
-                break;
+                  	GetError("SQLGetData", stmt, SQL_HANDLE_STMT);
+				  	SQLFreeStmt(stmt, SQL_CLOSE); // Clean up before exit
+				  	SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+                	return -1;
                 }
                 if (SQL_SUCCEEDED(ret)) {
                     // Handle null columns
@@ -212,13 +214,14 @@ int odbc::Connect()
                     ri.appendData(buf);
                 }
             }
-          if (columns>=1) mList.push_back(ri);
+          if (columns>=1) mList.push_back(std::move(ri));
 
           if(FullResult==false)  break;
         }   
 
-        *result=mList;
+        *result = std::move(mList);
 
+		SQLFreeStmt(stmt, SQL_CLOSE);
         SQLFreeHandle(SQL_HANDLE_STMT, stmt); 
         return 0;
     }
@@ -282,10 +285,14 @@ int odbc::SQLExecutNoneQuery(std::string statement)
       {
           GetError("SQLRowCount", stmt, SQL_HANDLE_STMT);
       }
-    // printf("Number of rows affected: %ld \n",(long int)rows);
+    //  printf("Number of rows affected: %ld \n",(long int)rows);
+    
+    //  printf("Statement: %s\n",statement.c_str());
+
       NumberOfRowsAffected=(long int)rows;
       ret=0;
       
+	    SQLFreeStmt(stmt, SQL_CLOSE);
       SQLFreeHandle(SQL_HANDLE_STMT, stmt);    
     }
     catch (const std::exception& e)
@@ -308,6 +315,7 @@ int odbc::SQLExecutNoneQuery(std::string statement)
             stmt = SQL_NULL_HSTMT;   // Nullify after freeing
         }
     }
+    
     return ret;
 }
 
@@ -387,26 +395,6 @@ int odbc::IsConnected()
   return 0;
 }
 
-char* odbc::To_CharArray(const std::string &Text)
-{
-            int size = Text.size();
-            char *a = new char[size + 1];
-            a[Text.size()] = 0;
-            memcpy(a, Text.c_str(), size);
-            return a;
-}
-
-unsigned char* odbc::To_UnsignCharArray(const std::string &Text)
-{
-
-            int size = Text.size();
-            unsigned char *a = new unsigned char[size + 1];
-            a[Text.size()] = 0;
-            memcpy(a, Text.c_str(), size);
-            return a;
-
-}
-
 
 
 //@input Params: sSeasonNo, iInOut, iZoneID, AllowedHolderType
@@ -441,7 +429,7 @@ try
 
     CE_Time tmpDt,tmpDt2;
 
-    char* strCallSP   = To_CharArray("{CALL sp_IsValidSeason (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)}");
+    std::string strCallSP   = "{CALL sp_IsValidSeason (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)}";
 
     //1st ?: input Params
     //2nd ?: input Params
@@ -519,7 +507,7 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
     if (sSeasonNo=="")
     {
        nRet=  SQLBindParameter(stmt, 1, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 16, 0, (void*)To_UnsignCharArray(sSeasonNo),
+                               SQL_VARCHAR, 16, 0, (void*)sSeasonNo.c_str(),
                                16, &lenNULL);
     }
     else
@@ -528,7 +516,7 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
 
            //sSeasonNo must convert to char* first
          nRet=  SQLBindParameter(stmt, 1, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 16, 0, (void*)To_UnsignCharArray(sSeasonNo),
+                               SQL_VARCHAR, 16, 0, (void*)sSeasonNo.c_str(),
                                16, &lenNTS);
 
     }
@@ -703,13 +691,13 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
     if (AllowedHolderType=="")
     {
        nRet=  SQLBindParameter(stmt, 13, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 20, 0, (void*)To_UnsignCharArray(AllowedHolderType), 20, &lenNULL);
+                               SQL_VARCHAR, 20, 0, (void*)AllowedHolderType.c_str(), 20, &lenNULL);
 
     }
     else
     {
          nRet=  SQLBindParameter(stmt, 13, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 20, 0, (void*)To_UnsignCharArray(AllowedHolderType), 20, &lenNTS);
+                               SQL_VARCHAR, 20, 0, (void*)AllowedHolderType.c_str(), 20, &lenNTS);
 
     }
 
@@ -752,7 +740,7 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
         }
         //-----------------------------------------------------------------------------
          
-    nRet= SQLPrepare (stmt, (SQLCHAR*)strCallSP, SQL_NTS);
+    nRet= SQLPrepare (stmt, (SQLCHAR*)strCallSP.c_str(), SQL_NTS);
 
      if (!SQL_SUCCEEDED(nRet))
     {
@@ -815,7 +803,6 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
         else //add 1 day
         {
 
-
             tmpDt.SetTime(std::string((char*)tmpValidTo));
 			      tmpDt.SetTime(tmpDt.GetUnixTimestamp()+86400);
 
@@ -867,7 +854,9 @@ SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL
 
 
          
-        nRet=returnStatus;
+		SQLFreeStmt(stmt, SQL_CLOSE);
+      	SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+        nRet=returnStatus;   
 
 
 
@@ -880,6 +869,10 @@ catch (const std::exception& e)
     std::stringstream ss;
     ss << __func__ << ", Exception: " << e.what();
     Logger::getInstance()->FnLogExceptionError(ss.str());
+	if (stmt != SQL_NULL_HSTMT) {
+            SQLFreeStmt(stmt, SQL_CLOSE); // Close cursor
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt); // Destroy handle
+        }
     nRet=-1;
 }
 catch (...)
@@ -887,6 +880,10 @@ catch (...)
     std::stringstream ss;
     ss << __func__ << ", Exception: Unknown Exception";
     Logger::getInstance()->FnLogExceptionError(ss.str());
+	if (stmt != SQL_NULL_HSTMT) {
+            SQLFreeStmt(stmt, SQL_CLOSE); // Close cursor
+            SQLFreeHandle(SQL_HANDLE_STMT, stmt); // Destroy handle
+        }
     nRet=-1;
 }
 

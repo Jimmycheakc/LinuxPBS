@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
     Owe_Amt DECIMAL(10,2) DEFAULT 0.00,
     lpn VARCHAR(20),
     entry_lpn_SID VARCHAR(32),
+    VCC VARCHAR(3),
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -132,6 +133,11 @@ CREATE TABLE IF NOT EXISTS Exit_Trans (
     feefrom VARCHAR(10),
     Entry_ID SMALLINT,
     entry_time DATETIME,
+    EEPTransRoute INT DEFAULT 0,
+    EEPDSerialNo VARCHAR(10),
+    EEPPaymentResult INT DEFAULT 0,
+    EEPPaymentTime DATETIME,
+    VCC VARCHAR(3),
     Add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -16,7 +16,7 @@ std::mutex db::mutex_;
 
 db::db()
 {
-
+	m_remote_db_err_flag.store(0);
 }
 
 db* db::getInstance()
@@ -60,11 +60,13 @@ int db::connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOu
 		dbss << "Central DB is connected!" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 		operation::getInstance()->tProcess.giSystemOnline = 0;
+		m_remote_db_err_flag.store(0);
 		return 1;
 	}
 	else {
 		dbss << "unable to connect Central DB" ;
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_remote_db_err_flag.store(1);
 		return 0;
 	}
 }
@@ -376,7 +378,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 
 	sqlStmt= "Insert into Entry_Trans_tmp (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
 
-	sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee";
+	sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee,VCC";
 	sqlStmt = sqlStmt + ",gst_amt,entry_lpn_SID";
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpn";
 
@@ -385,6 +387,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType)+"'";
 	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
+	sqlStmt = sqlStmt + "','" + tEntry.VCC;
 	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
 	sqlStmt = sqlStmt + "','" + gsTransID +"'";
 	if (sLPRNo!="") sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
@@ -482,10 +485,12 @@ void db::synccentraltime()
 	{
 		dbss << "Unable to retrieve Central DB time";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+		m_remote_db_err_flag.store(1);
 
 	}
 	else
 	{
+		m_remote_db_err_flag.store(0);
 		if (selResult.size()>0)
 		{
 			dt=selResult[0].GetDataItem(0);
@@ -563,7 +568,7 @@ int db::downloadseason()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if(r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		return ret;
 	}
 	else 
@@ -572,7 +577,7 @@ int db::downloadseason()
 		{
 			return ret;
 		}
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss << "Total: " << std::string (tResult[0].GetDataItem(0)) << " Seasons to be download.";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 	}
@@ -580,12 +585,12 @@ int db::downloadseason()
 	r = centraldb->SQLSelect("SELECT TOP 10 * FROM season_mst WHERE s" + to_string(giStnid) + "_fetched = 0 ", &selResult, true);
 	if(r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -633,7 +638,7 @@ int db::downloadseason()
     			dbss.clear();   // Clear the state of the stream
 				if (r != 0) 
 				{
-					m_remote_db_err_flag = 2;
+					m_remote_db_err_flag.store(2);
 					dbss.str("");  // Set the underlying string to an empty string
     				dbss.clear();   // Clear the state of the stream
 					dbss << "update central season status failed.";
@@ -642,7 +647,7 @@ int db::downloadseason()
 				else 
 				{
 					downloadCount++;
-					m_remote_db_err_flag = 0;
+					m_remote_db_err_flag.store(0);
 					//dbss << "set central season success.";
 					//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 				}
@@ -804,13 +809,13 @@ int db::downloadvehicletype()
 	r = centraldb->SQLSelect(sqlStmt,&tResult,false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1; 
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download vehicle type fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " vehicle type to be download.";
@@ -820,12 +825,12 @@ int db::downloadvehicletype()
 	r = centraldb->SQLSelect("SELECT  * FROM Vehicle_type", &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -983,13 +988,13 @@ int db::downloadledmessage()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download LED message fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " message to be download.";
@@ -999,13 +1004,13 @@ int db::downloadledmessage()
 	r = centraldb->SQLSelect("SELECT  * FROM message_mst WHERE s" + to_string(giStnid) + "_fetched = 0", &selResult, true);
 	if(r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download LED message fail.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1035,7 +1040,7 @@ int db::downloadledmessage()
 				r = centraldb->SQLExecutNoneQuery("UPDATE message_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE msg_id = '" + msg_id + "'");
 				if(r != 0) 
 				{
-					m_remote_db_err_flag = 2;
+					m_remote_db_err_flag.store(2);
 					dbss.str("");  // Set the underlying string to an empty string
     				dbss.clear();   // Clear the state of the stream
 					dbss << "update central message status failed.";
@@ -1044,7 +1049,7 @@ int db::downloadledmessage()
 				else 
 				{
 					downloadCount++;
-					m_remote_db_err_flag = 0;
+					m_remote_db_err_flag.store(0);
 					//printf("update central message success \n");
 				}
 			}
@@ -1174,13 +1179,13 @@ int db::downloadparameter()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download parameter fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " parameter to be download.";
     	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
 	}
@@ -1188,13 +1193,13 @@ int db::downloadparameter()
 	r = centraldb->SQLSelect("SELECT  * FROM parameter_mst WHERE s" + to_string(giStnid) + "_fetched = 0 and for_station=1", &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("update parameter failed.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1223,7 +1228,7 @@ int db::downloadparameter()
 				r = centraldb->SQLExecutNoneQuery("UPDATE parameter_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE name = '" + param_name + "'");
 				if(r != 0) 
 				{
-					m_remote_db_err_flag = 2;
+					m_remote_db_err_flag.store(2);
 					dbss.str("");  // Set the underlying string to an empty string
     				dbss.clear();   // Clear the state of the stream
 					dbss << "update central parameter status failed.";
@@ -1232,7 +1237,7 @@ int db::downloadparameter()
 				else 
 				{
 					downloadCount++;
-					m_remote_db_err_flag = 0;
+					m_remote_db_err_flag.store(0);
 				//	printf("set central parameter success \n");
 				}
 			}			
@@ -1363,13 +1368,13 @@ int db::downloadstationsetup()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download station setup fail.", "DB");
 		return ret;
 	}
 	else 
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");  // Set the underlying string to an empty string
     	dbss.clear();   // Clear the state of the stream
 		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " station setup to be download.";
@@ -1380,13 +1385,13 @@ int db::downloadstationsetup()
 	r = centraldb->SQLSelect("SELECT  * FROM station_setup",&selResult,true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download station setup fail.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1582,13 +1587,13 @@ int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
 		r = centraldb->SQLSelect(sqlStmt, &tResult, true);
 		if (r != 0)
 		{
-			m_remote_db_err_flag = 1;
+			m_remote_db_err_flag.store(1);
 			operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
 			return ret;
 		}
 		else if (tResult.size() == 0)
 		{
-			m_remote_db_err_flag = 0;
+			m_remote_db_err_flag.store(0);
 			operation::getInstance()->writelog("Tariff download already.", "DB");
 			return -3;
 		}
@@ -1626,13 +1631,13 @@ int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -1692,7 +1697,7 @@ int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadTariff fetched=1 failed.", "DB");
         }
     }
@@ -1839,14 +1844,14 @@ int db::downloadtarifftypeinfo()
     r = centraldb->SQLSelect("SELECT * FROM tariff_type_info", &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download tariff_type_info failed.", "DB");
         return ret;
     
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -1948,13 +1953,13 @@ int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("X_Tariff download already.", "DB");
             return -3;
         }
@@ -1980,13 +1985,13 @@ int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2034,7 +2039,7 @@ int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadXTariff fetched=1 failed.", "DB");
         }
     }
@@ -2126,13 +2131,13 @@ int db::downloadholidaymst(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("holiday_mst download already.", "DB");
             return -3;
         }
@@ -2147,13 +2152,13 @@ int db::downloadholidaymst(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2187,7 +2192,7 @@ int db::downloadholidaymst(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadHoliday fetched=1 failed.", "DB");
         }
     }
@@ -2256,13 +2261,13 @@ int db::download3tariffinfo()
     r = localdb->SQLExecutNoneQuery("DELETE FROM 3Tariff_Info");
     if (r != 0)
     {
-        m_local_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Delete 3Tariff_Info from local failed.", "DB");
         return -1;
     }
     else
     {
-        m_local_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int zone_id = operation::getInstance()->gtStation.iZoneID;
@@ -2277,13 +2282,13 @@ int db::download3tariffinfo()
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download 3Tariff_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2390,13 +2395,13 @@ int db::downloadratefreeinfo(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Rate_Free_Info download already.", "DB");
             return -3;
         }
@@ -2426,13 +2431,13 @@ int db::downloadratefreeinfo(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2471,7 +2476,7 @@ int db::downloadratefreeinfo(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadRateFreeInfo fetched = 1 failed.", "DB");
         }
     }
@@ -2551,13 +2556,13 @@ int db::downloadspecialdaymst(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &tResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
             return ret;
         }
         else if (tResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Special_Day_mst download already.", "DB");
             return -3;
         }
@@ -2589,13 +2594,13 @@ int db::downloadspecialdaymst(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2626,7 +2631,7 @@ int db::downloadspecialdaymst(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadSpecialDay fetched=1 failed.", "DB");
         }
     }
@@ -2703,13 +2708,13 @@ int db::downloadratetypeinfo(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &selResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Rate_Type_Info failed.", "DB");
             return ret;
         }
         else if (selResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Rate_Type_Info download already.", "DB");
             return -3;
         }
@@ -2739,13 +2744,13 @@ int db::downloadratetypeinfo(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Donwload Rate_Type_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2786,7 +2791,7 @@ int db::downloadratetypeinfo(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadRateTypeInfo fetched = 1 failed.", "DB");
         }
     }
@@ -2868,13 +2873,13 @@ int db::downloadratemaxinfo(int iCheckStatus)
         r = centraldb->SQLSelect(sqlStmt, &selResult, true);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Download Rate_Max_Info failed.", "DB");
             return ret;
         }
         else if (selResult.size() == 0)
         {
-            m_remote_db_err_flag = 0;
+            m_remote_db_err_flag.store(0);
             operation::getInstance()->writelog("Rate_Max_Info download already.", "DB");
             return -3;
         }
@@ -2904,13 +2909,13 @@ int db::downloadratemaxinfo(int iCheckStatus)
     r = centraldb->SQLSelect(sqlStmt, &selResult, true);
     if (r != 0)
     {
-        m_remote_db_err_flag = 1;
+        m_remote_db_err_flag.store(1);
         operation::getInstance()->writelog("Donwload Rate_Max_Info failed.", "DB");
         return ret;
     }
     else
     {
-        m_remote_db_err_flag = 0;
+        m_remote_db_err_flag.store(0);
     }
 
     int downloadCount = 0;
@@ -2948,7 +2953,7 @@ int db::downloadratemaxinfo(int iCheckStatus)
         r = centraldb->SQLExecutNoneQuery(sqlStmt);
         if (r != 0)
         {
-            m_remote_db_err_flag = 1;
+            m_remote_db_err_flag.store(1);
             operation::getInstance()->writelog("Set DownloadRateMaxInfo fetched = 1 failed.", "DB");
         }
     }
@@ -3091,13 +3096,13 @@ int db::downloadTR()
 	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download TR fail.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 		dbss.str("");
 		dbss.clear();
 		dbss << "Total " << std::string(tResult[0].GetDataItem(0)) << " TR type to be download.";
@@ -3111,13 +3116,13 @@ int db::downloadTR()
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		operation::getInstance()->writelog("download TR faile.", "DB");
 		return ret;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	int downloadCount = 0;
@@ -3143,7 +3148,7 @@ int db::downloadTR()
 			if (w == 0)
 			{
 				downloadCount++;
-				m_remote_db_err_flag = 0;
+				m_remote_db_err_flag.store(0);
 			}
 		}
 		dbss.str("");
@@ -3662,7 +3667,8 @@ DBError db::loadParam()
 
 					if (readerItem.GetDataItem(0) == "GSTRate")
 					{
-						operation::getInstance()->tParas.gfGSTRate = std::stof(readerItem.GetDataItem(1));
+						operation::getInstance()->tParas.gfGSTRate = std::stof(readerItem.GetDataItem(1))/100.00f;
+						if (operation::getInstance()->tParas.gfGSTRate == 0)  operation::getInstance()->tParas.gfGSTRate = 0.09;
 					}
 
 					if (readerItem.GetDataItem(0) == "CHUCnTO")
@@ -3742,7 +3748,7 @@ DBError db::loadparamfromCentral()
 		operation::getInstance()->writelog ("Load Site ID: " + std::to_string(operation:: getInstance()->tParas.giSite), "DB");
 	}
 	
-	r = centraldb->SQLSelect("SELECT entry_station FROM counter_definition where zone_id = " + to_string(operation::getInstance()->gtStation.iZoneID) , &tResult, true);
+	r = centraldb->SQLSelect("SELECT entry_station,total_lots FROM counter_definition where zone_id = " + to_string(operation::getInstance()->gtStation.iZoneID) , &tResult, true);
 	if (r != 0)
 	{
 		return iCentralFail;
@@ -3752,15 +3758,17 @@ DBError db::loadparamfromCentral()
 	{
 		operation::getInstance()->tParas.gsZoneEntries = "," + tResult[0].GetDataItem(0) + ",";
 		operation::getInstance()->writelog ("Load zone for entry: " + operation:: getInstance()->tParas.gsZoneEntries, "DB");
+		operation::getInstance()->gtStation.iZoneLots = std::stoi(tResult[0].GetDataItem(1));
+		operation::getInstance()->writelog ("Load Zone Total lots: " + std::to_string(operation:: getInstance()->gtStation.iZoneLots), "DB");
 	}
 
-	r = centraldb->SQLSelect("SELECT Max(receipt_no) FROM exit_trans where station_id  = " + to_string(operation::getInstance()->gtStation.iSID) , &tResult, true);
+	r = centraldb->SQLSelect("SELECT MAX(receipt_no) FROM exit_trans where station_id  = " + to_string(operation::getInstance()->gtStation.iSID) + " and receipt_no <> '' " , &tResult, true);
 	if (r != 0)
 	{
 		return iCentralFail;
 	}
 
-	if (tResult.size()>0)
+	if (tResult.size() > 0 && std::string(tResult[0].GetDataItem(0)) != "" && std::string(tResult[0].GetDataItem(0)) != "NULL" )
 	{
 		int l; 
 		string A;
@@ -3772,7 +3780,7 @@ DBError db::loadparamfromCentral()
 		operation::getInstance()->writelog ("Load Last Receipt No: " + A, "DB");
 		try
 		{
-			operation::getInstance()->tProcess.glLastSerialNo = std::stol(A);
+		    operation::getInstance()->tProcess.glLastSerialNo = std::stol(A);
 		}
 		catch (const std::exception& e)
 		{
@@ -3780,6 +3788,9 @@ DBError db::loadparamfromCentral()
 		}
 	
 		return iDBSuccess;
+	} else
+	{
+		operation::getInstance()->writelog ("Load Last Receipt No: NULL", "DB");
 	}
 
 	return iNoData;
@@ -4736,7 +4747,7 @@ DBError db::loadExitLcdAndLedMessage(std::vector<ReaderItem>& selResult)
 				{
 					operation::getInstance()->tExitMsg.MsgExit_CompExpired[0] = readerItem.GetDataItem(1);
 					operation::getInstance()->tExitMsg.MsgExit_CompExpired[1] = readerItem.GetDataItem(1);
-				}
+				}  
 
 				// Update LCD Message
 				if (readerItem.GetDataItem(0) == "CCompExpired")
@@ -5681,7 +5692,7 @@ void db::moveOfflineTransToCentral()
 			sqlStmt=sqlStmt + ",Card_Type";
 			sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
 			sqlStmt=sqlStmt +  ",gst_amt";
-			sqlStmt = sqlStmt + ",lpn";
+			sqlStmt = sqlStmt + ",lpn,VCC";
 			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Entry_Time desc";
 		}
 		else if(operation::getInstance()->gtStation.iType==tiExit)
@@ -5695,7 +5706,7 @@ void db::moveOfflineTransToCentral()
 			sqlStmt=sqlStmt + "parked_time,Parking_Fee,Paid_Amt,Receipt_No,";
 			sqlStmt=sqlStmt + "Redeem_amt,Redeem_time,Redeem_no";
 			sqlStmt=sqlStmt +  ",gst_amt,chu_debit_code,Card_Type,Top_Up_Amt";
-			sqlStmt = sqlStmt + ",lpn,Entry_ID, entry_time";
+			sqlStmt = sqlStmt + ",lpn,Entry_ID, entry_time,VCC,EEPDSerialNo,EEPTransRoute,EEPPaymentResult,EEPPaymentTime";
 			
 			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Exit_Time desc";
 		}
@@ -5722,6 +5733,7 @@ void db::moveOfflineTransToCentral()
 					ter.sFee=std::stof(selResult[j].GetDataItem(9));
 					ter.sGSTAmt=std::stof(selResult[j].GetDataItem(10));
 					ter.sLPN[0] = selResult[j].GetDataItem(11);
+					ter.VCC = selResult[j].GetDataItem(12);
 					
 					s=insertTransToCentralEntryTransTmp(ter);
 				}
@@ -5744,9 +5756,16 @@ void db::moveOfflineTransToCentral()
 					tex.sCHUDebitCode=selResult[j].GetDataItem(14);
 					tex.iCardType=std::stoi(selResult[j].GetDataItem(15));
 					tex.sTopupAmt=std::stof(selResult[j].GetDataItem(16));
-					tex.lpn = selResult[j].GetDataItem(17);
+					tex.sLPN[0] = selResult[j].GetDataItem(17);
 					tex.iEntryID = std::stoi(selResult[j].GetDataItem(18));
-					tex.sEntryTime = selResult[j].GetDataItem(19);
+					if (tex.iEntryID < 1) tex.sEntryTime = "";
+					else tex.sEntryTime = selResult[j].GetDataItem(19);
+					//------------
+					tex.VCC = selResult[j].GetDataItem(20);
+					tex.sDSerialNo = selResult[j].GetDataItem(21);
+					tex.iEEPTransRoute = std::stoi(selResult[j].GetDataItem(22));
+					tex.iEEPPaymentResult = std::stoi(selResult[j].GetDataItem(23));
+					tex.sEEPpaymentTime = selResult[j].GetDataItem(24);
 					
 					s=insertTransToCentralExitTransTmp(tex);
 					
@@ -5761,7 +5780,7 @@ void db::moveOfflineTransToCentral()
 						d=deleteLocalTrans (ter.sIUTKNo,ter.sEntryTime,ctrl);
 					}
 					else{
-						s1=DeleteBeforeInsertMT(tex);
+						s1=DeleteBeforeInsertMT(tex);     //cater for offline entry record but already exit, 20260629
 						s1=insert2movementtrans(tex);
 						d=deleteLocalTrans (tex.sIUNo,tex.sExitTime,ctrl);
 					}
@@ -5770,9 +5789,9 @@ void db::moveOfflineTransToCentral()
 
 
 					//-----------------------
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				}
-				else m_remote_db_err_flag=1;        
+				else m_remote_db_err_flag.store(1);   
 			}
 			operation::getInstance()->writelog("uploading trans Records: End","DB");
 		}       
@@ -5800,13 +5819,14 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 
 	// insert into Central trans tmp table
 	sqstr="INSERT INTO " + tbName +" (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
-	sqstr=sqstr + ",card_no,paid_amt,parking_fee";        
+	sqstr=sqstr + ",card_no,paid_amt,parking_fee,VCC";        
 	sqstr=sqstr + ",gst_amt,lpn";
 	sqstr=sqstr + ") Values ('" + ter.esid+ "',convert(datetime,'" + ter.sEntryTime+ "',120),'" + ter.sIUTKNo;
 	sqstr = sqstr +  "','" + std::to_string(ter.iTransType);
 	sqstr = sqstr + "','" + std::to_string(ter.iStatus) + "','" + ter.sSerialNo;
 	sqstr = sqstr + "','" + std::to_string(ter.iCardType);
 	sqstr = sqstr + "','" + ter.sCardNo + "','" + std::to_string(ter.sPaidAmt) + "','" + std::to_string(ter.sFee);
+	sqstr = sqstr + "','" + ter.VCC;
 	sqstr = sqstr + "','" + std::to_string(ter.sGSTAmt)+"','"+ter.sLPN[0]+"'";
 	sqstr = sqstr +  ")";
 
@@ -5818,8 +5838,8 @@ int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
 	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Fail","DB");
 
 
-	if(r!=0) m_remote_db_err_flag=1;
-	else m_remote_db_err_flag=0;
+	if(r!=0) m_remote_db_err_flag.store(1);
+	else m_remote_db_err_flag.store(0);
 
 	return r;
 }
@@ -5841,6 +5861,7 @@ int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex)
 	sqstr="INSERT INTO " + tbName +" (Station_ID,Exit_Time,IU_Tk_No,card_mc_no,trans_type,parked_time,parking_fee,paid_amt,receipt_no,status";
 	sqstr=sqstr + ",redeem_amt,redeem_time,redeem_no";        
 	sqstr=sqstr + ",gst_amt,chu_debit_code,card_type,top_up_amt";
+	sqstr=sqstr + ",lpn,VCC,EEPDSerialNo,EEPTransRoute,EEPPaymentResult,EEPPaymentTime";
 	sqstr=sqstr + ") Values ('" + tex.xsid+ "',convert(datetime,'" + tex.sExitTime+ "',120),'" + tex.sIUNo;
 	sqstr = sqstr +  "','" +tex.sCardNo+  "','" +std::to_string(tex.iTransType);
 	sqstr = sqstr +  "','" +std::to_string(tex.lParkedTime) + "','"+ std::to_string(tex.sFee);
@@ -5848,6 +5869,12 @@ int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex)
 	sqstr = sqstr +  "','" +std::to_string(tex.sRedeemAmt) + "','"+std::to_string(tex.iRedeemTime) + "','"+tex.sRedeemNo;
 	sqstr = sqstr +  "','" +std::to_string(tex.sGSTAmt) + "','"+tex.sCHUDebitCode + "','"+std::to_string(tex.iCardType);
 	sqstr = sqstr +  "','" +std::to_string(tex.sTopupAmt)+"'";
+	sqstr = sqstr +  ",'" +tex.sLPN[0]+"'";
+	sqstr = sqstr +  ",'" +tex.VCC+"'";
+	sqstr = sqstr +  ",'" +tex.sDSerialNo+"'";
+	sqstr = sqstr +  ",'" +std::to_string(tex.iEEPTransRoute);
+	sqstr = sqstr +  "','"+ std::to_string(tex.iEEPPaymentResult);
+	sqstr = sqstr +  "',convert(datetime,'" + tex.sEEPpaymentTime+ "',120)";
 	sqstr = sqstr +  ")";
 
 	r = centraldb->SQLExecutNoneQuery(sqstr);
@@ -5856,8 +5883,8 @@ int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex)
 	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " +  tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName  +" : Fail","DB");
 
 
-	if(r!=0) m_remote_db_err_flag=1;
-	else m_remote_db_err_flag=0;
+	if(r!=0) m_remote_db_err_flag.store(1);
+	else m_remote_db_err_flag.store(0);
 
 	return r;
 }
@@ -5991,16 +6018,16 @@ int db::AddRemoteControl(string sTID,string sAction, string sRemarks)
 	
 	if (r==0) {
 		operation::getInstance()->writelog("Success insert: " + sAction,"DB");
-		m_remote_db_err_flag=0;
+		m_remote_db_err_flag.store(0);
 	}
 	else {
 		operation::getInstance()->writelog("fail to insert: " + sAction,"DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return r;
 }
 
-int db::AddSysEvent(string sEvent) 
+int db::AddSysEvent(string sEvent,int iEventType, string sOccurTime) 
 {
 
 	int r=0;
@@ -6009,23 +6036,84 @@ int db::AddSysEvent(string sEvent)
 	string tbName="";
 	tbName="sys_event_log";
 	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
+
+	if (sOccurTime.empty())
+	{
+		sOccurTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+	}
 	
 	// insert into Central trans tmp table
-	sqstr="Insert into sys_event_log (station_id,event)";
-	sqstr=sqstr + " Values ('" + giStationID + "','" + sEvent + "')";
+	if (iEventType > 0) {
+		sqstr="Insert into sys_event_log (station_id,event,event_type,event_time)";
+		sqstr=sqstr + " Values ('" + giStationID + "','" + sEvent + "'," + std::to_string(iEventType) + ",'" + sOccurTime + "')" ;
+
+	}else{
+		sqstr="Insert into sys_event_log (station_id,event)";
+		sqstr=sqstr + " Values ('" + giStationID + "','" + sEvent + "')";
+	}
 	
 	r = centraldb->SQLExecutNoneQuery(sqstr);
 
 	
 	if (r==0) {
 		operation::getInstance()->writelog("Success insert sys event log: " + sEvent,"DB");
-		m_remote_db_err_flag=0;
+		m_remote_db_err_flag.store(0);
 	}
 	else {
 		operation::getInstance()->writelog("fail to insert sys event log: " + sEvent,"DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return r;
+}
+
+int db::UpdateSysEvent(string sEvent,int iEventType, string sOccurTime) 
+{
+	int r=0;
+	string sqstr="";
+	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
+
+	// insert into Central trans tmp table
+
+	sqstr = "UPDATE sys_event_log set recoved_time = '"+ sOccurTime + "' WHERE station_id = "+ giStationID ;
+	sqstr = sqstr +  " and event_type = " + std::to_string(iEventType) + " and recoved_time  is NULL";
+	
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	if (r==0) 
+	{
+		if (centraldb->NumberOfRowsAffected > 0){
+			operation::getInstance()->writelog("Success update recoved time","DB");
+		}else
+		{
+			operation::getInstance()->writelog("No event for update recoved time","DB");
+			
+		}
+	}
+	else {
+		operation::getInstance()->writelog("fail to update event recoved time","DB");
+		m_remote_db_err_flag.store(1);
+		
+	}
+	return r;
+}
+
+bool db::HasAlertNotification()
+{
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> tResult;
+
+	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
+
+	sqlStmt = "SELECT * from sys_event_log where recoved_time is NULL and station_id = " + giStationID ;
+	
+	r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+	//------
+	if (r != 0) return true;
+
+	if (tResult.size()>0) return true;
+
+	return false;
 }
 
 int db::FnGetDatabaseErrorFlag()
@@ -6089,7 +6177,6 @@ int db::HouseKeeping()
 		} 
 
 	}
-
 	return 0;
 }
 
@@ -6143,18 +6230,18 @@ int db::updateEntryTrans(string lpn, string sTransID)
 				if (centraldb->NumberOfRowsAffected > 0)
 				{
 					operation::getInstance()->writelog("Success update LPR to Entry_Trans","DB");
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				} else operation::getInstance()->writelog("No TransID for update","DB");
 			} else
 			{
 			operation::getInstance()->writelog("fail to update LPR to Entry_trans","DB");
-		 	m_remote_db_err_flag=1;
+		 	m_remote_db_err_flag.store(1);
 			}
 		}
 	}
 	else {
 		operation::getInstance()->writelog("fail to update LPR to Entry_trans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 		
 	}
 	return r;
@@ -6185,18 +6272,18 @@ int db::updateExitTrans(string lpn, string sTransID)
 				if (centraldb->NumberOfRowsAffected > 0)
 				{
 					operation::getInstance()->writelog("Success update LPR to Exit_Trans","DB");
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				} else operation::getInstance()->writelog("No TransID for update","DB");
 			} else
 			{
 			operation::getInstance()->writelog("fail to update LPR to Exit_trans","DB");
-		 	m_remote_db_err_flag=1;
+		 	m_remote_db_err_flag.store(1);
 			}
 		}
 	}
 	else {
 		operation::getInstance()->writelog("fail to update LPR to Exit_trans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 		
 	}
 	return r;
@@ -6239,6 +6326,10 @@ DBError db::insertexittrans(tExitTrans_Struct& tExit)
     sqlStmt = "INSERT INTO exit_trans_tmp (station_id, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
     sqlStmt = sqlStmt + ", parking_fee, paid_amt, receipt_no, status, redeem_amt, redeem_time, redeem_no";
     sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, card_type, top_up_amt, uposbatchno, feefrom, lpn, exit_lpn_SID";
+	sqlStmt = sqlStmt + ", EEPDSerialNo, EEPTransRoute, EEPPaymentResult,VCC";
+	//------
+	if (tExit.iEEPPaymentResult == 1 || tExit.iEEPPaymentResult ==2 ) sqlStmt = sqlStmt + ", EEPPaymentTime";
+	//------
     sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
     sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
     sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
@@ -6260,6 +6351,13 @@ DBError db::insertexittrans(tExitTrans_Struct& tExit)
     sqlStmt = sqlStmt + ", '" + tExit.feefrom + "'";
     sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
 	sqlStmt = sqlStmt + ", '" + gsTransID + "'";
+	sqlStmt = sqlStmt + ", '" + tExit.sDSerialNo+ "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iEEPTransRoute);
+	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEEPPaymentResult);
+	sqlStmt = sqlStmt + ",'" + tExit.VCC + "'";
+	//------
+	if (tExit.iEEPPaymentResult == 1 || tExit.iEEPPaymentResult == 2) sqlStmt = sqlStmt + ", '" + tExit.sEEPpaymentTime + "'";
+	//------
     sqlStmt = sqlStmt + ")";
 
     r = centraldb->SQLExecutNoneQuery(sqlStmt);
@@ -6293,6 +6391,7 @@ processLocal:
     sqlStmt = "INSERT INTO Exit_Trans (Station_ID, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
     sqlStmt = sqlStmt + ", Parking_Fee, Paid_Amt, Receipt_No, Status, Redeem_amt, Redeem_time, Redeem_no";
     sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn, Entry_ID,entry_time, exit_lpn_SID";
+	sqlStmt = sqlStmt + ", EEPDSerialNo, EEPTransRoute, EEPPaymentResult, EEPPaymentTime, VCC";
     sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
     sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
     sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
@@ -6316,6 +6415,11 @@ processLocal:
 	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEntryID) ;
 	sqlStmt = sqlStmt + ", '" + tExit.sEntryTime + "'";
 	sqlStmt = sqlStmt + ", '" + gsTransID + "'";
+	sqlStmt = sqlStmt + ", '" + tExit.sDSerialNo+ "'";
+    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iEEPTransRoute);
+	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEEPPaymentResult);
+	sqlStmt = sqlStmt + ", '" + tExit.sEEPpaymentTime + "'";
+	sqlStmt = sqlStmt + ", '" + tExit.VCC + "'";
     sqlStmt = sqlStmt + ")";
 
     r = localdb->SQLExecutNoneQuery(sqlStmt);
@@ -6358,18 +6462,18 @@ int db::updateExitReceiptNo(string sReceiptNo, string StnID)
 				if (centraldb->NumberOfRowsAffected > 0)
 				{
 					operation::getInstance()->writelog("Success update Receipt No to Exit_Trans","DB");
-					m_remote_db_err_flag=0;
+					m_remote_db_err_flag.store(0);
 				} else operation::getInstance()->writelog("No Receipt for update","DB");
 			} else
 			{
 			operation::getInstance()->writelog("fail to update Receipt to Exit_trans","DB");
-		 	m_remote_db_err_flag=1;
+		 	m_remote_db_err_flag.store(1);
 			}
 		}
 	}
 	else {
 		operation::getInstance()->writelog("fail to update Receipt to Exit_trans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 		
 	}
 	return r;
@@ -6711,10 +6815,10 @@ float db::HasPaidWithinPeriod(string sTimeFrom, string sTimeTo)
 	
 	if(r!=0) 
 	{
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 		goto processLocal;
 	}
-	else m_remote_db_err_flag=0;
+	else m_remote_db_err_flag.store(0);
 
 	if (selResult.size()>0)
 	{
@@ -7769,12 +7873,12 @@ int db::FetchEntryinfo(string sIUNo)
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		goto processLocal;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	if (selResult.size()>0)
@@ -7789,7 +7893,6 @@ int db::FetchEntryinfo(string sIUNo)
 	else{
 		//no record
 		operation::getInstance()->writelog("No Entry record in Central DB.", "DB");
-		return 3;
 	}
 	
 processLocal:
@@ -7909,20 +8012,33 @@ DBError db::updatemovementtrans(tExitTrans_Struct& tExit)
 	sqstr= sqstr + " Card_Type = '" + std::to_string(tExit.iCardType) + "',";
 	sqstr= sqstr + " top_up_amt = '" + std::to_string(tExit.sTopupAmt) + "', ";
 	sqstr= sqstr + " update_dt = '" + gsUpdateTime + "'";
-	sqstr= sqstr + "where iu_tk_no = '" + tExit.sIUNo + "' and entry_time = '"+ tExit.sEntryTime + "' and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0" ;
+	if (tExit.sEntryTime == tExit.sExitTime)    // CHU or EEP late trans case
+	{
+		sqstr= sqstr + "where iu_tk_no = '" + tExit.sIUNo + "' and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0" ;
+	}else
+	{
+		sqstr= sqstr + "where iu_tk_no = '" + tExit.sIUNo + "' and entry_time = '"+ tExit.sEntryTime + "' and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0" ;
+	}
+
 	//------
-	//operation::getInstance()->writelog(sqstr,"DB");
+//	operation::getInstance()->writelog(sqstr,"DB");
 	//-----
 	r = centraldb->SQLExecutNoneQuery(sqstr);
 
 	if (r==0) 
 	{
-		operation::getInstance()->writelog("Success matching MovementTrans_Tmp","DB");
+		if (centraldb->NumberOfRowsAffected > 0) {
+			operation::getInstance()->writelog("Success matching MovementTrans_Tmp","DB");
+		}
+		else {
+			operation::getInstance()->writelog("No matching MovementTrans_Tmp to update","DB");
+			insert2movementtrans(tExit);
+		}
 		return iCentralSuccess;
 	}
 	else {
 		operation::getInstance()->writelog("fail to match Movementtrans_Tmp","DB");
-		 m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -7963,6 +8079,8 @@ DBError db::insert2movementtrans(tExitTrans_Struct& tExit)
 
 	//std::cout << __func__ << " : " << sqstr << std::endl;
 
+	//operation::getInstance()->writelog(sqstr, "DB");
+
 	r = centraldb->SQLExecutNoneQuery(sqstr);
 	if (r == 0) 
 	{
@@ -7971,7 +8089,7 @@ DBError db::insert2movementtrans(tExitTrans_Struct& tExit)
 	}
 	else {
 		operation::getInstance()->writelog("fail to insert into movement_trans_tmp", "DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -7986,24 +8104,24 @@ int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket
 
 	if (isRedemptionTicket == true)
 	{
-		sqlStmt = "SELECT Valid_from, Valid_to, redeem_dt, redeem_amt, redeem_time from Redemption WHERE redeem_no='" + sBarcodeTicket + "'";
+		sqlStmt = "SELECT Valid_from, Valid_to, redeem_dt, redeem_amt, redeem_time from Redemption_view WHERE redeem_no='" + sBarcodeTicket + "'";
 	}
 	else
 	{
-		sqlStmt = "SELECT Valid_from, Valid_to, exit_time FROM Complimentary WHERE complimentary_no='" + sBarcodeTicket + "'";
+		sqlStmt = "SELECT Valid_from, Valid_to, exit_time FROM Complimentary_view WHERE complimentary_no='" + sBarcodeTicket + "'";
 	}
 
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
-		m_remote_db_err_flag = 1;
+		m_remote_db_err_flag.store(1);
 		// DB Error
 		iRet = -1;
 		return iRet;
 	}
 	else
 	{
-		m_remote_db_err_flag = 0;
+		m_remote_db_err_flag.store(0);
 	}
 
 	if (selResult.size() > 0)
@@ -8085,7 +8203,7 @@ DBError db::update99PaymentTrans()
 	else
 	{
 		operation::getInstance()->writelog("Failed to updated 99 Trans for EZPay/VCC","DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -8107,7 +8225,7 @@ DBError db::insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, c
 	else
 	{
 		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -8129,7 +8247,7 @@ DBError db::insertUPTFileSummary(const std::string& sSettleDate, const std::stri
 	else
 	{
 		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
-		m_remote_db_err_flag=1;
+		m_remote_db_err_flag.store(1);
 	}
 	return iCentralFail;
 }
@@ -8151,3 +8269,267 @@ DBError db::DeleteBeforeInsertMT(tExitTrans_Struct& tExit)
 	
 }
 
+int db::UpdateEEPExitTrans(string OBU, string sDSerialNo,string sCardNo,float sfee, float sTopupAmt,int TransRoute,int Result) 
+{
+
+	int r=0;
+	string sqstr="";
+	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
+	string sGSTAmt = std::to_string(sfee * operation::getInstance()->tParas.gfGSTRate / (1 + operation::getInstance()->tParas.gfGSTRate));
+	// upate central exit trans tmp table
+	sqstr="UPDATE Exit_trans_tmp set paid_amt = "+ std::to_string(sfee);
+	sqstr = sqstr + ",card_mc_no = '" + sCardNo + "'";
+	sqstr = sqstr + ",EEPTransRoute = " + std::to_string(TransRoute);
+	sqstr = sqstr + ",EEPPaymentResult = " + std::to_string(Result);
+	sqstr = sqstr + ",Top_up_amt = " + std::to_string(sTopupAmt);
+	sqstr = sqstr + ",Gst_amt = " + sGSTAmt;
+	//----------
+	sqstr = sqstr +  " where EEPDSerialNo = '"+ sDSerialNo + "' and iu_tk_no = '" + OBU + "' and Station_id = " + giStationID;
+	sqstr = sqstr +  " and EEPPaymentResult != 1 and EEPPaymentResult ! = 2";
+	
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	if (r==0) 
+	{
+		if (centraldb->NumberOfRowsAffected > 0){
+			operation::getInstance()->writelog("Success update EEP Trans to Exit_Trans_Tmp","DB");
+		}else
+		{
+			sqstr="UPDATE Exit_trans set paid_amt = "+ std::to_string(sfee);
+			sqstr = sqstr + ",card_mc_no = '" + sCardNo + "'";
+			sqstr = sqstr + ",EEPTransRoute = " + std::to_string(TransRoute);
+			sqstr = sqstr + ",EEPPaymentResult = " + std::to_string(Result);
+			sqstr = sqstr + ",Top_up_amt = " + std::to_string(sTopupAmt);
+			sqstr = sqstr + ",Gst_amt = " + sGSTAmt;
+			//----------
+			sqstr = sqstr +  " where EEPDSerialNo = '"+ sDSerialNo + "' and iu_tk_no = '" + OBU + "' and Station_id = " + giStationID;
+			sqstr = sqstr +  " and EEPPaymentResult != 1 and EEPPaymentResult ! = 2";
+			
+			r = centraldb->SQLExecutNoneQuery(sqstr);
+
+			if (r==0) {
+				if (centraldb->NumberOfRowsAffected > 0)
+				{
+					operation::getInstance()->writelog("Success update EEP Trans to Exit_Trans","DB");
+					m_remote_db_err_flag.store(0);
+				} else operation::getInstance()->writelog("No TransID for update EEP Trans","DB");
+			} else
+			{
+			operation::getInstance()->writelog("fail to update EEP Trans to Exit_trans","DB");
+		 	m_remote_db_err_flag.store(1);
+			}
+		}
+	}
+	else {
+		operation::getInstance()->writelog("fail to update EEP trans to Exit_trans_Tmp","DB");
+		m_remote_db_err_flag.store(1);
+		
+	}
+	return r;
+}
+
+int db::HasValidTicket(std::string sIUNo, std::string sLPN)
+{
+	// Valid
+	int iRet = 0;
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	sqlStmt = "SELECT complimentary_no from complimentary WHERE valid_from <= getdate() AND valid_to >= getdate() AND "; 
+	
+	if (sIUNo != "") {
+		sqlStmt = sqlStmt + "IU = '" + sIUNo + "' and exit_time is null order by valid_to" ;
+	} else{
+		sqlStmt = sqlStmt + "LPN = '" + sLPN + "' and exit_time is null order by valid_to" ;
+	}
+	//operation::getInstance()->writelog(sqlStmt,"DB");
+
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag.store(1);
+		// DB Error
+		iRet = -1;
+		return iRet;
+	}
+	else
+	{
+		m_remote_db_err_flag.store(0);
+		if (selResult.size() > 0)
+		{
+			operation::getInstance()->tExit.iTransType = 10;
+			operation::getInstance()->tExit.sPaidAmt = 0;
+			operation::getInstance()->tExit.sCardNo = selResult[0].GetDataItem(0);
+			operation::getInstance()->writelog("Complimentary Ticket: " + selResult[0].GetDataItem(0),"DB");
+		}
+		else
+		{
+			sqlStmt = "SELECT redeem_no,redeem_amt,redeem_time from redemption WHERE valid_from <= getdate() AND valid_to >= getdate() AND "; 
+	
+			if (sIUNo != "") {
+				sqlStmt = sqlStmt + "IU = '" + sIUNo + "' and exit_time is null order by valid_to" ;
+			} else{
+				sqlStmt = sqlStmt + "LPN = '" + sLPN + "' and exit_time is null order by valid_to" ;
+			}
+			//operation::getInstance()->writelog(sqlStmt,"DB");
+
+			r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+			if (r != 0)
+			{
+				m_remote_db_err_flag.store(1);
+				// DB Error
+				iRet = -1;
+				return iRet;
+			}
+			else
+			{
+				m_remote_db_err_flag.store(0);
+				if (selResult.size() > 0) {
+					operation::getInstance()->tExit.sRedeemNo = selResult[0].GetDataItem(0);
+					operation::getInstance()->tExit.sRedeemAmt = std::stod(selResult[0].GetDataItem(1));
+					operation::getInstance()->tExit.iRedeemTime = std::stoi(selResult[0].GetDataItem(2));
+					//----------
+					operation::getInstance()->writelog("Redemption Ticket: " + selResult[0].GetDataItem(0),"DB");
+					if (operation::getInstance()->tExit.sRedeemAmt >= 0.01){
+						operation::getInstance()->writelog("Redemption Amt: "+ Common::getInstance()->SetFeeFormat(operation::getInstance()->tExit.sRedeemAmt) ,"DB");
+					}else{
+						operation::getInstance()->writelog("Redemption time: "+ std::to_string(operation::getInstance()->tExit.iRedeemTime),"DB");
+					}
+				}else
+				{
+					iRet = -1;
+				}
+			}
+		}
+	}		
+	return iRet;
+}
+
+DBError db::updateUsedTicket(tExitTrans_Struct& tExit) 
+{
+	int r=0;
+	string sqstr="";
+	//------ added on 31/07/2026
+	if (tExit.iUsedTicketBy == 0) tExit.iUsedTicketBy = 1;
+	//-------
+	if (operation::getInstance()->tExit.iTransType == 10 )
+	{
+		sqstr="UPDATE complimentary set used_by = "+ std::to_string(tExit.iUsedTicketBy) + ",";
+		sqstr= sqstr + " exit_station = '" + tExit.xsid + "',";
+		sqstr= sqstr + " exit_time = '" + tExit.sExitTime + "',";
+		sqstr= sqstr + " parking_fee = '" + std::to_string(tExit.sFee) + "',";
+		sqstr= sqstr + " Parked_time = '" + std::to_string(tExit.lParkedTime) + "',";
+		sqstr= sqstr + " iu_tk_no = '" + tExit.sIUNo + "'";
+		sqstr=sqstr + " WHERE complimentary_no = '"+ tExit.sCardNo + "'";
+	} 
+	else 
+	{
+		sqstr="UPDATE redemption set used_by = "+ std::to_string(tExit.iUsedTicketBy) + "," ;
+		sqstr= sqstr + " exit_station = '" + tExit.xsid + "',";
+		sqstr= sqstr + " exit_time = '" + tExit.sExitTime + "',";
+		sqstr= sqstr + " parking_fee = '" + std::to_string(tExit.sFee) + "',";
+		sqstr= sqstr + " Parked_time = '" + std::to_string(tExit.lParkedTime) + "',";
+		sqstr= sqstr + " iu_tk_no = '" + tExit.sIUNo + "'";
+		sqstr= sqstr + " WHERE redeem_no = '" + tExit.sRedeemNo + "'";
+	}
+	
+	r = centraldb->SQLExecutNoneQuery(sqstr);
+
+	if (r==0) 
+	{
+		operation::getInstance()->writelog("Update Used Ticket: " + std::to_string( operation::getInstance()->tExit.iUsedTicketBy),"DB");
+		m_remote_db_err_flag.store(0);
+		
+		return iCentralSuccess;
+		
+	}
+	else {
+		operation::getInstance()->writelog("fail to update used ticket.","DB");
+		m_remote_db_err_flag.store(1);
+		
+		return iCentralFail;;
+		
+	}
+}
+
+int db::GetSeasonHolder(std::string sIUNo)
+{
+	// Valid
+	int iRet = 0;
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	sqlStmt = "SELECT Holder_Type from season_mst WHERE season_no = '" + sIUNo+ "'"; 
+	
+	//operation::getInstance()->writelog(sqlStmt,"DB");
+
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag.store(1);
+		// DB Error
+		iRet = -1;
+		return iRet;
+	}
+	else
+	{
+		m_remote_db_err_flag.store(0);
+		
+		if (selResult.size() > 0) iRet = std::stoi(selResult[0].GetDataItem(0));
+	}
+	return iRet;
+}
+
+int db::HasEZpay(std::string sIUNo)
+{
+	// Valid
+	int iRet = 0;
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	sqlStmt = "SELECT * from tblIUList_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no =' " + sIUNo + "'"; 
+	
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag.store(1);
+		// DB Error
+		iRet = -1;
+		
+	}
+	else
+	{
+		m_remote_db_err_flag.store(0);
+		iRet = 1;
+	}
+	return iRet;
+}
+
+int db::HasAXS(std::string sIUNo)
+{
+	// Valid
+	int iRet = 0;
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	sqlStmt = "SELECT * from tblwhitelist_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no =' " + sIUNo + "'"; 
+	
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag.store(1);
+		// DB Error
+		iRet = -1;
+		
+	}
+	else
+	{
+		m_remote_db_err_flag.store(0);
+		iRet = 1;
+	}
+	return iRet;
+}

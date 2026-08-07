@@ -61,8 +61,8 @@ void IniParser::FnReadIniFile()
         RemoteUDPPort_                  = pt.get<std::string>("setting.RemoteUDPPort", "");
         SeasonOnly_                     = pt.get<std::string>("setting.SeasonOnly", "");
         NotAllowHourly_                 = pt.get<std::string>("setting.NotAllowHourly", "");
-        LPRIP4Front_                    = pt.get<std::string>("setting.LPRIP4Front", "");
-        LPRIP4Rear_                     = pt.get<std::string>("setting.LPRIP4Rear", "");
+        LPRIP4Front_                    = pt.get<std::string>("setting.LPRIP4Front", "1.1.1.1");
+        LPRIP4Rear_                     = pt.get<std::string>("setting.LPRIP4Rear", "1.1.1.1");
         LPRPort_                        = pt.get<std::string>("setting.LPRPort", "");
         WaitLPRNoTime_                  = pt.get<std::string>("setting.WaitLPRNoTime", "");
         LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");

@@ -98,4 +98,7 @@ private:
     // EEP Client Event Handler
     bool handleEEPClientResponse(const BaseEvent* event);
     bool handleEEPClientConnectionState(const BaseEvent* event);
+    // CHU Client Event Handler
+    bool handleCHUReceived(const BaseEvent* event);
+    bool handleCHUClientConnectionState(const BaseEvent* event);
 };

@@ -731,6 +731,8 @@ public:
     std::string getFieldEncodingTypeString(uint8_t fieldEncoding);
     std::string getFieldIDString(uint16_t fieldID);
 
+     int UOPSCard_In;
+
     /**
      * Singleton Upt should not be cloneable.
      */

@@ -49,6 +49,7 @@ set(SOURCE_FILES
     lcd.cpp
     led.cpp
     antenna.cpp
+    shutdown_manager.cpp
     event_manager.cpp
     event_handler.cpp
     lcsc.cpp
@@ -65,6 +66,7 @@ set(SOURCE_FILES
     printer.cpp
     barcode_reader.cpp
     eep_client.cpp
+    chu_client.cpp
     main.cpp
 )
 

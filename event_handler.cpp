@@ -85,7 +85,12 @@ std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap =
 
     // EEP Client Event
     {   "Evt_handleEEPClientResponse"           ,std::bind(&EventHandler::handleEEPClientResponse          ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleEEPClientConnectionState"    ,std::bind(&EventHandler::handleEEPClientConnectionState   ,eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleEEPClientConnectionState"    ,std::bind(&EventHandler::handleEEPClientConnectionState   ,eventHandler_, std::placeholders::_1) },
+
+    //CHU Client Event
+    {   "Evt_handleCHUReceived"                 ,std::bind(&EventHandler::handleCHUReceived                ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleCHUClientConnectionState"    ,std::bind(&EventHandler::handleCHUClientConnectionState   ,eventHandler_, std::placeholders::_1) }
+
 };
 
 EventHandler::EventHandler()
@@ -1805,8 +1810,23 @@ bool EventHandler::handleEEPClientConnectionState(const BaseEvent* event)
         std::stringstream ss;
         ss << __func__ << " Successfully, Event Data : " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
-
         // process EEP Client Connection State
+        //---- added on 13/03/2026
+        if (value == true) {
+            if (operation::getInstance()->tPBSError[0].ErrNo == -1 ){
+                operation::getInstance()->tPBSError[0].ErrNo = 0;
+                operation::getInstance()->Sendmystatus();
+                operation::getInstance()->writelog("DSRC is connected!", "EVT");
+            }
+        } 
+        else
+        {
+            if (operation::getInstance()->tPBSError[0].ErrNo == 0 ){
+                operation::getInstance()->tPBSError[0].ErrNo = -1;
+                operation::getInstance()->Sendmystatus();
+                operation::getInstance()->writelog("DSRC connection is lost!", "EVT");
+            }
+        }
     }
     else
     {
@@ -1815,6 +1835,56 @@ bool EventHandler::handleEEPClientConnectionState(const BaseEvent* event)
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleCHUReceived(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+       operation::getInstance()->processCHU(strEvent->data);
+    }
+    else
+    {
+        operation::getInstance()->writelog("CHU Data casting failed.", "EVT");
+    }
+
+    return ret;
+}
+
+bool EventHandler::handleCHUClientConnectionState(const BaseEvent* event)
+{
+    bool ret = true;
+
+    const Event<std::string>* strEvent = dynamic_cast<const Event<std::string>*>(event);
+
+    if (strEvent != nullptr)
+    {
+        std:string status = strEvent->data;
+       // operation::getInstance()->writelog("CHU Gateway status : " + status, "EVT");
+        if (status == "connected" ){
+            if (operation::getInstance()->tPBSError[8].ErrNo == -1 ){
+                operation::getInstance()->tPBSError[8].ErrNo = 0;
+                operation::getInstance()->Sendmystatus();
+                operation::getInstance()->writelog("CHU Gateway is connected!", "EVT");
+
+            }
+        } 
+        else
+        {
+            if (operation::getInstance()->tPBSError[8].ErrNo == 0 ){
+                operation::getInstance()->tPBSError[8].ErrNo = -1;
+                operation::getInstance()->Sendmystatus();
+                operation::getInstance()->writelog("CHU Gateway connection is lost", "EVT");
+            }
+
+        }
     }
 
     return ret;

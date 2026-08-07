@@ -817,6 +817,8 @@ std::string LCSCReader::getEventStringFromResponseCmdType(uint8_t respType)
         }
         case LCSC_CMD_TYPE::CARD_BALANCE:
         {
+            //------- added on 15/07/2026
+            LCSCCard_In = 1;
             retStr = "Evt_handleLcscReaderGetCardBalance";
             break;
         }
@@ -3585,8 +3587,17 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
         terminalID = serialNum.substr(terminalIDLen - 6);
     }
 
-    std::string ackFileName = boost::algorithm::trim_copy(operation::getInstance()->tParas.gsCPOID) + "_" + operation::getInstance()->tParas.gsCPID + "_CR"
-                                + "0" + terminalID + "_" + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd_hhmmss() + ".cdack";
+    std::string ackFileName = "";
+    if (operation::getInstance()->tParas.giEPS == 3)
+    {
+        ackFileName = boost::algorithm::trim_copy(operation::getInstance()->tParas.gsCPOID) + "_" + operation::getInstance()->tParas.gsCPID + "_CSCR"
+                    + "0" + terminalID + "_" + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd_hhmmss() + ".cdack";
+    }
+    else
+    {
+        ackFileName = boost::algorithm::trim_copy(operation::getInstance()->tParas.gsCPOID) + "_" + operation::getInstance()->tParas.gsCPID + "_CR"
+                    + "0" + terminalID + "_" + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd_hhmmss() + ".cdack";
+    }
     std::string sAckFile = cdAckFilePath + "/" + ackFileName;
     
     // Construct data contents
@@ -3594,7 +3605,14 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
     std::string sData;
     std::string sDataO;
 
-    sHeader = "H" + Common::getInstance()->FnPadRightSpace(53, ackFileName) + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() + fwVer;
+    if (operation::getInstance()->tParas.giEPS == 3)
+    {
+        sHeader = "H" + Common::getInstance()->FnPadRightSpace(58, ackFileName) + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() + fwVer;
+    }
+    else
+    {
+        sHeader = "H" + Common::getInstance()->FnPadRightSpace(53, ackFileName) + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() + fwVer;
+    }
     sDataO = sHeader;
     sData = sHeader + '\n';
 
@@ -4280,7 +4298,14 @@ void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
     lastCreditTransTRP = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(138, 32));
     balanceBeforeTrans = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(171, 24));
     badDebtCounter = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(195, 8));
-    MAC1 = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(208, 32));
+    if (operation::getInstance()->tParas.giEPS == 3)
+    {
+        MAC1 = std::string(4, '\0');
+    }
+    else
+    {
+        MAC1 = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(208, 32));
+    }
 
     // Transaction Record 2
     std::vector<uint8_t> transRecordVec2;
@@ -4332,7 +4357,7 @@ void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
         transRecord += '\0';
     }
 
-    transRecord = transRecord + signedCert + counter + Common::getInstance()->FnConvertVectorUint8ToString(TRPVec)
+    transRecord = transRecord + signedCert + counter + Common::getInstance()->FnConvertVectorUint8ToRawString(TRPVec)
                     + balanceAfterTrans + lastCreditTransTRP + lastTransHeader + lastTransDebitOp + balanceBeforeTrans
                     + badDebtCounter + autoLoadAmt + transStatus;
 

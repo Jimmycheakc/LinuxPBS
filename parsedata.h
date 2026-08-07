@@ -2,119 +2,88 @@
 #ifndef PARSEDATA_H_INCLUDED
 #define PARSEDATA_H_INCLUDED
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <iostream>
 #include <string>
-#include <fstream>
-#include <sstream>
-#include <math.h>
 #include <vector>
-using namespace std;
-//---------------------------------------------------------
-//Parse JSON
 
-using namespace std;
 class ParseData {
-    vector<string> field;
+    std::vector<std::string> field;
     char start_ch;
     char end_ch;
     char separator;
+
 public:
-    ParseData();
-    ParseData(char startChar,char endChar,char separatorChar);
-    int Parse(string str);
-    string Field(int number);
-    void SetStyle(char startChar,char endChar,char separatorChar);
-    static string SetStrLen(string str,int n);
-    static string i2nc(int i,int n);//convert an integer into string of n character
-};
+    ParseData()
+    {
+        SetStyle('[',']','|');
+    }
 
-//truncate and take last n char
-//  or pad '0' in front
-//  to get a string of defined len
-string ParseData::SetStrLen(string str,int n)
-{
-    string ostr=string(n,'0');
-    ostr+=str;
-    ostr=ostr.substr(ostr.length()-n,n);
-    return ostr;
-}
+    ParseData(char startChar,char endChar,char separatorChar)
+    {
+        SetStyle(startChar,endChar,separatorChar);
+    }
 
-//convert an integer into string of n character
-string ParseData::i2nc(int i,int n)
-{
-    string ostr=string(n,'0');
-    ostr+=to_string(i);
-    ostr=ostr.substr(ostr.length()-n,n);
-    return ostr;
-}
-//---------------------------------------------------------
-ParseData::ParseData()
-{
-    SetStyle('[',']','|');
-}
+    void SetStyle(char startChar,char endChar,char separatorChar)
+    {
+        start_ch=startChar;
+        end_ch=endChar;
+        separator=separatorChar;
+    }
 
-ParseData::ParseData(char startChar,char endChar,char separatorChar)
-{
-    SetStyle(startChar,endChar,separatorChar);
-}
+    static std::string SetStrLen(std::string str,int n)
+    {
+        std::string ostr(n,'0');
+        ostr+=str;
+        return ostr.substr(ostr.length()-n,n);
+    }
 
-void ParseData::SetStyle(char startChar,char endChar,char separatorChar)
-{
-    start_ch=startChar;
-    end_ch=endChar;
-    separator=separatorChar;
-}
-int ParseData::Parse(string str)
-{
-    field.clear();
+    static std::string i2nc(int i,int n)
+    {
+        std::string ostr(n,'0');
+        ostr+=std::to_string(i);
+        return ostr.substr(ostr.length()-n,n);
+    }
 
-    int startpos=str.find(start_ch);
+    int Parse(std::string str)
+    {
+        field.clear();
 
-    // if no start, to take from start, comment the following line
-    //if(startpos<0) return field.size();
+        int startpos=str.find(start_ch);
+        startpos++;
 
-    startpos++;//not taking start_ch
+        int endpos=str.find(end_ch,startpos);
+        if(endpos<0) endpos=str.length();
 
-    int endpos=str.find(end_ch,startpos);
-    //if(endpos<0) return field.size();//if no end, discard all
-    if(endpos<0) endpos=str.length();//if no end, take all
+        int len=endpos-startpos;
+        if(len<=0) return field.size();
 
+        str=str.substr(startpos,len);
 
-    int len=endpos-startpos;
-    if(len<=0) return field.size();
-    str=str.substr(startpos,len);
-
-    //cout<<"Data mes"<<str<<endl;
-    while(1){
-        startpos=str.find(separator);
-        if(startpos>=0){
-            field.push_back(str.substr(0,startpos));
-            startpos++;
-            len=str.length();
-            if(startpos>=len){
-                break;
-            }
-            else {
+        while(true){
+            startpos=str.find(separator);
+            if(startpos>=0){
+                field.push_back(str.substr(0,startpos));
+                startpos++;
+                if(startpos>=str.length()){
+                    break;
+                }
                 str=str.substr(startpos);
             }
-        }
-        else{
-            if(str.length()>0){
-                field.push_back(str);
+            else{
+                if(!str.empty()){
+                    field.push_back(str);
+                }
+                break;
             }
-            break;//end the loop
         }
+        return field.size();
     }
-    return field.size();
-}
 
-string ParseData::Field(int number)
-{
-    if(number<field.size()) return field.at(number);
-    else return "";
-}
+    std::string Field(int number)
+    {
+        if(number < field.size())
+            return field.at(number);
+        return "";
+    }
+};
 
-
-#endif // PARSEDATA_H_INCLUDED
+#endif

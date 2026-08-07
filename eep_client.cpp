@@ -49,7 +49,7 @@ EEPClient::EEPClient()
     lastConnectionState_(false),
     logFileName_("eep")
 {
-
+    status_data_.clear();
 }
 
 EEPClient* EEPClient::getInstance()
@@ -237,8 +237,8 @@ void EEPClient::FnSendDeductReq(const std::string& obuLabel_, const std::string&
     // Data Format in little-Endian
     auto reqData = std::make_shared<DeductData>();
 
-    uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    uint8_t obuLabelArr[5] = {0x12, 0x20, 0x02, 0x41, 0x93};
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
     uint8_t feeArr[2];
     bool feeParseSuccess = Common::getInstance()->FnDecimalStringToTwoBytes(fee_, feeArr, true);
     std::tm parsedEntryDateTime = {};
@@ -305,20 +305,18 @@ void EEPClient::FnSendDeductReq(const std::string& obuLabel_, const std::string&
     }
 }
 
-void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_)
+void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_, uint16_t serialNum_)
 {
     // Data Format in little-Endian
     auto reqData = std::make_shared<DeductStopData>();
 
     uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
 
     if (obuParseSuccess)
     {
-        uint16_t lastSerialNum = getLastDeductCmdSerialNo();
-
-        reqData->serialNum[0] = static_cast<uint8_t>(lastSerialNum & 0xFF);
-        reqData->serialNum[1] = static_cast<uint8_t>((lastSerialNum >> 8) & 0xFF);;
+        reqData->serialNum[0] = static_cast<uint8_t>(serialNum_ & 0xFF);
+        reqData->serialNum[1] = static_cast<uint8_t>((serialNum_ >> 8) & 0xFF);;
         std::fill(std::begin(reqData->rsv), std::end(reqData->rsv), 0x00);
         std::copy(obuLabelArr, obuLabelArr + 5, reqData->obuLabel);
         std::fill(std::begin(reqData->rsv1), std::end(reqData->rsv1), 0x00);
@@ -337,20 +335,18 @@ void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_)
     }
 }
 
-void EEPClient::FnSendTransactionReq(const std::string& obuLabel_)
+void EEPClient::FnSendTransactionReq(const std::string& obuLabel_, uint16_t serialNum_)
 {
     // Data Format in little-Endian
     auto reqData = std::make_shared<TransactionReqData>();
 
     uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
 
     if (obuParseSuccess)
     {
-        uint16_t lastSerialNum = getLastDeductCmdSerialNo();
-
-        reqData->serialNum[0] = static_cast<uint8_t>(lastSerialNum & 0xFF);
-        reqData->serialNum[1] = static_cast<uint8_t>((lastSerialNum >> 8) & 0xFF);;
+        reqData->serialNum[0] = static_cast<uint8_t>(serialNum_ & 0xFF);
+        reqData->serialNum[1] = static_cast<uint8_t>((serialNum_ >> 8) & 0xFF);;
         std::fill(std::begin(reqData->rsv), std::end(reqData->rsv), 0x00);
         std::copy(obuLabelArr, obuLabelArr + 5, reqData->obuLabel);
         std::fill(std::begin(reqData->rsv1), std::end(reqData->rsv1), 0x00);
@@ -375,7 +371,7 @@ void EEPClient::FnSendCPOInfoDisplayReq(const std::string& obuLabel_, const std:
     auto reqData = std::make_shared<CPOInfoDisplayData>();
 
     uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
     bool dataTypeParseSuccess;
     uint8_t parsedDataType_;
     try
@@ -433,7 +429,7 @@ void EEPClient::FnSendCarparkProcessCompleteNotificationReq(const std::string& o
     auto reqData = std::make_shared<CarparkProcessCompleteData>();
 
     uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
     bool resultParseSuccess;
     uint8_t parsedResult_;
     try
@@ -480,7 +476,7 @@ void EEPClient::FnSendDSRCProcessCompleteNotificationReq(const std::string& obuL
     auto reqData = std::make_shared<DSRCProcessCompleteData>();
 
     uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
 
     if (obuParseSuccess)
     {
@@ -508,7 +504,7 @@ void EEPClient::FnSendStopReqOfRelatedInfoDistributionReq(const std::string& obu
     auto reqData = std::make_shared<StopReqOfRelatedInfoData>();
 
     uint8_t obuLabelArr[5];
-    bool obuParseSuccess = Common::getInstance()->FnConvertDecimalStringToByteArray(obuLabel_, obuLabelArr, 5);
+    bool obuParseSuccess = Common::getInstance()->FnConvertHexStringToByteArray(obuLabel_, obuLabelArr, 5);
 
     if (obuParseSuccess)
     {
@@ -1272,24 +1268,24 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 uint32_t rsv8 = Common::getInstance()->FnReadUint24LE(body, 81);
                 // CAN is CHAR data type based on protocol, so already big endian, no need to reverse
                 std::vector<uint8_t> can(body.begin() + 84, body.begin() + 92);
-                uint64_t lastCreditTransactionHeader = Common::getInstance()->FnReadUint64LE(body, 92);
-                uint32_t lastCreditTransactionTRP = Common::getInstance()->FnReadUint32LE(body, 100);
+                uint64_t lastCreditTransactionHeader = Common::getInstance()->FnReadUint64BE(body, 92);
+                uint32_t lastCreditTransactionTRP = Common::getInstance()->FnReadUint32BE(body, 100);
                 uint32_t purseBalanceBeforeTransaction = Common::getInstance()->FnReadUint32LE(body, 104);
                 uint8_t badDebtCounter = body[108];
                 uint8_t transactionStatus = body[109];
                 uint8_t debitOption = body[110];
                 uint8_t rsv9 = body[111];
                 uint32_t autoLoadAmount = Common::getInstance()->FnReadUint32LE(body, 112);
-                uint64_t counterData = Common::getInstance()->FnReadUint64LE(body, 116);
-                uint64_t signedCertificate = Common::getInstance()->FnReadUint64LE(body, 124);
+                uint64_t counterData = Common::getInstance()->FnReadUint64BE(body, 116);
+                uint64_t signedCertificate = Common::getInstance()->FnReadUint64BE(body, 124);
                 uint32_t purseBalanceAfterTransaction = Common::getInstance()->FnReadUint32LE(body, 132);
                 uint8_t lastTransactionDebitOptionbyte = body[136];
                 uint32_t rsv10 = Common::getInstance()->FnReadUint24LE(body, 137);
-                uint64_t previousTransactionHeader = Common::getInstance()->FnReadUint64LE(body, 140);
-                uint32_t previousTRP = Common::getInstance()->FnReadUint32LE(body, 148);
+                uint64_t previousTransactionHeader = Common::getInstance()->FnReadUint64BE(body, 140);
+                uint32_t previousTRP = Common::getInstance()->FnReadUint32BE(body, 148);
                 uint32_t previousPurseBalance = Common::getInstance()->FnReadUint32LE(body, 152);
-                uint64_t previousCounterData = Common::getInstance()->FnReadUint64LE(body, 156);
-                uint64_t previousTransactionSignedCertificate = Common::getInstance()->FnReadUint64LE(body, 164);
+                uint64_t previousCounterData = Common::getInstance()->FnReadUint64BE(body, 156);
+                uint64_t previousTransactionSignedCertificate = Common::getInstance()->FnReadUint64BE(body, 164);
                 uint8_t previousPurseStatus = body[172];
                 uint32_t rsv11 = Common::getInstance()->FnReadUint24LE(body, 173);
                 uint16_t bepPaymentFeeAmount = Common::getInstance()->FnReadUint16LE(body, 176);
@@ -1300,8 +1296,8 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 uint32_t chargeReportCounter = Common::getInstance()->FnReadUint32LE(body, 192);
                 uint8_t bepKeyVersion = body[196];
                 uint32_t rsv14 = Common::getInstance()->FnReadUint24LE(body, 197);
-                std::vector<uint8_t> bepCertificate(body.begin() + 200, body.begin() + 340);
-                std::reverse(bepCertificate.begin(), bepCertificate.end());
+                uint8_t lenOfBepCertificate = body[200];
+                std::vector<uint8_t> bepCertificate(body.begin() + 201, body.begin() + 340);
 
                 const std::unordered_map<std::uint8_t, std::string> resultDeductionMap = {
                     {0x00, "No deduction is performed"},
@@ -1376,6 +1372,9 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "parkingEndMinute", parkingEndMinute, 2);
                 printField(oss, "parkingEndHour", parkingEndHour, 2);
                 printField(oss, "Payment fee", paymentFee, 8, " Unit is cent");
+                oss << std::setw(32) << std::setfill(' ') << "" << "----------------------------------\n";
+                oss << std::setw(32) << std::setfill(' ') << "" << "Debiting result of Frontend Payment\n";
+                oss << std::setw(32) << std::setfill(' ') << "" << "----------------------------------\n";
                 printField(oss, "FepTime", fepTime, 14);
                 printField(oss, "RSV7", rsv7, 2);
                 printField(oss, "TRP(Terminal Resource Parameter)", trp, 8);
@@ -1402,6 +1401,9 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "Previous Transaction Signed Certificate", previousTransactionSignedCertificate, 16);
                 printField(oss, "Previous Purse Status", previousPurseStatus, 2);
                 printField(oss, "RSV11", rsv11, 6);
+                oss << std::setw(32) << std::setfill(' ') << "" << "----------------------------------\n";
+                oss << std::setw(32) << std::setfill(' ') << "" << "Debiting result of Backend Payment\n";
+                oss << std::setw(32) << std::setfill(' ') << "" << "----------------------------------\n";
                 printField(oss, "BepPaymentFeeAmount", bepPaymentFeeAmount, 4);
                 printField(oss, "RSV12", rsv12, 4);
                 printFieldChar(oss, "BepTimeOfReport", bepTimeOfReport);
@@ -1409,6 +1411,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
                 printField(oss, "chargeReportCounter", chargeReportCounter, 8);
                 printField(oss, "BepKeyVersion", bepKeyVersion, 2);
                 printField(oss, "RSV14", rsv14, 6);
+                printField(oss, "LengthOfBepCertificate", lenOfBepCertificate, 2);
                 printFieldChar(oss, "BepCertificate", bepCertificate);
                 break;
             }
@@ -1684,7 +1687,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 }
 
-void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg)
+void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const std::vector<uint8_t>& body, std::string& eventMsg, const std::vector<uint8_t>& data)
 {
     std::ostringstream oss;
     MESSAGE_CODE code = static_cast<MESSAGE_CODE>(header.dataTypeCode_);
@@ -1843,6 +1846,12 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
             // No need to raise event
             ret = false;
+
+            // Store the health status inside the local vector and pending getter function to return
+            {
+                std::lock_guard<std::mutex> lock(statusDataMutex_);
+                status_data_ = data;
+            }
 
             break;
         }
@@ -2054,7 +2063,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
             obuin.obulabel = Common::getInstance()->FnReadUint40BE(body, 8);
             obuin.typeObu = body[13];
             obuin.rsv1 = Common::getInstance()->FnReadUint16LE(body, 14);
-            obuin.vcc = Common::getInstance()->FnReadUint24LE(body, 16);
+            obuin.vcc = Common::getInstance()->FnReadUint24BE(body, 16);
             obuin.rsv2 = body[19];
             // Vehicle number is CHAR data type based on protocol, so already big endian, no need to reverse
             obuin.vechicleNumber.assign(body.begin() + 20, body.begin() + 33);
@@ -2132,24 +2141,24 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
             td.rsv8 = Common::getInstance()->FnReadUint24LE(body, 81);
             // CAN is CHAR data type based on protocol, so already big endian, no need to reverse
             td.can.assign(body.begin() + 84, body.begin() + 92);
-            td.lastCreditTransactionHeader = Common::getInstance()->FnReadUint64LE(body, 92);
-            td.lastCreditTransactionTRP = Common::getInstance()->FnReadUint32LE(body, 100);
+            td.lastCreditTransactionHeader = Common::getInstance()->FnReadUint64BE(body, 92);
+            td.lastCreditTransactionTRP = Common::getInstance()->FnReadUint32BE(body, 100);
             td.purseBalanceBeforeTransaction = Common::getInstance()->FnReadUint32LE(body, 104);
             td.badDebtCounter = body[108];
             td.transactionStatus = body[109];
             td.debitOption = body[110];
             td.rsv9 = body[111];
             td.autoLoadAmount = Common::getInstance()->FnReadUint32LE(body, 112);
-            td.counterData = Common::getInstance()->FnReadUint64LE(body, 116);
-            td.signedCertificate = Common::getInstance()->FnReadUint64LE(body, 124);
+            td.counterData = Common::getInstance()->FnReadUint64BE(body, 116);
+            td.signedCertificate = Common::getInstance()->FnReadUint64BE(body, 124);
             td.purseBalanceAfterTransaction = Common::getInstance()->FnReadUint32LE(body, 132);
             td.lastTransactionDebitOptionbyte = body[136];
             td.rsv10 = Common::getInstance()->FnReadUint24LE(body, 137);
-            td.previousTransactionHeader = Common::getInstance()->FnReadUint64LE(body, 140);
-            td.previousTRP = Common::getInstance()->FnReadUint32LE(body, 148);
+            td.previousTransactionHeader = Common::getInstance()->FnReadUint64BE(body, 140);
+            td.previousTRP = Common::getInstance()->FnReadUint32BE(body, 148);
             td.previousPurseBalance = Common::getInstance()->FnReadUint32LE(body, 152);
-            td.previousCounterData = Common::getInstance()->FnReadUint64LE(body, 156);
-            td.previousTransactionSignedCertificate = Common::getInstance()->FnReadUint64LE(body, 164);
+            td.previousCounterData = Common::getInstance()->FnReadUint64BE(body, 156);
+            td.previousTransactionSignedCertificate = Common::getInstance()->FnReadUint64BE(body, 164);
             td.previousPurseStatus = body[172];
             td.rsv11 = Common::getInstance()->FnReadUint24LE(body, 173);
             td.bepPaymentFeeAmount = Common::getInstance()->FnReadUint16LE(body, 176);
@@ -2160,8 +2169,14 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
             td.chargeReportCounter = Common::getInstance()->FnReadUint32LE(body, 192);
             td.bepKeyVersion = body[196];
             td.rsv14 = Common::getInstance()->FnReadUint24LE(body, 197);
-            td.bepCertificate.assign(body.begin() + 200, body.begin() + 340);
-            std::reverse(td.bepCertificate.begin(), td.bepCertificate.end());
+            td.lenOfBepCertificate = body[200];
+            size_t safeLen = std::min((int)td.lenOfBepCertificate, 139);
+            size_t endIndex = 201 + safeLen;
+            std::vector<uint8_t> tempBepCert(safeLen, 0);
+            std::string tempHexBepCert = "";
+            std::copy(body.begin() + 201, body.begin() + endIndex, tempBepCert.begin());
+            tempHexBepCert = Common::getInstance()->FnConvertVectorUint8ToUpperCaseHexString(tempBepCert);
+            td.bepCertificate.assign(tempHexBepCert.begin(), tempHexBepCert.end());
 
             // Serialization
             boost::json::value jv = td.to_json();
@@ -2553,10 +2568,12 @@ void EEPClient::handleReceivedData(bool success, const std::vector<uint8_t>& dat
                                 ackTimer_.cancel();
 
                                 std::string eventMsg = "";
-                                handleParsedResponseMessage(msgHeader, msgBody, eventMsg);
+                                handleParsedResponseMessage(msgHeader, msgBody, eventMsg, data);
                                 
                                 if (!eventMsg.empty())
                                 {
+                                    //----- added on 15/07/2026
+                                    EEPData_In = 1;
                                     EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
                                     Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
                                 }
@@ -3870,7 +3887,7 @@ void EEPClient::handleSendTimerTimeout(const boost::system::error_code& error)
 
 void EEPClient::startResponseTimer()
 {
-    responseTimer_.expires_after(std::chrono::seconds(4));
+    responseTimer_.expires_after(std::chrono::seconds(6));
     responseTimer_.async_wait(boost::asio::bind_executor(strand_,
         std::bind(&EEPClient::handleResponseTimeout, this, std::placeholders::_1)));
 }
@@ -4996,4 +5013,19 @@ void EEPClient::copyAndRemoveBEFile(const std::string& settlementfilepath)
         Logger::getInstance()->FnLogExceptionError(ss.str());
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
     }
+}
+
+std::string EEPClient::FnGetStatusData()
+{
+    std::lock_guard<std::mutex> lock(statusDataMutex_);
+    std::ostringstream stream;
+
+    stream << std::hex << std::setfill('0');
+
+    for (uint8_t byte : status_data_) {
+        stream << std::setw(2)
+               << static_cast<unsigned int>(byte);
+    }
+
+    return stream.str();
 }
