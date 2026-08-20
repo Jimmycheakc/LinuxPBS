@@ -18,5 +18,5 @@ cmake .. -DENABLE_CONSOLE_LOG=ON
 make -j4
 
 # Copy the built binaries and configuration file to the remote server
-scp linuxpbs root@192.168.2.150:/home/root/carpark/
-scp LinuxPBS.ini root@192.168.2.150:/home/root/carpark/Ini/
+scp linuxpbs root@192.168.2.151:/home/root/carpark/
+scp LinuxPBS.ini root@192.168.2.151:/home/root/carpark/Ini/
