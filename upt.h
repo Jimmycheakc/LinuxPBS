@@ -1,15 +1,23 @@
 #pragma once
 
-#include <condition_variable>
-#include <iostream>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <queue>
 #include <string>
 #include <thread>
-#include <queue>
 #include <vector>
-#include "boost/asio.hpp"
-#include "boost/asio/serial_port.hpp"
+
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/serial_port.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 
 // UPOS Message Header
@@ -731,59 +739,84 @@ public:
     std::string getFieldEncodingTypeString(uint8_t fieldEncoding);
     std::string getFieldIDString(uint16_t fieldID);
 
-     int UOPSCard_In;
+    // Compatibility snapshot used by existing callers.
+    // Prefer accessors in new code.
+    std::atomic<int> UOPSCard_In{0};
 
-    /**
-     * Singleton Upt should not be cloneable.
-     */
-    Upt(Upt& upt) = delete;
-
-    /**
-     * Singleton Upt should not be assignable.
-     */
-    void operator=(const Upt&) = delete;
+    Upt(const Upt&) = delete;
+    Upt& operator=(const Upt&) = delete;
+    Upt(Upt&&) = delete;
+    Upt& operator=(Upt&&) = delete;
 
 private:
-    static Upt* upt_;
-    static std::mutex mutex_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+
+    static constexpr std::chrono::seconds kAckTimeout{8};
+    static constexpr std::chrono::seconds kResponseTimeout{180};
+    static constexpr std::chrono::seconds kSerialWriteTimeout{10};
+    static constexpr std::chrono::milliseconds kSerialWriteGap{2000};
+
     boost::asio::io_context ioContext_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
-    std::unique_ptr<boost::asio::serial_port> pSerialPort_;
+    std::optional<WorkGuard> workGuard_;
+    boost::asio::serial_port serialPort_;
+
     boost::asio::steady_timer ackTimer_;
     boost::asio::steady_timer rspTimer_;
     boost::asio::steady_timer serialWriteDelayTimer_;
     boost::asio::steady_timer serialWriteTimer_;
-    std::atomic<bool> ackRecv_;
-    std::atomic<bool> rspRecv_;
-    std::atomic<bool> pendingRspRecv_;
-    std::string logFileName_;
+
     std::thread ioContextThread_;
-    std::mutex cmdQueueMutex_;
+    mutable std::mutex lifecycleMutex_;
+
+    std::atomic<bool> moduleRunning_{false};
+    std::atomic<bool> acceptingWork_{false};
+    std::atomic<bool> stopping_{false};
+
+    std::string logFileName_{"upos"};
+
+    // The following mutable protocol state belongs to the UPT I/O thread.
     std::deque<CommandWithData> commandQueue_;
-    UPT_CMD currentCmd;
-    static uint32_t sequenceNo_;
-    static std::mutex sequenceNoMutex_;
-    static std::mutex currentCmdMutex_;
-    std::array<uint8_t, 1024> readBuffer_;
-    std::queue<std::vector<uint8_t>> writeQueue_;
-    bool write_in_progress_;
-    std::array<uint8_t, 65535> rxBuffer_;
-    int rxNum_;
-    RX_STATE rxState_;
+    UPT_CMD currentCmd_{UPT_CMD::DEVICE_STATUS_REQUEST};
+    std::uint32_t sequenceNo_{0};
+
+    std::array<std::uint8_t, 1024> readBuffer_{};
+    std::queue<std::vector<std::uint8_t>> writeQueue_;
+    bool writeInProgress_{false};
+    bool writeDelayActive_{false};
+    bool writeTimedOut_{false};
+
+    std::array<std::uint8_t, 65535> rxBuffer_{};
+    std::size_t rxNum_{0};
+    RX_STATE rxState_{RX_STATE::RX_START};
+
+    bool ackRecv_{false};
+    bool rspRecv_{false};
+
     static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
-    STATE currentState_;
-    std::chrono::steady_clock::time_point lastSerialReadTime_;
+
+    STATE currentState_{STATE::IDLE};
+    std::chrono::steady_clock::time_point lastSerialReadTime_{std::chrono::steady_clock::now()};
+
     Upt();
-    void startIoContextThread();
+    ~Upt();
+
+    bool startModule();
+    bool initOnIoThread(unsigned int baudRate, const std::string& comPortName);
+    void shutdownOnIoThread();
+    void emergencyShutdownNoThrow();
+    void clearProtocolStateOnIoThread();
+
     void incrementSequenceNo();
-    void setSequenceNo(uint32_t sequenceNo);
-    uint32_t getSequenceNo();
+    void setSequenceNo(std::uint32_t sequenceNo);
+    std::uint32_t getSequenceNo() const;
     void setCurrentCmd(UPT_CMD cmd);
-    UPT_CMD getCurrentCmd();
+    UPT_CMD getCurrentCmd() const;
+
     void enqueueCommand(UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
     void enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void enqueueCommandOnIoThread(UPT_CMD cmd, std::shared_ptr<void> data, bool front);
     void popFromCommandQueueAndEnqueueWrite();
+    
     std::string eventToString(EVENT event);
     std::string stateToString(STATE state);
     void processEvent(EVENT event);
@@ -793,29 +826,32 @@ private:
     void handleWaitingForAckState(EVENT event);
     void handleWaitingForResponseState(EVENT event);
     void handleCancelCommandRequestState(EVENT event);
+
     void startSerialWriteTimer();
     void startAckTimer();
     void startResponseTimer();
-    bool checkCmd(UPT_CMD cmd);
-    std::vector<uint8_t> prepareCmd(UPT_CMD cmd, std::shared_ptr<void> payloadData);
-    PayloadField createPayload(uint32_t length, uint16_t payloadFieldId, uint8_t fieldReserve, uint8_t fieldEncoding, const std::vector<uint8_t>& fieldData);
     void handleSerialWriteTimeout(const boost::system::error_code& error);
     void handleAckTimeout(const boost::system::error_code& error);
     void handleCmdResponseTimeout(const boost::system::error_code& error);
-    void handleReceivedCmd(const std::vector<uint8_t>& dataBuff);
+
+    bool checkCmd(UPT_CMD cmd);
+    std::vector<uint8_t> prepareCmd(UPT_CMD cmd, std::shared_ptr<void> payloadData);
+    PayloadField createPayload(std::uint32_t length, std::uint16_t payloadFieldId, std::uint8_t fieldReserve, std::uint8_t fieldEncoding, const std::vector<std::uint8_t>& fieldData);
+
+    void handleReceivedCmd(const std::vector<std::uint8_t>& dataBuff);
     void handleCmdResponse(const Message& msg);
     std::vector<SettlementPayloadRow> findReceivedSettlementPayloadData(const std::vector<PayloadField>& payloads);
-    std::string findReceivedPayloadData(const std::vector<PayloadField>& payloads, uint16_t payloadFieldId);
-    bool isRxResponseComplete(const std::vector<uint8_t>& dataBuff);
-    bool isMsgStatusValid(uint32_t msgStatus);
+    std::string findReceivedPayloadData(const std::vector<PayloadField>& payloads, std::uint16_t payloadFieldId);
+    bool isMsgStatusValid(std::uint32_t msgStatus);
     void handleCmdErrorOrTimeout(UPT_CMD cmd, MSG_STATUS msgStatus);
 
-    // Serial read and write
+    // Serial read/write. All functions below run on the UPT I/O thread.
     void resetRxBuffer();
-    std::vector<uint8_t> getRxBuffer() const;
+    std::vector<std::uint8_t> getRxBuffer() const;
+    void consumeReceivedBytes(const std::uint8_t* data, std::size_t size);
     void startRead();
     void readEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
-    void enqueueWrite(const std::vector<uint8_t>& data);
+    void enqueueWrite(const std::vector<std::uint8_t>& data);
     void startWrite();
     void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
     void stopSerialWriteDelayTimer();

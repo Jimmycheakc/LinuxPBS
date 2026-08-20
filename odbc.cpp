@@ -1,5 +1,6 @@
 
 #include <stdio.h>
+#include <sstream>
 #include "odbc.h"
 #include "log.h"
 

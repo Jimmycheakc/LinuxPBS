@@ -1,37 +1,32 @@
 #pragma once
 
-#include <iostream>
-#include <functional>
 #include <map>
-#include <mutex>
 #include <string>
+
+#include "dio.h"
 #include "event_manager.h"
 
 class EventHandler
 {
 
 public:
-    typedef std::function<bool(const BaseEvent*)> EventFunction;
+    using EventFunction = bool (EventHandler::*)(const BaseEvent*);
 
-    static std::map<std::string, EventHandler::EventFunction> eventMap;
-
-    void FnHandleEvents(const std::string& eventName, const BaseEvent* event);
     static EventHandler* getInstance();
 
-    /**
-     * Singleton EventHandler should not be cloneable.
-     */
-    EventHandler(EventHandler& eventHandler) = delete;
+    void FnHandleEvents(uint64_t eventId, const std::string& eventName, const BaseEvent* event);
 
-    /**
-     * Singleton EventHandler should not be assignable.
-     */
-    void operator=(const EventHandler&) = delete;
+    EventHandler(const EventHandler&) = delete;
+    EventHandler& operator=(const EventHandler&) = delete;
+    EventHandler(EventHandler&&) = delete;
+    EventHandler& operator=(EventHandler&&) = delete;
 
 private:
-    static EventHandler* eventHandler_;
-    static std::mutex mutex_;
-    EventHandler();
+    EventHandler() = default;
+    ~EventHandler() = default;
+
+    static const std::map<std::string, EventFunction> eventMap_;
+
     // Antenna Event Handler
     bool handleAntennaFail(const BaseEvent* event);
     bool handleAntennaPower(const BaseEvent* event);
@@ -53,6 +48,7 @@ private:
     bool handleLcscReaderUploadBLFile(const BaseEvent* event);
 
     // DIO Event Handler
+    std::string_view dioEventToString(DIO::DIO_EVENT event);
     bool handleDIOEvent(const BaseEvent* event);
 
     // KSM Reader Event Handler

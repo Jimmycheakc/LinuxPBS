@@ -1,9 +1,15 @@
 #include <boost/asio.hpp>
 #include <endian.h>
 #include <iostream>
+#include <future>
 #include <memory>
+#include <utility>
 #include <sstream>
 #include <vector>
+
+#if defined(__linux__)
+#include <pthread.h>
+#endif
 #include "common.h"
 #include "crc.h"
 #include "event_manager.h"
@@ -256,6 +262,7 @@ void MessageHeader::appendToBuffer(std::vector<uint8_t>& buffer, T value) const
 std::vector<uint8_t> MessageHeader::toByteArray() const
 {
     std::vector<uint8_t> buffer;
+    buffer.reserve(Upt::PAYLOAD_OFFSET);
 
     appendToBuffer(buffer, length_);
     appendToBuffer(buffer, integrityCRC32_);
@@ -291,10 +298,7 @@ PayloadField::PayloadField()
 
 }
 
-PayloadField::~PayloadField()
-{
-    clear();
-}
+PayloadField::~PayloadField() = default;
 
 void PayloadField::setPayloadFieldLength(uint32_t length)
 {
@@ -338,7 +342,17 @@ uint8_t PayloadField::getFieldEncoding() const
 
 void PayloadField::setFieldData(const std::vector<uint8_t>& fieldData)
 {
-    if (fieldData.size() == (payloadFieldLength_ - 8))
+    constexpr std::uint32_t kPayloadFieldHeaderSize = 8;
+
+    if (payloadFieldLength_ < kPayloadFieldHeaderSize)
+    {
+        fieldData_.clear();
+        return;
+    }
+
+    const auto expectedSize = static_cast<std::size_t>(payloadFieldLength_ - kPayloadFieldHeaderSize);
+
+    if (fieldData.size() == expectedSize)
     {
         fieldData_ = fieldData;
     }
@@ -368,6 +382,7 @@ void PayloadField::appendToBuffer(std::vector<uint8_t>& buffer, T value) const
 std::vector<uint8_t> PayloadField::toByteArray() const
 {
     std::vector<uint8_t> buffer;
+    buffer.reserve(8u + fieldData_.size());
 
     appendToBuffer(buffer, payloadFieldLength_);
     appendToBuffer(buffer, payloadFieldId_);
@@ -387,10 +402,7 @@ Message::Message()
     payloads.clear();
 }
 
-Message::~Message()
-{
-    clear();
-}
+Message::~Message() = default;
 
 void Message::setHeaderLength(uint32_t length)
 {
@@ -878,30 +890,43 @@ uint32_t Message::FnParseMsgData(const std::vector<uint8_t>& msgData)
                     // Extract payload field
                     std::size_t payloadStartIndex = Upt::PAYLOAD_OFFSET;
 
-                    while ((payloadStartIndex + 4) <= length)
+                    constexpr std::size_t kPayloadFieldHeaderSize = 8;
+
+                    while (payloadStartIndex < length)
                     {
-                        // Extract payload field length
-                        uint32_t payloadFieldHeaderLength = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, payloadStartIndex, Upt::PAYLOAD_FIELD_LENGTH_SIZE));
+                        const std::size_t remaining = static_cast<std::size_t>(length) - payloadStartIndex;
 
-                        if ((payloadStartIndex + payloadFieldHeaderLength) <= length)
+                        if (remaining < kPayloadFieldHeaderSize)
                         {
-                            std::vector<uint8_t> payloadFieldData(payload.begin() + payloadStartIndex, payload.begin() + payloadStartIndex + payloadFieldHeaderLength);
-
-                            PayloadField field;
-                            field.setPayloadFieldLength(payloadFieldHeaderLength);
-                            field.setPayloadFieldId(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payloadFieldData, 4, Upt::PAYLOAD_FIELD_ID_SIZE)));
-                            field.setFieldReserve(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payloadFieldData, 6, Upt::PAYLOAD_FIELD_RESERVE_SIZE)));
-                            field.setFieldEnconding(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payloadFieldData, 7, Upt::PAYLOAD_FIELD_ENCODING_SIZE)));
-                            field.setFieldData(Common::getInstance()->FnExtractSubVector(payloadFieldData, 8, (payloadFieldHeaderLength - 8)));
-
-                            payloads.push_back(field);
-
-                            payloadStartIndex += payloadFieldHeaderLength;
+                            return static_cast<uint32_t>(Upt::MSG_STATUS::FIELD_LENGTH_MINIMUM);
                         }
-                        else
+
+                        const uint32_t payloadFieldLength = Common::getInstance()->FnConvertToUint32(Common::getInstance()->FnExtractSubVector(payload, payloadStartIndex, Upt::PAYLOAD_FIELD_LENGTH_SIZE));
+
+                        if (payloadFieldLength < kPayloadFieldHeaderSize)
+                        {
+                            return static_cast<uint32_t>(Upt::MSG_STATUS::FIELD_LENGTH_MINIMUM);
+                        }
+
+                        if (static_cast<std::size_t>(payloadFieldLength) > remaining)
                         {
                             return static_cast<uint32_t>(Upt::MSG_STATUS::FIELD_LENGTH_INVALID);
                         }
+
+                        const auto fieldBegin = payload.begin() + static_cast<std::ptrdiff_t>(payloadStartIndex);
+                        const auto fieldEnd = fieldBegin + static_cast<std::ptrdiff_t>(payloadFieldLength);
+
+                        std::vector<uint8_t> payloadFieldData(fieldBegin, fieldEnd);
+
+                        PayloadField field;
+                        field.setPayloadFieldLength(payloadFieldLength);
+                        field.setPayloadFieldId(Common::getInstance()->FnConvertToUint16(Common::getInstance()->FnExtractSubVector(payloadFieldData, 4, Upt::PAYLOAD_FIELD_ID_SIZE)));
+                        field.setFieldReserve(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payloadFieldData, 6, Upt::PAYLOAD_FIELD_RESERVE_SIZE)));
+                        field.setFieldEnconding(Common::getInstance()->FnConvertToUint8(Common::getInstance()->FnExtractSubVector(payloadFieldData, 7, Upt::PAYLOAD_FIELD_ENCODING_SIZE)));
+                        field.setFieldData(Common::getInstance()->FnExtractSubVector(payloadFieldData, kPayloadFieldHeaderSize, payloadFieldLength - kPayloadFieldHeaderSize));
+
+                        payloads.push_back(std::move(field));
+                        payloadStartIndex += payloadFieldLength;
                     }
                 }
                 else
@@ -1127,119 +1152,306 @@ void Message::clear()
 
 
 // Upos Terminal Class
-Upt* Upt::upt_ = nullptr;
-std::mutex Upt::mutex_;
-uint32_t Upt::sequenceNo_ = 0;
-std::mutex Upt::sequenceNoMutex_;
-std::mutex Upt::currentCmdMutex_;
-
 Upt::Upt()
-    : ioContext_(),
-    strand_(boost::asio::make_strand(ioContext_)),
-    workGuard_(boost::asio::make_work_guard(ioContext_)),
-    ackTimer_(ioContext_),
-    rspTimer_(ioContext_),
-    serialWriteDelayTimer_(ioContext_),
-    serialWriteTimer_(ioContext_),
-    ackRecv_(false),
-    rspRecv_(false),
-    pendingRspRecv_(false),
-    currentCmd(Upt::UPT_CMD::DEVICE_STATUS_REQUEST),
-    write_in_progress_(false),
-    rxState_(Upt::RX_STATE::RX_START),
-    currentState_(Upt::STATE::IDLE),
-    lastSerialReadTime_(std::chrono::steady_clock::now()),
-    logFileName_("upos")
+    : serialPort_(ioContext_),
+      ackTimer_(ioContext_),
+      rspTimer_(ioContext_),
+      serialWriteDelayTimer_(ioContext_),
+      serialWriteTimer_(ioContext_)
 {
-    resetRxBuffer();
+}
+
+Upt::~Upt()
+{
+    emergencyShutdownNoThrow();
 }
 
 Upt* Upt::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (upt_ == nullptr)
+    static Upt instance;
+    return &instance;
+}
+
+bool Upt::startModule()
+{
+    std::lock_guard<std::mutex> lock(lifecycleMutex_);
+
+    if (moduleRunning_.load())
     {
-        upt_ = new Upt();
+        return true;
     }
-    return upt_;
+
+    ioContext_.restart();
+    workGuard_.emplace(ioContext_.get_executor());
+
+    stopping_.store(false);
+    acceptingWork_.store(false);
+    moduleRunning_.store(true);
+
+    try
+    {
+        ioContextThread_ = std::thread([this]() {
+#if defined(__linux__)
+            ::pthread_setname_np(::pthread_self(), "UPOS_IO");
+#endif
+            Logger::getInstance()->FnLog("UPT: [THREAD] Started | Executor=io_context", logFileName_, "UPT");
+
+            ioContext_.run();
+
+            moduleRunning_.store(false);
+
+            Logger::getInstance()->FnLog("UPT: [THREAD] Stopped | Executor=io_context", logFileName_, "UPT");
+        });
+    }
+    catch (...)
+    {
+        moduleRunning_.store(false);
+        workGuard_.reset();
+        throw;
+    }
+
+    return true;
 }
 
 void Upt::FnUptInit(unsigned int baudRate, const std::string& comPortName)
 {
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(ioContext_, comPortName);
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        Logger::getInstance()->FnLog("UPT: [INIT] Rejected | Reason=called from UPT I/O thread", logFileName_, "UPT");
+        return;
+    }
+
+    Logger::getInstance()->FnCreateLogFile(logFileName_);
+    Logger::getInstance()->FnLog("UPT: [INIT] Starting | Port=" + comPortName + " | Baud=" + std::to_string(baudRate), logFileName_, "UPT");
 
     try
     {
-        pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
-        pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
-        pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
-        pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
-        pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
-
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
-
-        std::stringstream ss;
-        if (pSerialPort_->is_open())
+        if (!startModule())
         {
-            ss << "UPOS Terminal initialization completed.";
-            startIoContextThread();
-            startRead();
-            FnUptSendDeviceResetSequenceNumberRequest();
-            FnUptSendDeviceLogonRequest();
+            Logger::getInstance()->FnLog("UPT: [INIT] Failed | Reason=unable to start I/O thread", logFileName_, "UPT");
+            return;
         }
-        else
+
+        auto resultPromise = std::make_shared<std::promise<bool>>();
+        std::future<bool> resultFuture = resultPromise->get_future();
+
+        boost::asio::post(
+            ioContext_,
+            [this,
+             baudRate,
+             comPortName,
+             resultPromise]() mutable {
+                try
+                {
+                    resultPromise->set_value(initOnIoThread(baudRate, comPortName));
+                }
+                catch (...)
+                {
+                    try
+                    {
+                        resultPromise->set_exception(std::current_exception());
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            });
+
+        const bool initialized = resultFuture.get();
+
+        if (!initialized)
         {
-            ss << "UPOS Terminal initialization failed.";
+            Logger::getInstance()->FnLog("UPT: [INIT] Failed | Reason=serial initialization failed", logFileName_, "UPT");
+            FnUptClose();
+            return;
         }
-        Logger::getInstance()->FnLog(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
-    }
-    catch (const boost::system::system_error& e)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Boost Asio Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+
+        Logger::getInstance()->FnLog("UPT: [INIT] Success | Port=" + comPortName + " | Baud=" + std::to_string(baudRate), logFileName_, "UPT");
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError(std::string("UPT: [INIT] Exception | Error=") + e.what());
+        FnUptClose();
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError("UPT: [INIT] Exception | Error=unknown exception");
+        FnUptClose();
     }
 }
+
+bool Upt::initOnIoThread(unsigned int baudRate, const std::string& comPortName)
+{
+    clearProtocolStateOnIoThread();
+
+    boost::system::error_code ec;
+
+    if (serialPort_.is_open())
+    {
+        serialPort_.cancel(ec);
+        ec.clear();
+        serialPort_.close(ec);
+        ec.clear();
+    }
+
+    serialPort_.open(comPortName, ec);
+    if (ec)
+    {
+        Logger::getInstance()->FnLog("UPT: [INIT] Serial open failed | Port=" + comPortName + " | Error=" + ec.message(), logFileName_, "UPT");
+        return false;
+    }
+
+    try
+    {
+        serialPort_.set_option(boost::asio::serial_port_base::baud_rate(baudRate));
+        serialPort_.set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
+        serialPort_.set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
+        serialPort_.set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
+        serialPort_.set_option(boost::asio::serial_port_base::character_size(8));
+    }
+    catch (const boost::system::system_error& e)
+    {
+        Logger::getInstance()->FnLog(std::string("UPT: [INIT] Serial configuration failed | Error=") + e.what(), logFileName_, "UPT");
+
+        serialPort_.close(ec);
+        return false;
+    }
+
+    lastSerialReadTime_ = std::chrono::steady_clock::now();
+    startRead();
+
+    acceptingWork_.store(true);
+
+    // Preserve the legacy startup sequence.
+    enqueueCommandOnIoThread(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr, false);
+    enqueueCommandOnIoThread(UPT_CMD::DEVICE_LOGON_REQUEST, nullptr, false);
+
+    return true;
+}
+
 
 void Upt::FnUptClose()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+    std::unique_lock<std::mutex> lock(lifecycleMutex_);
 
-    workGuard_.reset();
-    ioContext_.stop();
-    if (ioContextThread_.joinable())
-    {
-        ioContextThread_.join();
-    }
-}
+    Logger::getInstance()->FnLog("UPT: [SHUTDOWN] Begin", logFileName_, "UPT");
 
-void Upt::startIoContextThread()
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+    acceptingWork_.store(false);
+    stopping_.store(true);
 
     if (!ioContextThread_.joinable())
     {
-        ioContextThread_ = std::thread([this]() { ioContext_.run(); });
+        workGuard_.reset();
+        moduleRunning_.store(false);
+        clearProtocolStateOnIoThread();
+
+        Logger::getInstance()->FnLog("UPT: [SHUTDOWN] Completed | State=already stopped", logFileName_, "UPT");
+        return;
     }
+
+    boost::asio::post(
+        ioContext_,
+        [this]() {
+            shutdownOnIoThread();
+        });
+
+    workGuard_.reset();
+
+    if (ioContextThread_.get_id() == std::this_thread::get_id())
+    {
+        // The posted shutdown will run after this handler returns. The owner
+        // must later join the UPT thread from outside the UPT I/O thread.
+        Logger::getInstance()->FnLog("UPT: [SHUTDOWN] Join deferred | Reason=called from UPT I/O thread", logFileName_, "UPT");
+        return;
+    }
+
+    ioContextThread_.join();
+    moduleRunning_.store(false);
+
+    // io_context has fully drained, so no handler can still reference the
+    // queued TX buffer. It is now safe to clear all protocol state.
+    clearProtocolStateOnIoThread();
+    
+    Logger::getInstance()->FnLog("UPT: [SHUTDOWN] Completed", logFileName_, "UPT");
+}
+
+void Upt::shutdownOnIoThread()
+{
+    boost::system::error_code ec;
+
+    ackTimer_.cancel(ec);
+    ec.clear();
+    rspTimer_.cancel(ec);
+    ec.clear();
+    serialWriteDelayTimer_.cancel(ec);
+    ec.clear();
+    serialWriteTimer_.cancel(ec);
+    ec.clear();
+
+    if (serialPort_.is_open())
+    {
+        serialPort_.cancel(ec);
+        ec.clear();
+        serialPort_.close(ec);
+    }
+}
+
+void Upt::clearProtocolStateOnIoThread()
+{
+    commandQueue_.clear();
+
+    while (!writeQueue_.empty())
+    {
+        writeQueue_.pop();
+    }
+
+    currentCmd_ = UPT_CMD::DEVICE_STATUS_REQUEST;
+    currentState_ = STATE::IDLE;
+    sequenceNo_ = 0;
+
+    writeInProgress_ = false;
+    writeDelayActive_ = false;
+    writeTimedOut_ = false;
+
+    rxState_ = RX_STATE::RX_START;
+    resetRxBuffer();
+
+    UOPSCard_In.store(0);
+}
+
+void Upt::emergencyShutdownNoThrow()
+{
+    acceptingWork_.store(false);
+    stopping_.store(true);
+
+    try
+    {
+        workGuard_.reset();
+        ioContext_.stop();
+
+        if (ioContextThread_.joinable() &&
+            ioContextThread_.get_id() != std::this_thread::get_id())
+        {
+            ioContextThread_.join();
+        }
+
+        boost::system::error_code ec;
+        if (serialPort_.is_open())
+        {
+            serialPort_.close(ec);
+        }
+
+        clearProtocolStateOnIoThread();
+    }
+    catch (...)
+    {
+    }
+
+    moduleRunning_.store(false);
 }
 
 void Upt::incrementSequenceNo()
 {
-    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
-
     if (sequenceNo_ == 0xFFFFFFFF)
     {
         sequenceNo_ = 1;
@@ -1252,30 +1464,22 @@ void Upt::incrementSequenceNo()
 
 void Upt::setSequenceNo(uint32_t sequenceNo)
 {
-    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
-
     sequenceNo_ = sequenceNo;
 }
 
-uint32_t Upt::getSequenceNo()
+uint32_t Upt::getSequenceNo() const
 {
-    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
-
     return sequenceNo_;
 }
 
 void Upt::setCurrentCmd(Upt::UPT_CMD cmd)
 {
-    std::unique_lock<std::mutex> lock(currentCmdMutex_);
-
-    currentCmd = cmd;
+    currentCmd_ = cmd;
 }
 
-Upt::UPT_CMD Upt::getCurrentCmd()
+Upt::UPT_CMD Upt::getCurrentCmd() const
 {
-    std::unique_lock<std::mutex> lock(currentCmdMutex_);
-
-    return currentCmd;
+    return currentCmd_;
 }
 
 std::string Upt::getCommandString(Upt::UPT_CMD cmd)
@@ -2911,56 +3115,71 @@ bool Upt::checkCmd(Upt::UPT_CMD cmd)
 
 void Upt::enqueueCommand(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ || !(pSerialPort_->is_open()))
+    if (!acceptingWork_.load())
     {
-        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [QUEUE] Rejected | Cmd=" + getCommandString(cmd) + " | Reason=module not accepting work", logFileName_, "UPT");
         return;
     }
 
-    std::stringstream ss;
-    ss << "Sending Upt Command to queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
-
-    {
-        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-        commandQueue_.emplace_back(cmd, data);
-
-        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
-        {
-            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
-        }
-    }
-
-    boost::asio::post(strand_, [this]() {
-        checkCommandQueue();
-    });
+    boost::asio::post(
+        ioContext_,
+        [this, cmd, data = std::move(data)]() mutable {
+            enqueueCommandOnIoThread(
+                cmd,
+                std::move(data),
+                false);
+        });
 }
 
 void Upt::enqueueCommandToFront(Upt::UPT_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ || !(pSerialPort_->is_open()))
+    if (!acceptingWork_.load())
     {
-        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "UPT");
         return;
     }
 
-    std::stringstream ss;
-    ss << "Sending Upt Command to the front of the queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "UPT");
+    boost::asio::post(
+        ioContext_,
+        [this, cmd, data = std::move(data)]() mutable {
+            enqueueCommandOnIoThread(
+                cmd,
+                std::move(data),
+                true);
+        });
+}
 
+void Upt::enqueueCommandOnIoThread(Upt::UPT_CMD cmd, std::shared_ptr<void> data, bool front)
+{
+    if (stopping_.load() || !serialPort_.is_open())
     {
-        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-        commandQueue_.emplace_front(cmd, data);
-
-        if ((getSequenceNo() + 1) == 0xFFFFFFFF)
-        {
-            commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
-        }
+        Logger::getInstance()->FnLog("UPT: [QUEUE] Rejected | Cmd=" + getCommandString(cmd) + " | Reason=serial port not open", logFileName_, "UPT");
+        return;
     }
 
-    boost::asio::post(strand_, [this]() {
-        checkCommandQueue();
-    });
+    if (!checkCmd(cmd))
+    {
+        Logger::getInstance()->FnLog("UPT: [QUEUE] Rejected | Cmd=" + getCommandString(cmd) + " | Reason=unsupported command", logFileName_, "UPT");
+        return;
+    }
+
+    if ((sequenceNo_ + 1u) == 0xFFFFFFFFu &&
+        cmd != UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST)
+    {
+        commandQueue_.emplace_front(UPT_CMD::DEVICE_RESET_SEQUENCE_NUMBER_REQUEST, nullptr);
+    }
+
+    if (front)
+    {
+        commandQueue_.emplace_front(cmd, std::move(data));
+    }
+    else
+    {
+        commandQueue_.emplace_back(cmd, std::move(data));
+    }
+
+    Logger::getInstance()->FnLog("UPT: [QUEUE] Enqueued | Cmd=" + getCommandString(cmd) + " | Size=" + std::to_string(commandQueue_.size()), logFileName_, "UPT");
+
+    checkCommandQueue();
 }
 
 void Upt::FnUptSendDeviceStatusRequest()
@@ -3184,62 +3403,92 @@ std::string Upt::stateToString(STATE state)
 
 void Upt::processEvent(EVENT event)
 {
-    boost::asio::post(strand_, [this, event]() {
-        int currentStateIndex_ = static_cast<int>(currentState_);
-        const auto& stateTransitions = stateTransitionTable[currentStateIndex_].transitions;
+    if (stopping_.load())
+    {
+        return;
+    }
 
-        bool eventHandled = false;
-        for (const auto& transition : stateTransitions)
-        {
-            if (transition.event == event)
+    // Keep event processing queued rather than recursively executing it.
+    // Some state handlers intentionally schedule another event that must run
+    // after the current transition updates currentState_.
+    boost::asio::post(
+        ioContext_,
+        [this, event]() {
+            if (stopping_.load())
             {
-                eventHandled = true;
+                return;
+            }
 
-                std::ostringstream oss;
-                oss << "Current State : " << stateToString(currentState_);
-                oss << " , Event : " << eventToString(event);
-                oss << " , Event Handler : " << (transition.eventHandler ? "YES" : "NO");
-                oss << " , Next State : " << stateToString(transition.nextState);
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            const auto currentStateIndex =
+                static_cast<std::size_t>(currentState_);
+
+            if (currentStateIndex >=
+                static_cast<std::size_t>(STATE::STATE_COUNT))
+            {
+                Logger::getInstance()->FnLog(
+                    "UPT: [FSM] Invalid state | Value=" +
+                        std::to_string(static_cast<int>(currentState_)) +
+                        " | Recovery=IDLE",
+                    logFileName_,
+                    "UPT");
+                currentState_ = STATE::IDLE;
+                return;
+            }
+
+            const auto& transitions =
+                stateTransitionTable[currentStateIndex].transitions;
+
+            for (const auto& transition : transitions)
+            {
+                if (transition.event != event)
+                {
+                    continue;
+                }
+
+                Logger::getInstance()->FnLog(
+                    "UPT: [FSM] Transition | From=" +
+                        stateToString(currentState_) +
+                        " | Event=" + eventToString(event) +
+                        " | To=" + stateToString(transition.nextState),
+                    logFileName_,
+                    "UPT");
 
                 if (transition.eventHandler != nullptr)
                 {
                     (this->*transition.eventHandler)(event);
                 }
+
                 currentState_ = transition.nextState;
 
                 if (currentState_ == STATE::IDLE)
                 {
-                    boost::asio::post(strand_, [this]() {
-                        checkCommandQueue();
-                    });
+                    boost::asio::post(
+                        ioContext_,
+                        [this]() {
+                            checkCommandQueue();
+                        });
                 }
+
                 return;
             }
-        }
 
-        if (!eventHandled)
-        {
-            std::ostringstream oss;
-            oss << "Event '" << eventToString(event) << "' not handled in state '" << stateToString(currentState_) << "'";
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-        }
-    });
+            Logger::getInstance()->FnLog(
+                "UPT: [FSM] Event ignored | State=" +
+                    stateToString(currentState_) +
+                    " | Event=" + eventToString(event),
+                logFileName_,
+                "UPT");
+        });
 }
 
 void Upt::checkCommandQueue()
 {
-    bool hasCommand = false;
-
+    if (stopping_.load() || currentState_ != STATE::IDLE)
     {
-        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-        if (!commandQueue_.empty())
-        {
-            hasCommand = true;
-        }
+        return;
     }
 
-    if (hasCommand)
+    if (!commandQueue_.empty())
     {
         processEvent(EVENT::COMMAND_ENQUEUED);
     }
@@ -3247,129 +3496,101 @@ void Upt::checkCommandQueue()
 
 void Upt::popFromCommandQueueAndEnqueueWrite()
 {
-    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-    
-    std::ostringstream oss;
-    oss << "Command queue size: " << commandQueue_.size() << std::endl;
-    if (!commandQueue_.empty())
+    if (commandQueue_.empty())
     {
-        oss << "Commands in queue: " << std::endl;
-        for (const auto& cmdData : commandQueue_)
-        {
-            oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
-        }
+        return;
     }
-    else
-    {
-        oss << "Command queue is empty." << std::endl;
-    }
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
 
-    if (!commandQueue_.empty())
-    {
-        ackRecv_.store(false);
-        rspRecv_.store(false);
-        pendingRspRecv_.store(false);
-        CommandWithData cmdData = commandQueue_.front();
-        commandQueue_.pop_front();
-        setCurrentCmd(cmdData.cmd);
-        enqueueWrite(prepareCmd(cmdData.cmd, cmdData.data));
-    }
+    CommandWithData cmdData = std::move(commandQueue_.front());
+    commandQueue_.pop_front();
+
+    setCurrentCmd(cmdData.cmd);
+
+    Logger::getInstance()->FnLog(
+        "UPT: [QUEUE] Dequeued | Cmd=" + getCommandString(cmdData.cmd) +
+            " | Remaining=" + std::to_string(commandQueue_.size()),
+        logFileName_,
+        "UPT");
+
+    enqueueWrite(prepareCmd(cmdData.cmd, std::move(cmdData.data)));
 }
 
 void Upt::handleIdleState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
     if (event == EVENT::COMMAND_ENQUEUED)
     {
-        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "UPT");
         popFromCommandQueueAndEnqueueWrite();
         startSerialWriteTimer();
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event in Idle State.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [CANCEL] Requested | State=IDLE", logFileName_, "UPT");
         enqueueCommandToFront(UPT_CMD::CANCEL_COMMAND_REQUEST);
     }
 }
 
 void Upt::handleSendingRequestAsyncState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
     if (event == EVENT::WRITE_COMPLETED)
     {
-        Logger::getInstance()->FnLog("Write completed. Start receiving ack.", logFileName_, "UPT");
         serialWriteTimer_.cancel();
         startAckTimer();
     }
     else if (event == EVENT::WRITE_FAILED)
     {
-        Logger::getInstance()->FnLog("Write failed.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [TX] Failed | Cmd=" + getCommandString(getCurrentCmd()), logFileName_, "UPT");
         serialWriteTimer_.cancel();
         handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::SEND_FAILED);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event in Sending Request Async State", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [CANCEL] Requested | State=SENDING_REQUEST_ASYNC | Cmd=" + getCommandString(getCurrentCmd()), logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
     else if (event == EVENT::WRITE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Received serial write timeout event in Sending Request Async State.", logFileName_, "UPT");
         handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::SEND_FAILED);
     }
 }
 
 void Upt::handleWaitingForAckState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
     if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
     {
-        Logger::getInstance()->FnLog("ACK Received. Start receiving response.", logFileName_, "UPT");
         startResponseTimer();
     }
     else if (event == EVENT::ACK_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("ACK Timeout.", logFileName_, "UPT");
         handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::ACK_TIMEOUT);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event in Waiting For Ack State.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [CANCEL] Requested | State=WAITING_FOR_ACK | Cmd=" + getCommandString(getCurrentCmd()), logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
 
 void Upt::handleWaitingForResponseState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
     if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
     {
-        Logger::getInstance()->FnLog("Response Received.", logFileName_, "UPT");
     }
     else if (event == EVENT::RESPONSE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "UPT");
         handleCmdErrorOrTimeout(getCurrentCmd(), MSG_STATUS::RSP_TIMEOUT);
     }
     else if (event == EVENT::CANCEL_COMMAND)
     {
-        Logger::getInstance()->FnLog("Received cancel command event in Waiting For Response State.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [CANCEL] Requested | State=WAITING_FOR_RESPONSE | Cmd=" + getCommandString(getCurrentCmd()), logFileName_, "UPT");
         processEvent(EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE);
     }
 }
 
 void Upt::handleCancelCommandRequestState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
     if (event == EVENT::CANCEL_COMMAND_CLEAN_UP_AND_ENQUEUE)
     {
-        Logger::getInstance()->FnLog("Received cancel command event.", logFileName_, "UPT");
+        Logger::getInstance()->FnLog("UPT: [CANCEL] Cleanup | Cmd=" + getCommandString(getCurrentCmd()), logFileName_, "UPT");
         ackTimer_.cancel();
         rspTimer_.cancel();
         serialWriteTimer_.cancel();
@@ -3380,101 +3601,136 @@ void Upt::handleCancelCommandRequestState(EVENT event)
 
 void Upt::startSerialWriteTimer()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    serialWriteTimer_.expires_after(std::chrono::seconds(10));
-    serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&Upt::handleSerialWriteTimeout, this, std::placeholders::_1)));
+    serialWriteTimer_.expires_after(kSerialWriteTimeout);
+    serialWriteTimer_.async_wait(
+        [this](const boost::system::error_code& error) {
+            handleSerialWriteTimeout(error);
+        });
 }
 
 void Upt::handleSerialWriteTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    if (!error)
+    if (stopping_.load())
     {
-        Logger::getInstance()->FnLog("Serial Write timeout occurred.", logFileName_, "UPT");
-        write_in_progress_ = false;  // Reset flag to allow next write
-        processEvent(EVENT::WRITE_TIMEOUT);
-    }
-    else if (error == boost::asio::error::operation_aborted)
-    {
-        Logger::getInstance()->FnLog("Serial Write Timer was cancelled (likely because write completed in time).", logFileName_, "UPT");
         return;
     }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Serial Write Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
 
-        write_in_progress_ = false; // Reset flag to allow retry
-        processEvent(EVENT::WRITE_TIMEOUT);
+    if (error == boost::asio::error::operation_aborted)
+    {
+        return;
+    }
+
+    if (error)
+    {
+        Logger::getInstance()->FnLog("UPT: [TX] Timer error | Cmd=" + getCommandString(getCurrentCmd()) + " | Error=" + error.message(), logFileName_, "UPT");
+    }
+
+    if (!writeInProgress_)
+    {
+        return;
+    }
+
+    Logger::getInstance()->FnLog("UPT: [TX] Timeout | Cmd=" + getCommandString(getCurrentCmd()), logFileName_, "UPT");
+
+    // Keep the TX queue front alive until the cancelled async_write
+    // completion handler runs. writeEnd() will then emit WRITE_TIMEOUT.
+    writeTimedOut_ = true;
+
+    boost::system::error_code cancelEc;
+    serialPort_.cancel(cancelEc);
+
+    if (cancelEc)
+    {
+        Logger::getInstance()->FnLog(
+            "UPT: [TX] Cancel failed | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Reason=write timeout | Error=" +
+                cancelEc.message(),
+            logFileName_,
+            "UPT");
     }
 }
 
 void Upt::startAckTimer()
 {
-    ackTimer_.expires_after(std::chrono::seconds(8));
-    ackTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&Upt::handleAckTimeout, this, std::placeholders::_1)));
+    ackTimer_.expires_after(kAckTimeout);
+    ackTimer_.async_wait(
+        [this](const boost::system::error_code& error) {
+            handleAckTimeout(error);
+        });
 }
 
 void Upt::handleAckTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    if (!error || (error == boost::asio::error::operation_aborted))
+    if (stopping_.load())
     {
-        if (ackRecv_.load())
-        {
-            ackRecv_.store(false);
-            processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
-        }
-        else
-        {
-            processEvent(EVENT::ACK_TIMEOUT);
-        }
+        return;
+    }
+
+    if (error == boost::asio::error::operation_aborted)
+    {
+        return;
+    }
+
+    if (error)
+    {
+        Logger::getInstance()->FnLog(
+            "UPT: [ACK] Timer error | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Error=" + error.message(),
+            logFileName_,
+            "UPT");
     }
     else
     {
-        std::ostringstream oss;
-        oss << "Ack Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-        processEvent(EVENT::ACK_TIMEOUT);
+        Logger::getInstance()->FnLog(
+            "UPT: [ACK] Timeout | Cmd=" + getCommandString(getCurrentCmd()),
+            logFileName_,
+            "UPT");
     }
+
+    processEvent(EVENT::ACK_TIMEOUT);
 }
 
 void Upt::startResponseTimer()
 {
-    rspTimer_.expires_after(std::chrono::seconds(180));
-    rspTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&Upt::handleCmdResponseTimeout, this, std::placeholders::_1)));
+    rspTimer_.expires_after(kResponseTimeout);
+    rspTimer_.async_wait(
+        [this](const boost::system::error_code& error) {
+            handleCmdResponseTimeout(error);
+        });
 }
 
 void Upt::handleCmdResponseTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
-    if (!error || (error == boost::asio::error::operation_aborted))
+    if (stopping_.load())
     {
-        if (rspRecv_.load())
-        {
-            rspRecv_.store(false);
-            processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
-        }
-        else
-        {
-            processEvent(EVENT::RESPONSE_TIMEOUT);
-        }
+        return;
+    }
+
+    if (error == boost::asio::error::operation_aborted)
+    {
+        return;
+    }
+
+    if (error)
+    {
+        Logger::getInstance()->FnLog(
+            "UPT: [RSP] Timer error | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Error=" + error.message(),
+            logFileName_,
+            "UPT");
     }
     else
     {
-        std::ostringstream oss;
-        oss << "Response Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-        processEvent(EVENT::RESPONSE_TIMEOUT);
+        Logger::getInstance()->FnLog(
+            "UPT: [RSP] Timeout | Cmd=" + getCommandString(getCurrentCmd()),
+            logFileName_,
+            "UPT");
     }
+
+    processEvent(EVENT::RESPONSE_TIMEOUT);
 }
 
 std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> payloadData)
@@ -3906,7 +4162,13 @@ std::vector<uint8_t> Upt::prepareCmd(Upt::UPT_CMD cmd, std::shared_ptr<void> pay
 
     data = msg.FnAddDataTransparency(completeMsg);
 
-    Logger::getInstance()->FnLog(msg.FnGetMsgOutputLogString(data), logFileName_, "UPT");
+   /* Temp: Disabled
+    Logger::getInstance()->FnLog(
+        "UPT: [PROTO] TX details\n" +
+            msg.FnGetMsgOutputLogString(data),
+        logFileName_,
+        "UPT");
+    */
 
     return data;
 }
@@ -3932,96 +4194,136 @@ PayloadField Upt::createPayload(uint32_t length, uint16_t payloadFieldId, uint8_
 
 void Upt::startRead()
 {
-    boost::asio::post(strand_, [this]() {
-        pSerialPort_->async_read_some(
-            boost::asio::buffer(readBuffer_, readBuffer_.size()),
-            boost::asio::bind_executor(strand_,
-                                        std::bind(&Upt::readEnd, this,
-                                        std::placeholders::_1,
-                                        std::placeholders::_2)));
-    });
+    if (stopping_.load() || !serialPort_.is_open())
+    {
+        return;
+    }
+
+    serialPort_.async_read_some(
+        boost::asio::buffer(readBuffer_),
+        [this](
+            const boost::system::error_code& error,
+            std::size_t bytesTransferred) {
+            readEnd(error, bytesTransferred);
+        });
 }
 
 void Upt::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
-    lastSerialReadTime_ = std::chrono::steady_clock::now();
+    if (stopping_.load())
+    {
+        return;
+    }
 
     if (!error)
     {
-        std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);
-        if (isRxResponseComplete(data))
+        lastSerialReadTime_ = std::chrono::steady_clock::now();
+
+        if (bytesTransferred > 0)
         {
-            handleReceivedCmd(getRxBuffer());
-            resetRxBuffer();
+            consumeReceivedBytes(readBuffer_.data(), bytesTransferred);
         }
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Serial Read error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+
+        startRead();
+        return;
     }
 
-    startRead();
+    if (error == boost::asio::error::operation_aborted)
+    {
+        // A write timeout cancels the serial port to abort the write.
+        // Restart RX if the module itself is still running.
+        if (!stopping_.load() && serialPort_.is_open())
+        {
+            startRead();
+        }
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "UPT: [RX] Serial read failed | Error=" +
+            error.message(),
+        logFileName_,
+        "UPT");
+
+    if (serialPort_.is_open())
+    {
+        startRead();
+    }
 }
 
 std::vector<uint8_t> Upt::getRxBuffer() const
 {
-    return std::vector<uint8_t>(rxBuffer_.begin(), rxBuffer_.begin() + rxNum_);
+    return std::vector<uint8_t>(rxBuffer_.begin(), rxBuffer_.begin() + static_cast<std::ptrdiff_t>(rxNum_));
 }
 
 void Upt::resetRxBuffer()
 {
-    rxBuffer_.fill(0);
     rxNum_ = 0;
 }
 
-bool Upt::isRxResponseComplete(const std::vector<uint8_t>& dataBuff)
+void Upt::consumeReceivedBytes(const std::uint8_t* data, std::size_t size)
 {
-    int ret = false;
-
-    for (const auto& data : dataBuff)
+    if (data == nullptr || size == 0)
     {
-        switch (rxState_)
-        {
-            case RX_STATE::RX_START:
-            {
-                if (data == STX)
-                {
-                    resetRxBuffer();
-                    rxBuffer_[rxNum_++] = data;
-                    rxState_ = RX_STATE::RX_RECEIVING;
-                }
-                break;
-            }
-            case RX_STATE::RX_RECEIVING:
-            {
-                if (data == STX)
-                {
-                    resetRxBuffer();
-                    rxBuffer_[rxNum_++] = data;
-                }
-                else if (data == ETX)
-                {
-                    rxBuffer_[rxNum_++] = data;
-                    rxState_ = RX_STATE::RX_START;
-                    ret = true;
-                }
-                else
-                {
-                    rxBuffer_[rxNum_++] = data;
-                }
-                break;
-            }
-        }
-
-        if (ret)
-        {
-            break;
-        }
+        return;
     }
 
-    return ret;
+    for (std::size_t index = 0; index < size; ++index)
+    {
+        const std::uint8_t byte = data[index];
+
+        if (rxState_ == RX_STATE::RX_START)
+        {
+            if (byte != STX)
+            {
+                continue;
+            }
+
+            resetRxBuffer();
+            rxBuffer_[rxNum_++] = byte;
+            rxState_ = RX_STATE::RX_RECEIVING;
+            continue;
+        }
+
+        if (byte == STX)
+        {
+            // A new STX means the previous partial frame is discarded.
+            resetRxBuffer();
+            rxBuffer_[rxNum_++] = byte;
+            continue;
+        }
+
+        if (rxNum_ >= rxBuffer_.size())
+        {
+            Logger::getInstance()->FnLog(
+                "UPT: [RX] Frame discarded | Reason=buffer overflow" +
+                    std::string(" | Capacity=") +
+                    std::to_string(rxBuffer_.size()),
+                logFileName_,
+                "UPT");
+
+            resetRxBuffer();
+            rxState_ = RX_STATE::RX_START;
+            continue;
+        }
+
+        rxBuffer_[rxNum_++] = byte;
+
+        if (byte != ETX)
+        {
+            continue;
+        }
+
+        const std::vector<std::uint8_t> frame = getRxBuffer();
+
+        resetRxBuffer();
+        rxState_ = RX_STATE::RX_START;
+
+        handleReceivedCmd(frame);
+
+        // Continue parsing the same read buffer. The legacy code stopped
+        // after the first complete frame and discarded any remaining bytes.
+    }
 }
 
 bool Upt::isMsgStatusValid(uint32_t msgStatus)
@@ -4067,99 +4369,178 @@ bool Upt::isMsgStatusValid(uint32_t msgStatus)
 
 void Upt::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    boost::asio::dispatch(strand_, [this, data = std::move(data)]() {
-        bool wasWriting_ = this->write_in_progress_;
-        writeQueue_.push(std::move(data));
-        if (!wasWriting_)
-        {
-            startWrite();
-        }
-    });
+    if (stopping_.load() || data.empty())
+    {
+        return;
+    }
+
+    const bool wasWriting = writeInProgress_;
+    writeQueue_.push(std::move(data));
+
+    if (!wasWriting)
+    {
+        startWrite();
+    }
 }
 
 void Upt::startWrite()
 {
+    if (stopping_.load() || !serialPort_.is_open())
+    {
+        writeInProgress_ = false;
+        return;
+    }
+
     if (writeQueue_.empty())
     {
-        Logger::getInstance()->FnLog(__func__ + std::string(" Write Queue is empty."), logFileName_, "UPT");
-        write_in_progress_ = false;  // Ensure flag is reset when queue is empty
+        writeInProgress_ = false;
         return;
     }
 
-    write_in_progress_ = true;  // Set this immediately to prevent duplicate writes
+    writeInProgress_ = true;
 
-    auto now = std::chrono::steady_clock::now();
-    auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_);
 
-    // Check if less than 2 seconds in milliseconds
-    if (timeSinceLastRead < 2000)
+    if (elapsed < kSerialWriteGap)
     {
-        auto boostTime = std::chrono::milliseconds(2000 - timeSinceLastRead);
-        serialWriteDelayTimer_.expires_after(boostTime);
+        const auto delay = kSerialWriteGap - elapsed;
 
-        // Add debug logging to check if the timer is being set properly
-        std::ostringstream oss;
-        oss << "Setting delay timer for " << (2000 - timeSinceLastRead) << " ms";
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+        writeDelayActive_ = true;
+        serialWriteDelayTimer_.expires_after(delay);
+        serialWriteDelayTimer_.async_wait(
+            [this](const boost::system::error_code& error) {
+                writeDelayActive_ = false;
 
-        serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
-                [this](const boost::system::error_code& /*e*/) {
-                    Logger::getInstance()->FnLog("Timer expired", logFileName_, "UPT");
-                    boost::asio::post(strand_, [this]() { startWrite(); });
-            }));
-        
+                if (stopping_.load() ||
+                    error == boost::asio::error::operation_aborted)
+                {
+                    return;
+                }
+
+                if (error)
+                {
+                    Logger::getInstance()->FnLog(
+                        "UPT: [TX] Write-gap timer error | Cmd=" +
+                            getCommandString(getCurrentCmd()) +
+                            " | Error=" + error.message(),
+                        logFileName_,
+                        "UPT");
+                    writeInProgress_ = false;
+                    processEvent(EVENT::WRITE_FAILED);
+                    return;
+                }
+
+                startWrite();
+            });
+
         return;
     }
 
+    writeDelayActive_ = false;
     const auto& data = writeQueue_.front();
-    std::ostringstream oss;
-    oss << "Data sent : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-    boost::asio::async_write(*pSerialPort_,
-                            boost::asio::buffer(data),
-                            boost::asio::bind_executor(strand_,
-                                                        std::bind(&Upt::writeEnd, this,
-                                                                    std::placeholders::_1,
-                                                                    std::placeholders::_2)));
+
+    Logger::getInstance()->FnLog(
+        "UPT: [TX] Frame | Cmd=" +
+            getCommandString(getCurrentCmd()) +
+            " | Bytes=" + std::to_string(data.size()) +
+            " | Data=" +
+            Common::getInstance()->FnGetDisplayVectorCharToHexString(data),
+        logFileName_,
+        "UPT");
+
+    boost::asio::async_write(
+        serialPort_,
+        boost::asio::buffer(data),
+        [this](
+            const boost::system::error_code& error,
+            std::size_t bytesTransferred) {
+            writeEnd(error, bytesTransferred);
+        });
 }
 
 void Upt::writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
-    if (!error)
+    if (stopping_.load())
+    {
+        writeInProgress_ = false;
+        writeDelayActive_ = false;
+        writeTimedOut_ = false;
+        return;
+    }
+
+    if (writeTimedOut_)
+    {
+        if (!writeQueue_.empty())
+        {
+            writeQueue_.pop();
+        }
+
+        writeTimedOut_ = false;
+        writeInProgress_ = false;
+
+        processEvent(EVENT::WRITE_TIMEOUT);
+        return;
+    }
+
+    if (!writeQueue_.empty())
     {
         writeQueue_.pop();
-        processEvent(EVENT::WRITE_COMPLETED);
     }
-    else
+
+    writeInProgress_ = false;
+
+    if (!error)
     {
-        std::ostringstream oss;
-        oss << "Serial Write error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-        processEvent(EVENT::WRITE_FAILED);
+        Logger::getInstance()->FnLog(
+            "UPT: [TX] Write completed | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Bytes=" + std::to_string(bytesTransferred),
+            logFileName_,
+            "UPT");
+
+        processEvent(EVENT::WRITE_COMPLETED);
+        return;
     }
-    write_in_progress_ = false;
+
+    if (error == boost::asio::error::operation_aborted)
+    {
+        // Cancellation not associated with the module shutdown or a timeout
+        // is treated as a failed write.
+        processEvent(EVENT::WRITE_FAILED);
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "UPT: [TX] Serial write failed | Cmd=" +
+            getCommandString(getCurrentCmd()) +
+            " | BytesTransferred=" + std::to_string(bytesTransferred) +
+            " | Error=" + error.message(),
+        logFileName_,
+        "UPT");
+
+    processEvent(EVENT::WRITE_FAILED);
 }
 
 void Upt::stopSerialWriteDelayTimer()
 {
-    // Convert boost::posix_time::ptime to std::chrono::steady_clock::time_point
-    auto timerExpirationTime = serialWriteDelayTimer_.expiry();
-
-    if (timerExpirationTime > std::chrono::steady_clock::now())
+    if (!writeDelayActive_)
     {
-        serialWriteDelayTimer_.cancel();
-        // Log the cancellation
-        std::ostringstream oss;
-        oss << "Cancel command received, serial write delay timer canceled.";
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
-        // Pop the data from the queue as we want to skip it
-        if (!writeQueue_.empty())
-        {
-            writeQueue_.pop();  // Remove the current data that is being delayed
-            Logger::getInstance()->FnLog("Current command popped from the queue due to cancel.", logFileName_, "UPT");
-        }
+        return;
     }
+
+    boost::system::error_code ec;
+    serialWriteDelayTimer_.cancel(ec);
+    writeDelayActive_ = false;
+
+    // No async_write has started while the delay timer is active, so it is
+    // safe to remove the queue-front buffer here.
+    if (!writeQueue_.empty())
+    {
+        writeQueue_.pop();
+    }
+
+    writeInProgress_ = false;
 }
 
 std::vector<Upt::SettlementPayloadRow> Upt::findReceivedSettlementPayloadData(const std::vector<PayloadField>& payloads)
@@ -4296,14 +4677,10 @@ std::string Upt::findReceivedPayloadData(const std::vector<PayloadField>& payloa
 
 void Upt::handleCmdResponse(const Message& msg)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
-
     if (msg.getHeaderMsgType() == static_cast<uint32_t>(MSG_TYPE::MSG_TYPE_CARD))
     {
         if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_CARD_DETECT))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_CARD_DETECT", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             std::string cardTypeStr = "";
             std::string cardCanStr = "";
@@ -4321,9 +4698,11 @@ void Upt::handleCmdResponse(const Message& msg)
             }
             catch(const std::exception& ex)
             {
-                std::ostringstream oss;
-                oss << "Exception : " << ex.what();
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+                Logger::getInstance()->FnLog(
+                    std::string("UPT: [RSP] Card detect conversion failed | Error=") +
+                        ex.what(),
+                    logFileName_,
+                    "UPT");
             }
 
             // Need to reverse the card type as the field encoding not matched
@@ -4371,7 +4750,13 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << ",cardType=" << cardTypeStr;
             oss << ",cardCan=" << cardCanStr;
             oss << ",cardBalance=" << cardBalanceStr;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Card detect | Status=" + msgRetCode +
+                    " | CardType=" + cardTypeStr +
+                    " | CardCAN=" + cardCanStr +
+                    " | Balance=" + cardBalanceStr,
+                logFileName_,
+                "UPT");
             //------ added on 15/07/2026
             UOPSCard_In = 1;
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCardDetect", oss.str());
@@ -4381,8 +4766,6 @@ void Upt::handleCmdResponse(const Message& msg)
     {
         if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_PAYMENT_AUTO))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_PAYMENT_AUTO", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             std::string cardCanStr = "";
             std::string cardDeductFeeStr = "";
@@ -4407,9 +4790,11 @@ void Upt::handleCmdResponse(const Message& msg)
             }
             catch (const std::exception& ex)
             {
-                std::ostringstream oss;
-                oss << "Exception : " << ex.what();
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+                Logger::getInstance()->FnLog(
+                    std::string("UPT: [RSP] Payment auto conversion failed | Error=") +
+                        ex.what(),
+                    logFileName_,
+                    "UPT");
             }
 
             // Cash Card Type
@@ -4457,7 +4842,16 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << ",cardReferenceNo=" << cardReferenceNumberStr;
             oss << ",cardBatchNo=" << batchNoStr;
             oss << ",cardType=" << cardTypeStr;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Payment auto | Status=" + msgRetCode +
+                    " | CardCAN=" + cardCanStr +
+                    " | Fee=" + cardDeductFeeStr +
+                    " | Balance=" + cardBalanceStr +
+                    " | Reference=" + cardReferenceNumberStr +
+                    " | Batch=" + batchNoStr +
+                    " | CardType=" + cardTypeStr,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTPaymentAuto", oss.str());
         }
@@ -4466,8 +4860,6 @@ void Upt::handleCmdResponse(const Message& msg)
     {
         if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_SETTLEMENT))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_SETTLEMENT", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             uint64_t netsAmount = 0;
             uint64_t netsCount = 0;
@@ -4504,9 +4896,12 @@ void Upt::handleCmdResponse(const Message& msg)
                 }
                 catch (const std::exception& ex)
                 {
-                    std::ostringstream oss;
-                    oss << "Exception : " << ex.what();
-                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+                    Logger::getInstance()->FnLog(
+                        std::string("UPT: [RSP] Settlement conversion failed | Provider=") +
+                            data.name +
+                            " | Error=" + ex.what(),
+                        logFileName_,
+                        "UPT");
                 }
             }
 
@@ -4525,7 +4920,20 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << " , NETS(ATM, NFP, NCC) count : " << netsCount << " , " << nfpCount << " , " << nccCount;
             oss << " , TID : " << TID;
             oss << " , MID : " << MID;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Settlement | Status=" + msgRetCode +
+                    " | TotalAmount=" + totalAmount +
+                    " | TotalCount=" + totalTransCount +
+                    " | NETSAmount=" + std::to_string(netsAmount) +
+                    " | NFPAmount=" + std::to_string(nfpAmount) +
+                    " | NCCAmount=" + std::to_string(nccAmount) +
+                    " | NETSCount=" + std::to_string(netsCount) +
+                    " | NFPCount=" + std::to_string(nfpCount) +
+                    " | NCCCount=" + std::to_string(nccCount) +
+                    " | TID=" + TID +
+                    " | MID=" + MID,
+                logFileName_,
+                "UPT");
 
             std::ostringstream oss2;
             oss2 << "msgStatus=" << msgRetCode;
@@ -4539,8 +4947,6 @@ void Upt::handleCmdResponse(const Message& msg)
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_RETRIEVE_LAST_SETTLEMENT", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             uint64_t netsAmount = 0;
             uint64_t netsCount = 0;
@@ -4576,9 +4982,12 @@ void Upt::handleCmdResponse(const Message& msg)
                 }
                 catch (const std::exception& ex)
                 {
-                    std::ostringstream oss;
-                    oss << "Exception : " << ex.what();
-                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+                    Logger::getInstance()->FnLog(
+                        std::string("UPT: [RSP] Settlement conversion failed | Provider=") +
+                            data.name +
+                            " | Error=" + ex.what(),
+                        logFileName_,
+                        "UPT");
                 }
             }
 
@@ -4591,7 +5000,18 @@ void Upt::handleCmdResponse(const Message& msg)
             oss << " , total trans count : " << totalTransCount;
             oss << " , NETS(ATM, NFP, NCC) amount : " << netsAmount << ", " << nfpAmount << " , " << nccAmount;
             oss << " , NETS(ATM, NFP, NCC) count : " << netsCount << " , " << nfpCount << " , " << nccCount;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Retrieve last settlement | Status=" + msgRetCode +
+                    " | TotalAmount=" + totalAmount +
+                    " | TotalCount=" + totalTransCount +
+                    " | NETSAmount=" + std::to_string(netsAmount) +
+                    " | NFPAmount=" + std::to_string(nfpAmount) +
+                    " | NCCAmount=" + std::to_string(nccAmount) +
+                    " | NETSCount=" + std::to_string(netsCount) +
+                    " | NFPCount=" + std::to_string(nfpCount) +
+                    " | NCCCount=" + std::to_string(nccCount),
+                logFileName_,
+                "UPT");
 
             std::ostringstream oss2;
             oss2 << "msgStatus=" << msgRetCode;
@@ -4603,66 +5023,71 @@ void Upt::handleCmdResponse(const Message& msg)
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_LOGON))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_LOGON", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
             oss << "msgStatus=" << msgRetCode;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Device logon | Status=" + msgRetCode,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceLogon", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_STATUS))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_STATUS", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
             oss << "msgStatus=" << msgRetCode;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Device status | Status=" + msgRetCode,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceStatus", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TIME_SYNC))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_TIME_SYNC", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
             oss << "msgStatus=" << msgRetCode;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Device time sync | Status=" + msgRetCode,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTimeSync", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_TMS))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_TMS", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
             oss << "msgStatus=" << msgRetCode;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Device TMS | Status=" + msgRetCode,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTMS", oss.str());
         }
         else if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_DEVICE_RESET))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_DEVICE_RESET", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
             oss << "msgStatus=" << msgRetCode;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Device reset | Status=" + msgRetCode,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceReset", oss.str());
         }
@@ -4671,14 +5096,15 @@ void Upt::handleCmdResponse(const Message& msg)
     {
         if (msg.getHeaderMsgCode() == static_cast<uint32_t>(MSG_CODE::MSG_CODE_CANCELLATION_CANCEL))
         {
-            Logger::getInstance()->FnLog("Handle MSG_CODE_CANCELLATION_CANCEL", logFileName_, "UPT");
-
             std::string msgRetCode = "";
             msgRetCode = Common::getInstance()->FnUint32ToString(msg.getHeaderMsgStatus());
 
             std::ostringstream oss;
             oss << "msgStatus=" << msgRetCode;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RSP] Command cancel | Status=" + msgRetCode,
+                logFileName_,
+                "UPT");
 
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCommandCancel", oss.str());
         }
@@ -4687,18 +5113,25 @@ void Upt::handleCmdResponse(const Message& msg)
 
 void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
 {
-    std::stringstream receivedRespStream;
-
-    receivedRespStream << "Received MSG data buffer: " << Common::getInstance()->FnGetDisplayVectorCharToHexString(msgDataBuff);
-    Logger::getInstance()->FnLog(receivedRespStream.str(), logFileName_, "UPT");
+    Logger::getInstance()->FnLog(
+        "UPT: [RX] Frame | Bytes=" +
+            std::to_string(msgDataBuff.size()) +
+            " | Data=" +
+            Common::getInstance()->FnGetDisplayVectorCharToHexString(msgDataBuff),
+        logFileName_,
+        "UPT");
     
     // Parse the msg data after removing STX and ETX
     Message msg;
     uint32_t msgParseStatus = msg.FnParseMsgData(msgDataBuff);
 
-    std::ostringstream oss;
-    oss << "Rx message parsing status: " << getMsgStatusString(msgParseStatus);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
+    Logger::getInstance()->FnLog(
+        "UPT: [RX] Parse | Status=" +
+            getMsgStatusString(msgParseStatus) +
+            " | Code=" +
+            Common::getInstance()->FnUint32ToString(msgParseStatus),
+        logFileName_,
+        "UPT");
 
     if (msgParseStatus == static_cast<uint32_t>(MSG_STATUS::SUCCESS))
     {
@@ -4708,27 +5141,79 @@ void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
             if (msg.getHeaderMsgClass() == static_cast<uint16_t>(MSG_CLASS::MSG_CLASS_ACK))
             {
                 // Log the response if received ACK
-                Logger::getInstance()->FnLog(msg.FnGetMsgOutputLogString(msgDataBuff), logFileName_, "UPT");
+                Logger::getInstance()->FnLog(
+                    "UPT: [ACK] Received | Cmd=" +
+                        getCommandString(getCurrentCmd()) +
+                        " | Seq=" +
+                        std::to_string(msg.getHeaderMsgSequence()) +
+                        " | Status=" +
+                        getMsgStatusString(msg.getHeaderMsgStatus()),
+                    logFileName_,
+                    "UPT");
+                
+                // Detailed protocol dump.
+                Logger::getInstance()->FnLog(
+                    "UPT: [PROTO] RX details\n" +
+                        msg.FnGetMsgOutputLogString(msgDataBuff),
+                    logFileName_,
+                    "UPT");
+
+                boost::system::error_code ec;
+                ackTimer_.cancel(ec);
 
                 // Check Message Status
                 if (isMsgStatusValid(msg.getHeaderMsgStatus()))
                 {
-                    ackRecv_.store(true);
+                    processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
                 }
                 else
                 {
-                    ackRecv_.store(false);
+                    Logger::getInstance()->FnLog(
+                        "UPT: [ACK] Rejected | Cmd=" +
+                            getCommandString(getCurrentCmd()) +
+                            " | Status=" +
+                            getMsgStatusString(msg.getHeaderMsgStatus()),
+                        logFileName_,
+                        "UPT");
+                    // Preserve the legacy behavior: an invalid ACK ends the
+                    // ACK wait as a command failure.
+                    processEvent(EVENT::ACK_TIMEOUT);
                 }
-                ackTimer_.cancel();
             }
             else if (msg.getHeaderMsgClass() == static_cast<uint16_t>(MSG_CLASS::MSG_CLASS_RSP))
             {
-                // Log the response if received the response
-                Logger::getInstance()->FnLog(msg.FnGetMsgOutputLogString(msgDataBuff), logFileName_, "UPT");
+                Logger::getInstance()->FnLog(
+                    "UPT: [RSP] Received | Cmd=" +
+                        getCommandString(getCurrentCmd()) +
+                        " | Seq=" +
+                        std::to_string(msg.getHeaderMsgSequence()) +
+                        " | Status=" +
+                        getMsgStatusString(msg.getHeaderMsgStatus()),
+                    logFileName_,
+                    "UPT");
+
+                // Detailed protocol dump.
+                Logger::getInstance()->FnLog(
+                    "UPT: [PROTO] RX details\n" +
+                        msg.FnGetMsgOutputLogString(msgDataBuff),
+                    logFileName_,
+                    "UPT");
 
                 handleCmdResponse(msg);
-                rspRecv_.store(true);
-                rspTimer_.cancel();
+
+                boost::system::error_code ec;
+                rspTimer_.cancel(ec);
+                processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
+            }
+            else
+            {
+                Logger::getInstance()->FnLog(
+                    "UPT: [RX] Unexpected message class | Class=" +
+                        getMsgClassString(msg.getHeaderMsgClass()) +
+                        " | Seq=" +
+                        std::to_string(msg.getHeaderMsgSequence()),
+                    logFileName_,
+                    "UPT");
             }
 
             // Check Msg Status to see whether reset sequence number is required or not
@@ -4745,14 +5230,32 @@ void Upt::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
         }
         else
         {
-            Logger::getInstance()->FnLog("Ack or Rsp message sequence number incorrect.", logFileName_, "UPT");
+            Logger::getInstance()->FnLog(
+                "UPT: [RX] Sequence mismatch | Expected=" +
+                    std::to_string(getSequenceNo()) +
+                    " | Received=" +
+                    std::to_string(msg.getHeaderMsgSequence()) +
+                    " | Class=" +
+                    getMsgClassString(msg.getHeaderMsgClass()),
+                logFileName_,
+                "UPT");
         }
     }
 }
 
 void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "UPT");
+    const auto statusCode = static_cast<uint32_t>(msgStatus);
+
+    Logger::getInstance()->FnLog(
+        "UPT: [CMD] Failed | Cmd=" +
+            getCommandString(cmd) +
+            " | Status=" +
+            getMsgStatusString(statusCode) +
+            " | Code=" +
+            Common::getInstance()->FnUint32ToString(statusCode),
+        logFileName_,
+        "UPT");
 
     switch (cmd)
     {
@@ -4760,8 +5263,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceStatus", oss.str());
             break;
         }
@@ -4769,8 +5270,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceReset", oss.str());
             break;
         }
@@ -4778,8 +5277,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTimeSync", oss.str());
             break;
         }
@@ -4802,8 +5299,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceLogon", oss.str());
             break;
         }
@@ -4811,8 +5306,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceTMS", oss.str());
             break;
         }
@@ -4820,8 +5313,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTDeviceSettlement", oss.str());
             break;
         }
@@ -4844,8 +5335,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTRetrieveLastSettlement", oss.str());
             break;
         }
@@ -4863,8 +5352,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCardDetect", oss.str());
             break;
         }
@@ -4882,8 +5369,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTPaymentAuto", oss.str());
             break;
         }
@@ -4951,8 +5436,6 @@ void Upt::handleCmdErrorOrTimeout(Upt::UPT_CMD cmd, Upt::MSG_STATUS msgStatus)
         {
             std::ostringstream oss;
             oss << "msgStatus=" << Common::getInstance()->FnUint32ToString(static_cast<uint32_t>(msgStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "UPT");
-
             EventManager::getInstance()->FnEnqueueEvent("Evt_handleUPTCommandCancel", oss.str());
             break;
         }

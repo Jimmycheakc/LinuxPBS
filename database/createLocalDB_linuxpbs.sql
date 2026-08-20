@@ -1,7 +1,11 @@
 -- CreateLocalDB_linuxpbs.sql
 
 -- Create a new database
-CREATE DATABASE IF NOT EXISTS linux_pbs;
+CREATE DATABASE IF NOT EXISTS linux_pbs
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_general_ci;
+
+
 USE linux_pbs;
 
 -- Create a Entry_Trans table in database
@@ -24,7 +28,7 @@ CREATE TABLE IF NOT EXISTS Entry_Trans (
     entry_lpn_SID VARCHAR(32),
     VCC VARCHAR(3),
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create a session_mst table in database
 CREATE TABLE IF NOT EXISTS season_mst (
@@ -46,7 +50,7 @@ CREATE TABLE IF NOT EXISTS season_mst (
     redeem_time INT DEFAULT 0,
     holder_type INT DEFAULT 0,
     sub_zone_id VARCHAR(100)
-);
+) ENGINE=InnoDB;
 
 -- Create a Station_Setup table in database
 CREATE TABLE IF NOT EXISTS Station_Setup (
@@ -62,7 +66,7 @@ CREATE TABLE IF NOT EXISTS Station_Setup (
     SubType INT DEFAULT 0,
     VirtualID INT DEFAULT 0,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create a Param_mst table in database
 CREATE TABLE IF NOT EXISTS Param_mst (
@@ -71,7 +75,7 @@ CREATE TABLE IF NOT EXISTS Param_mst (
     ParamValue VARCHAR(100),
     AddDT DATETIME DEFAULT CURRENT_TIMESTAMP,
     UpdateDT DATETIME
-);
+) ENGINE=InnoDB;
 
 -- Create message_mst table in database
 CREATE TABLE IF NOT EXISTS message_mst (
@@ -82,7 +86,7 @@ CREATE TABLE IF NOT EXISTS message_mst (
     m_status INT DEFAULT 0,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME
-);
+) ENGINE=InnoDB;
 
 -- Create Vehicle_type table in database
 CREATE TABLE IF NOT EXISTS Vehicle_type (
@@ -91,7 +95,7 @@ CREATE TABLE IF NOT EXISTS Vehicle_type (
     TransType INT DEFAULT 0,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_dt DATETIME
-);
+) ENGINE=InnoDB;
 
 -- Create TR_mst table in database
 CREATE TABLE IF NOT EXISTS TR_mst (
@@ -104,7 +108,7 @@ CREATE TABLE IF NOT EXISTS TR_mst (
     LineAlign INT DEFAULT 1,
     Spare1 VARCHAR(10) DEFAULT NULL,
     PRIMARY KEY(TRType, Line_no)
-);
+) ENGINE=InnoDB;
 
 -- Create Exit_Trans table in database
 CREATE TABLE IF NOT EXISTS Exit_Trans (
@@ -139,7 +143,7 @@ CREATE TABLE IF NOT EXISTS Exit_Trans (
     EEPPaymentTime DATETIME,
     VCC VARCHAR(3),
     Add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create Rate_Type_Info table in database
 CREATE TABLE IF NOT EXISTS Rate_Type_Info (
@@ -152,7 +156,7 @@ CREATE TABLE IF NOT EXISTS Rate_Type_Info (
     Has_Zone_Max TINYINT NOT NULL DEFAULT 0,
     Has_FirstEntry_Rate TINYINT NOT NULL DEFAULT 0,
     Add_Date DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create Special_Day_mst table in database
 CREATE TABLE IF NOT EXISTS Special_Day_mst (
@@ -160,7 +164,7 @@ CREATE TABLE IF NOT EXISTS Special_Day_mst (
     Rate_Type TINYINT DEFAULT 0,
     Day_Code VARCHAR(10),
     Add_Date DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create Rate_Free_Info table in database
 CREATE TABLE IF NOT EXISTS Rate_Free_Info (
@@ -171,7 +175,7 @@ CREATE TABLE IF NOT EXISTS Rate_Free_Info (
     Free_End VARCHAR(50) NOT NULL,
     Free_Time SMALLINT NOT NULL DEFAULT 0,
     Add_Date DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create 3Tariff_Info table in database
 CREATE TABLE IF NOT EXISTS 3Tariff_Info (
@@ -183,7 +187,7 @@ CREATE TABLE IF NOT EXISTS 3Tariff_Info (
     T3_Block SMALLINT NOT NULL DEFAULT 0,
     T3_Rate DECIMAL(7,2) NOT NULL DEFAULT 0.00,
     Add_Date DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create Rate_Max_Info table in database
 CREATE TABLE IF NOT EXISTS Rate_Max_Info (
@@ -193,14 +197,14 @@ CREATE TABLE IF NOT EXISTS Rate_Max_Info (
     End_Time VARCHAR(50) NOT NULL,
     Max_Fee DECIMAL(7,2) Not NULL DEFAULT 0.00,
     Add_Date DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create holiday_mst table in database
 CREATE TABLE IF NOT EXISTS holiday_mst (
     holiday_date DATETIME NOT NULL PRIMARY KEY,
     descrip VARCHAR(20) NOT NULL,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create tariff_setup table in database
 CREATE TABLE IF NOT EXISTS tariff_setup (
@@ -348,7 +352,7 @@ CREATE TABLE IF NOT EXISTS tariff_setup (
     day_type VARCHAR(100),
     update_dt DATETIME,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create tariff_type_info table in database
 CREATE TABLE IF NOT EXISTS tariff_type_info (
@@ -357,7 +361,7 @@ CREATE TABLE IF NOT EXISTS tariff_type_info (
     end_time DATETIME,
     update_dt DATETIME,
     add_dt DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB;
 
 -- Create X_Tariff table in database
 CREATE TABLE IF NOT EXISTS X_Tariff (
@@ -376,7 +380,7 @@ CREATE TABLE IF NOT EXISTS X_Tariff (
     time4 VARCHAR(8),
     auto4 TINYINT DEFAULT 0,
     fee4 DECIMAL(5,2) DEFAULT 0.00
-);
+) ENGINE=InnoDB;
 
 -- Create a new user and grant privileges
 CREATE USER IF NOT EXISTS 'linuxpbs'@'localhost' IDENTIFIED BY 'SJ2001';

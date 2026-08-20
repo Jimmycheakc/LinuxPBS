@@ -1,5 +1,7 @@
 #include "boost/algorithm/string.hpp"
 #include <boost/filesystem.hpp>
+#include <algorithm>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <fstream>
@@ -8,13 +10,26 @@
 #include <openssl/evp.h>
 #include <string>
 #include <sstream>
-#include "boost/asio/serial_port.hpp"
+#include <utility>
+
+#if defined(__linux__)
+#include <pthread.h>
+#endif
+
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/error.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/asio/serial_port.hpp>
 #include "common.h"
 #include "event_manager.h"
+#include "ini_parser.h"
 #include "lcsc.h"
 #include "log.h"
 #include "mount.h"
 #include "operation.h"
+#include "thread_pool_helper.h"
 
 // CscPacket Class
 CscPacket::CscPacket()
@@ -87,7 +102,7 @@ void CscPacket::setCrc(uint16_t crc)
     this->crc = crc;
 }
 
-uint16_t CscPacket::getCrc()
+uint16_t CscPacket::getCrc() const
 {
     return crc;
 }
@@ -168,28 +183,40 @@ std::string CscPacket::getMsgCscPacketOutput() const
 {
     std::ostringstream oss;
 
-    std::string msgCode = (code == 0x00) ? "CMD" : "RESP";
-    std::string msgType = LCSCReader::getInstance()->getCommandTypeString(type);
-    std::size_t payloadInBytes = payload.size();
+    const std::string msgCode = code ? "RESP" : "CMD";
+    const std::string msgType = LCSCReader::getInstance()->getCommandTypeString(type);
 
+    oss << "LCSC: [RX] Packet"
+        << " | Type=" << msgType
+        << " | Code=" << msgCode
+        << " | Length=" << len
+        << " | PayloadBytes=" << payload.size()
+        << '\n';
 
-    oss << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << msgType << " (" << msgCode << ")" << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "--------------------------------------------------" << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "Attention Code      [  1 byte  ] [H] " << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>(attn) << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "Code                [  1 bit   ] [H] " << std::setw(1) << std::setfill('0') << std::hex << static_cast<int>((code & 0x01)) << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "Type                [  2 bytes ] [H] " << std::setw(2) << std::setfill('0') << std::hex << static_cast<int>((type & 0x7F)) << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "Length              [  4 bytes ] [H] " << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(len) << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "Payload             [" << std::setw(3) << std::setfill(' ') << std::dec << static_cast<int>(payloadInBytes) << " bytes ] [H] " << Common::getInstance()->FnGetDisplayVectorCharToHexString(payload) << std::endl;
-    oss << std::setw(32) << std::setfill(' ') << "";
-    oss << "CRC                 [  4 bytes ] [H] " << std::setw(4) << std::setfill('0') << std::hex << static_cast<int>(crc) << std::endl;
+    oss << "  Attention [1 byte] = 0x"
+        << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+        << static_cast<unsigned int>(attn) << '\n';
+
+    oss << "  Code [1 bit]       = "
+        << std::dec << static_cast<unsigned int>(code ? 1 : 0)
+        << " (" << msgCode << ")\n";
+
+    oss << "  Type [7 bits]      = 0x"
+        << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+        << static_cast<unsigned int>(type & 0x7F)
+        << " (" << msgType << ")\n";
+
+    oss << "  Length [2 bytes]   = 0x"
+        << std::setw(4) << static_cast<unsigned int>(len)
+        << std::dec << " (" << len << ")\n";
+
+    oss << "  Payload [" << payload.size() << " bytes] = "
+        << Common::getInstance()->FnGetDisplayVectorCharToHexString(payload)
+        << '\n';
+
+    oss << "  CRC [2 bytes]      = 0x"
+        << std::hex << std::uppercase << std::setw(4) << std::setfill('0')
+        << static_cast<unsigned int>(crc);
 
     return oss.str();
 }
@@ -207,34 +234,15 @@ void CscPacket::clear()
 
 // LCSCReader Class
 
-LCSCReader* LCSCReader::lcscReader_ = nullptr;
-std::mutex LCSCReader::mutex_;
-std::mutex LCSCReader::currentCmdMutex_;
-
 LCSCReader::LCSCReader()
-    : ioContext_(),
-    strand_(boost::asio::make_strand(ioContext_)),
-    workGuard_(boost::asio::make_work_guard(ioContext_)),
-    rspTimer_(ioContext_),
-    serialWriteDelayTimer_(ioContext_),
-    serialWriteTimer_(ioContext_),
-    logFileName_("lcsc"),
-    currentState_(LCSCReader::STATE::IDLE),
-    write_in_progress_(false),
-    rxState_(LCSCReader::RX_STATE::RX_START),
-    lastSerialReadTime_(std::chrono::steady_clock::now()),
-    continueReadFlag_(false),
-    currentCmd(LCSCReader::LCSC_CMD::GET_STATUS_CMD),
-    HasCDFileToUpload_(false),
-    LastCDUploadDate_(0),
-    LastCDUploadTime_(0),
-    uploadLcscFileName_(""),
-    currentUploadLcscFilesState_(LCSCReader::UPLOAD_LCSC_FILES_STATE::IDLE),
-    lastDebitTime_("")
+    : rspTimer_(ioContext_),
+      serialWriteDelayTimer_(ioContext_),
+      serialWriteTimer_(ioContext_),
+      logFileName_("lcsc")
 {
     resetRxBuffer();
-    
-    aes_key = 
+
+    aes_key =
     {
         0x92, 0xCE, 0xE9, 0x2D, 0x81, 0xE5, 0x4A, 0xEB,
         0xB4, 0x1F, 0x7F, 0x56, 0x2A, 0xF2, 0x7A, 0xDF,
@@ -243,125 +251,363 @@ LCSCReader::LCSCReader()
     };
 }
 
+LCSCReader::~LCSCReader()
+{
+    // Normal shutdown should be performed through FnLCSCReaderClose().
+    // This is only a best-effort fallback for process/static destruction.
+    acceptingWork_.store(false);
+    stopping_.store(true);
+    workGuard_.reset();
+    ioContext_.stop();
+
+    if (ioContextThread_.joinable() &&
+        ioContextThread_.get_id() != std::this_thread::get_id())
+    {
+        ioContextThread_.join();
+    }
+
+    if (filePool_)
+    {
+        filePool_->stop();
+        filePool_->join();
+        filePool_.reset();
+    }
+
+    pSerialPort_.reset();
+}
+
 LCSCReader* LCSCReader::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (lcscReader_ == nullptr)
-    {
-        lcscReader_ = new LCSCReader();
-    }
-    return lcscReader_;
+    static LCSCReader instance;
+    return &instance;
 }
 
 int LCSCReader::FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName)
 {
-    int ret = static_cast<int>(mCSCEvents::iCommPortError);
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
 
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(ioContext_, comPortName);
+    Logger::getInstance()->FnCreateLogFile(logFileName_);
+
+    if (moduleRunning_.load() || ioContextThread_.joinable())
+    {
+        Logger::getInstance()->FnLog("LCSC: [INIT] Ignored | Reason=Already running", logFileName_, "LCSC");
+        return 1;
+    }
+
+    resetRuntimeState();
+
+    ioContext_.restart();
+    workGuard_.emplace(ioContext_.get_executor());
 
     try
     {
+        // File/network filesystem jobs must not block the single LCSC I/O
+        // thread. Two workers are enough for settlement writes plus the CD
+        // file workflow without creating a large thread footprint.
+        filePool_ = ThreadPoolHelper::create(2, "LCSC_FILE");
+
+        pSerialPort_ = std::make_unique<boost::asio::serial_port>(ioContext_);
+
+        pSerialPort_->open(comPortName);
         pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
         pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
         pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
         pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
 
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
-
-        if (!(boost::filesystem::exists(LOCAL_LCSC_FOLDER_PATH)))
+        if (!boost::filesystem::exists(LOCAL_LCSC_FOLDER_PATH))
         {
-            if (!(boost::filesystem::create_directories(LOCAL_LCSC_FOLDER_PATH)))
+            if (!boost::filesystem::create_directories(LOCAL_LCSC_FOLDER_PATH))
             {
-                std::ostringstream oss;
-                oss << "Failed to create directory: " << LOCAL_LCSC_FOLDER_PATH;
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                Logger::getInstance()->FnLog("LCSC: [INIT] Directory create failed | Path=" + LOCAL_LCSC_FOLDER_PATH, logFileName_, "LCSC");
             }
         }
-        
-        std::ostringstream oss;
-        if (pSerialPort_->is_open())
-        {
-            oss << "Successfully open serial port for LCSC Reader Communication: " << comPortName;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-            Logger::getInstance()->FnLog("LCSC Reader initialization completed.");
 
-            startIoContextThread();
-            startRead();
-            FnSendGetLoginCmd();
-            ret = 1;
-        }
-        else
+        if (!pSerialPort_->is_open())
         {
-            oss << "Failed to open serial port for LCSC Reader Communication: " << comPortName;
-            Logger::getInstance()->FnLog(oss.str());
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog("LCSC: [INIT] Failed | Port=" + comPortName + " | Reason=Serial port not open", logFileName_, "LCSC");
+
+            pSerialPort_.reset();
+            workGuard_.reset();
+
+            if (filePool_)
+            {
+                filePool_->stop();
+                filePool_->join();
+                filePool_.reset();
+            }
+
+            return static_cast<int>(mCSCEvents::iCommPortError);
         }
 
+        stopping_.store(false);
+        acceptingWork_.store(true);
+
+        if (!startIoContextThread())
+        {
+            acceptingWork_.store(false);
+            stopping_.store(true);
+
+            boost::system::error_code ec;
+            pSerialPort_->close(ec);
+            pSerialPort_.reset();
+            workGuard_.reset();
+
+            if (filePool_)
+            {
+                filePool_->stop();
+                filePool_->join();
+                filePool_.reset();
+            }
+
+            return static_cast<int>(mCSCEvents::iCommPortError);
+        }
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [INIT] Success | Port=" + comPortName +
+                " | Baud=" + std::to_string(baudRate),
+            logFileName_,
+            "LCSC");
+
+        // Start all asynchronous protocol work only after the object is fully
+        // initialized and the module-owned I/O thread is running.
+        boost::asio::post(
+            ioContext_,
+            [this]()
+            {
+                if (stopping_.load())
+                {
+                    return;
+                }
+
+                startRead();
+                FnSendGetLoginCmd();
+            });
+
+        return 1;
     }
     catch (const boost::filesystem::filesystem_error& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Boost Asio Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError(std::string("FnLCSCReaderInit, Filesystem exception: ") + e.what());
     }
     catch (const boost::system::system_error& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Boost Asio Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError(std::string("FnLCSCReaderInit, Boost.Asio exception: ") + e.what());
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError(std::string("FnLCSCReaderInit, Exception: ") + e.what());
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError("FnLCSCReaderInit, Exception: Unknown Exception");
     }
 
-    return ret;
+    acceptingWork_.store(false);
+    stopping_.store(true);
+
+    if (pSerialPort_)
+    {
+        boost::system::error_code ec;
+        pSerialPort_->close(ec);
+    }
+
+    if (ioContextThread_.joinable())
+    {
+        // Initialization has already failed; this is an emergency cleanup
+        // path, so stopping the context is preferable to leaving a live
+        // thread behind.
+        ioContext_.stop();
+        ioContextThread_.join();
+        moduleRunning_.store(false);
+    }
+
+    pSerialPort_.reset();
+    workGuard_.reset();
+
+    if (filePool_)
+    {
+        filePool_->stop();
+        filePool_->join();
+        filePool_.reset();
+    }
+
+    return static_cast<int>(mCSCEvents::iCommPortError);
 }
 
-void LCSCReader::startIoContextThread()
+bool LCSCReader::startIoContextThread()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
-    if (!ioContextThread_.joinable())
+    if (ioContextThread_.joinable())
     {
-        ioContextThread_ = std::thread([this] () { ioContext_.run(); });
+        return true;
+    }
+
+    try
+    {
+        ioContextThread_ =
+            std::thread(
+                [this]()
+                {
+#if defined(__linux__)
+                    ::pthread_setname_np(::pthread_self(), "LCSC_IO");
+#endif
+                    ioContext_.run();
+                });
+
+        moduleRunning_.store(true);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLog(
+            std::string("LCSC: [THREAD] Start failed | Error=") +
+                e.what(),
+            logFileName_,
+            "LCSC");
+        return false;
     }
 }
 
 void LCSCReader::FnLCSCReaderClose()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
 
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [SHUTDOWN] Rejected | Reason=Called from LCSC I/O thread",
+            logFileName_,
+            "LCSC");
+        return;
+    }
+
+    acceptingWork_.store(false);
+    stopping_.store(true);
+
+    if (!ioContextThread_.joinable())
+    {
+        if (pSerialPort_)
+        {
+            boost::system::error_code ec;
+            pSerialPort_->cancel(ec);
+            pSerialPort_->close(ec);
+            pSerialPort_.reset();
+        }
+
+        workGuard_.reset();
+
+        if (filePool_)
+        {
+            filePool_->join();
+            filePool_.reset();
+        }
+
+        resetRuntimeState();
+        moduleRunning_.store(false);
+        stopping_.store(false);
+        return;
+    }
+
+    Logger::getInstance()->FnLog("LCSC: [SHUTDOWN] Begin", logFileName_, "LCSC");
+
+    auto shutdownPromise = std::make_shared<std::promise<void>>();
+    auto shutdownFuture = shutdownPromise->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [this, shutdownPromise]()
+        {
+            shutdownOnIoThread();
+            shutdownPromise->set_value();
+        });
+
+    shutdownFuture.wait();
+
+    // Keep the context alive until cancellation/close has been issued on the
+    // I/O thread, then allow all already-queued completion handlers to drain.
     workGuard_.reset();
-    ioContext_.stop();
 
     if (ioContextThread_.joinable())
     {
         ioContextThread_.join();
     }
+
+    // Wait for already-started blocking jobs while stopping_ is still true.
+    // Their completion paths therefore cannot restart the FSM during close.
+    if (filePool_)
+    {
+        filePool_->join();
+        filePool_.reset();
+    }
+
+    pSerialPort_.reset();
+    resetRuntimeState();
+
+    moduleRunning_.store(false);
+    stopping_.store(false);
+
+    Logger::getInstance()->FnLog("LCSC: [SHUTDOWN] Completed", logFileName_, "LCSC");
+}
+
+void LCSCReader::shutdownOnIoThread()
+{
+    boost::system::error_code ec;
+
+    rspTimer_.cancel(ec);
+    serialWriteDelayTimer_.cancel(ec);
+    serialWriteTimer_.cancel(ec);
+
+    if (pSerialPort_)
+    {
+        pSerialPort_->cancel(ec);
+        pSerialPort_->close(ec);
+    }
+
+    commandQueue_.clear();
+    chunkCommandQueue_.clear();
+
+    // Do not clear writeQueue_ here. async_write() may still reference
+    // writeQueue_.front(). The queue is cleared only after io_context.run()
+    // has drained and the I/O thread has been joined.
+    writeInProgress_ = false;
+    writeTimedOut_ = false;
+    currentState_ = STATE::IDLE;
+    currentUploadLcscFilesState_ = UPLOAD_LCSC_FILES_STATE::IDLE;
+}
+
+void LCSCReader::resetRuntimeState()
+{
+    commandQueue_.clear();
+    chunkCommandQueue_.clear();
+
+    while (!writeQueue_.empty())
+    {
+        writeQueue_.pop();
+    }
+
+    currentCmd_ = LCSC_CMD::GET_STATUS_CMD;
+    currentState_ = STATE::IDLE;
+    currentUploadLcscFilesState_ = UPLOAD_LCSC_FILES_STATE::IDLE;
+
+    writeInProgress_ = false;
+    writeTimedOut_ = false;
+
+    rxState_ = RX_STATE::RX_START;
+    resetRxBuffer();
+
+    continueReadFlag_.store(false);
+    LCSCCard_In.store(0);
+    lastSerialReadTime_ = std::chrono::steady_clock::now();
 }
 
 void LCSCReader::setCurrentCmd(LCSCReader::LCSC_CMD cmd)
 {
-    std::unique_lock<std::mutex> lock(currentCmdMutex_);
-
-    currentCmd = cmd;
+    currentCmd_ = cmd;
 }
 
-LCSCReader::LCSC_CMD LCSCReader::getCurrentCmd()
+LCSCReader::LCSC_CMD LCSCReader::getCurrentCmd() const
 {
-    std::unique_lock<std::mutex> lock(currentCmdMutex_);
-
-    return currentCmd;
+    return currentCmd_;
 }
 
 std::string LCSCReader::getCommandString(LCSCReader::LCSC_CMD cmd)
@@ -383,6 +629,11 @@ std::string LCSCReader::getCommandString(LCSCReader::LCSC_CMD cmd)
         case LCSC_CMD::LOGIN_2:
         {
             returnStr = "LOGIN_2";
+            break;
+        }
+        case LCSC_CMD::LOGOUT:
+        {
+            returnStr = "LOGOUT";
             break;
         }
         case LCSC_CMD::GET_CARD_ID:
@@ -537,124 +788,183 @@ std::string LCSCReader::getCommandTypeString(uint8_t type)
     return returnStr;
 }
 
+std::string LCSCReader::toHexString(const std::vector<uint8_t>& data) const
+{
+    std::ostringstream oss;
+    oss << std::hex << std::uppercase << std::setfill('0');
+
+    for (const std::uint8_t byte : data)
+    {
+        oss << std::setw(2)
+            << static_cast<unsigned int>(byte);
+    }
+
+    return oss.str();
+}
+
 void LCSCReader::enqueueCommand(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ || !(pSerialPort_->is_open()))
+    if (!acceptingWork_.load())
     {
-        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "LCSC");
         return;
     }
 
-    std::ostringstream oss;
-    oss << "Sending LCSC Command to queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-    {
-        std::lock_guard<std::mutex> lock(commandQueueMutex_);
-        commandQueue_.emplace_back(cmd, data);
-    }
-
-    if (currentState_ == STATE::IDLE)
-    {
-        boost::asio::post(strand_, [this]() {
-            checkCommandQueue();
+    boost::asio::dispatch(
+        ioContext_,
+        [this, cmd, data = std::move(data)]() mutable
+        {
+            enqueueCommandOnIoThread(cmd, std::move(data));
         });
-    }
 }
 
 void LCSCReader::enqueueCommandToFront(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ || !(pSerialPort_->is_open()))
+    if (!acceptingWork_.load())
     {
-        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "LCSC");
         return;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(commandQueueMutex_);
-
-        // Check if the front command is the same as the one being enqueued
-        if (!commandQueue_.empty() && commandQueue_.front().cmd == cmd) 
+    boost::asio::dispatch(
+        ioContext_,
+        [this, cmd, data = std::move(data)]() mutable
         {
-            Logger::getInstance()->FnLog("Same command is already at the front of the queue, skipping enqueue.", logFileName_, "LCSC");
-            return;
-        }
-
-        std::ostringstream oss;
-        oss << "Sending LCSC Command to the front of queue: " << getCommandString(cmd);
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-        commandQueue_.emplace_front(cmd, data);
-    }
-
-    if (currentState_ == STATE::IDLE)
-    {
-        boost::asio::post(strand_, [this]() {
-            checkCommandQueue();
+            enqueueCommandToFrontOnIoThread(cmd, std::move(data));
         });
-    }
 }
 
 void LCSCReader::enqueueChunkCommand(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
 {
-    if (!pSerialPort_ && !(pSerialPort_->is_open()))
+    if (!acceptingWork_.load())
     {
-        Logger::getInstance()->FnLog("Serial Port not open, unable to enqueue command.", logFileName_, "LCSC");
         return;
     }
 
-    std::ostringstream oss;
-    oss << "Sending LCSC Command to queue: " << getCommandString(cmd);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+    boost::asio::dispatch(
+        ioContext_,
+        [this, cmd, data = std::move(data)]() mutable
+        {
+            enqueueChunkCommandOnIoThread(cmd, std::move(data));
+        });
+}
 
+void LCSCReader::enqueueCommandOnIoThread(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
+{
+    if (stopping_.load() ||
+        !pSerialPort_ ||
+        !pSerialPort_->is_open())
     {
-        std::lock_guard<std::mutex> lock(chunkCommandQueueMutex_);
-        chunkCommandQueue_.emplace_back(cmd, data);
+        Logger::getInstance()->FnLog(
+            "LCSC: [QUEUE] Rejected | Cmd=" +
+                getCommandString(cmd) +
+                " | Reason=Serial port not open",
+            logFileName_,
+            "LCSC");
+        return;
     }
+
+    commandQueue_.emplace_back(cmd, std::move(data));
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [QUEUE] Enqueued | Cmd=" +
+            getCommandString(cmd) +
+            " | Size=" +
+            std::to_string(commandQueue_.size()),
+        logFileName_,
+        "LCSC");
+
+    if (currentState_ == STATE::IDLE)
+    {
+        checkCommandQueue();
+    }
+}
+
+void LCSCReader::enqueueCommandToFrontOnIoThread(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
+{
+    if (stopping_.load() ||
+        !pSerialPort_ ||
+        !pSerialPort_->is_open())
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [QUEUE] Rejected | Cmd=" +
+                getCommandString(cmd) +
+                " | Reason=Serial port not open",
+            logFileName_,
+            "LCSC");
+        return;
+    }
+
+    if (!commandQueue_.empty() &&
+        commandQueue_.front().cmd == cmd)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [QUEUE] Ignored | Cmd=" +
+                getCommandString(cmd) +
+                " | Reason=Already at front",
+            logFileName_,
+            "LCSC");
+        return;
+    }
+
+    commandQueue_.emplace_front(cmd, std::move(data));
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [QUEUE] Enqueued front | Cmd=" +
+            getCommandString(cmd) +
+            " | Size=" +
+            std::to_string(commandQueue_.size()),
+        logFileName_,
+        "LCSC");
+
+    if (currentState_ == STATE::IDLE)
+    {
+        checkCommandQueue();
+    }
+}
+
+void LCSCReader::enqueueChunkCommandOnIoThread(LCSCReader::LCSC_CMD cmd, std::shared_ptr<void> data)
+{
+    if (stopping_.load() ||
+        !pSerialPort_ ||
+        !pSerialPort_->is_open())
+    {
+        return;
+    }
+
+    chunkCommandQueue_.emplace_back(cmd, std::move(data));
 }
 
 void LCSCReader::checkCommandQueue()
 {
-    bool hasCommand = false;
-    LCSC_CMD cmd;
-
+    if (stopping_.load() ||
+        currentState_ != STATE::IDLE ||
+        commandQueue_.empty())
     {
-        std::lock_guard<std::mutex> lock(commandQueueMutex_);
-        if (!commandQueue_.empty())
-        {
-            hasCommand = true;
-            CommandWithData cmdData = commandQueue_.front();
-            cmd = cmdData.cmd;
-        }
+        return;
     }
 
-    if (hasCommand)
+    const LCSC_CMD cmd = commandQueue_.front().cmd;
+
+    if (isChunkedCommand(cmd))
     {
-        if (isChunkedCommand(cmd))
-        {
-            boost::asio::post(strand_, [this]() {
-                processEvent(EVENT::CHUNK_COMMAND_ENQUEUED);
-            });
-        }
-        else
-        {
-            boost::asio::post(strand_, [this]() {
-                processEvent(EVENT::COMMAND_ENQUEUED);
-            });
-        }
+        processEvent(EVENT::CHUNK_COMMAND_ENQUEUED);
+    }
+    else
+    {
+        processEvent(EVENT::COMMAND_ENQUEUED);
     }
 }
 
 void LCSCReader::clearChunkCommandQueue()
 {
-    std::lock_guard<std::mutex> lock(chunkCommandQueueMutex_);
+    const std::size_t queueSize = chunkCommandQueue_.size();
 
-    std::ostringstream oss;
-    oss << "Clearing chunkCommandQueue_ | Size before: " << chunkCommandQueue_.size();
     chunkCommandQueue_.clear();
-    oss << ", Size after: " << chunkCommandQueue_.size();
 
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+    Logger::getInstance()->FnLog(
+        "LCSC: [QUEUE] Chunk queue cleared | Count=" +
+            std::to_string(queueSize),
+        logFileName_,
+        "LCSC");
 }
 
 
@@ -673,19 +983,26 @@ const LCSCReader::StateTransition LCSCReader::stateTransitionTable[static_cast<i
     }},
     {STATE::WAITING_FOR_RESPONSE,
     {
-        {EVENT::RESPONSE_TIMEOUT                        , &LCSCReader::handleWaitingForResponseState                    , STATE::IDLE                                   },
-        {EVENT::RESPONSE_RECEIVED                       , &LCSCReader::handleWaitingForResponseState                    , STATE::IDLE                                   }
+        // A complete serial frame has arrived, but it has not been validated
+        // yet. Stay in this state until handleReceivedCmd() classifies it.
+        {EVENT::RESPONSE_RECEIVED                       , &LCSCReader::handleWaitingForResponseState                    , STATE::WAITING_FOR_RESPONSE                   },
+        {EVENT::RESPONSE_HANDLED                        , &LCSCReader::handleWaitingForResponseState                    , STATE::IDLE                                   },
+        {EVENT::RESPONSE_REJECTED                       , &LCSCReader::handleWaitingForResponseState                    , STATE::IDLE                                   },
+        {EVENT::RESPONSE_TIMEOUT                        , &LCSCReader::handleWaitingForResponseState                    , STATE::IDLE                                   }
     }},
     {STATE::SENDING_CHUNK_COMMAND_REQUEST_ASYNC,
     {
         {EVENT::WRITE_COMPLETED                         , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::WAITING_FOR_CHUNK_COMMAND_RESPONSE     },
         {EVENT::WRITE_FAILED                            , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   },
-        {EVENT::WRITE_TIMEOUT                           , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   }
+        {EVENT::WRITE_TIMEOUT                           , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   },
+        // Chunk preparation can fail before async_write() is started.
+        {EVENT::CHUNK_COMMAND_ERROR                     , &LCSCReader::handleSendingChunkCommandRequestAsyncState       , STATE::IDLE                                   }
     }},
     {STATE::WAITING_FOR_CHUNK_COMMAND_RESPONSE,
     {
-        {EVENT::RESPONSE_TIMEOUT                        , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::IDLE                                   },
         {EVENT::RESPONSE_RECEIVED                       , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::WAITING_FOR_CHUNK_COMMAND_RESPONSE     },
+        {EVENT::RESPONSE_REJECTED                       , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::IDLE                                   },
+        {EVENT::RESPONSE_TIMEOUT                        , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::IDLE                                   },
         {EVENT::SEND_NEXT_CHUNK_COMMAND                 , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::SENDING_CHUNK_COMMAND_REQUEST_ASYNC    },
         {EVENT::ALL_CHUNK_COMMAND_COMPLETED             , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::IDLE                                   },
         {EVENT::CHUNK_COMMAND_ERROR                     , &LCSCReader::handleWaitingForChunkCommandResponseState        , STATE::IDLE                                   }
@@ -728,6 +1045,16 @@ std::string LCSCReader::eventToString(LCSCReader::EVENT event)
             returnStr = "RESPONSE_RECEIVED";
             break;
         }
+        case EVENT::RESPONSE_HANDLED:
+        {
+            returnStr = "RESPONSE_HANDLED";
+            break;
+        }
+        case EVENT::RESPONSE_REJECTED:
+        {
+            returnStr = "RESPONSE_REJECTED";
+            break;
+        }
         case EVENT::SEND_NEXT_CHUNK_COMMAND:
         {
             returnStr = "SEND_NEXT_CHUNK_COMMAND";
@@ -746,6 +1073,11 @@ std::string LCSCReader::eventToString(LCSCReader::EVENT event)
         case EVENT::WRITE_TIMEOUT:
         {
             returnStr = "WRITE_TIMEOUT";
+            break;
+        }
+        case EVENT::EVENT_COUNT:
+        default:
+        {
             break;
         }
     }
@@ -782,6 +1114,11 @@ std::string LCSCReader::stateToString(LCSCReader::STATE state)
         case STATE::WAITING_FOR_CHUNK_COMMAND_RESPONSE:
         {
             returnStr = "WAITING_FOR_CHUNK_COMMAND_RESPONSE";
+            break;
+        }
+        case STATE::STATE_COUNT:
+        default:
+        {
             break;
         }
     }
@@ -867,6 +1204,10 @@ std::string LCSCReader::getEventStringFromResponseCmdType(uint8_t respType)
             retStr = "Evt_LcscReaderStatus";
             break;
         }
+        default:
+        {
+            break;
+        }
     }
 
     return retStr;
@@ -874,203 +1215,229 @@ std::string LCSCReader::getEventStringFromResponseCmdType(uint8_t respType)
 
 void LCSCReader::processEvent(EVENT event)
 {
-    boost::asio::post(strand_, [this, event]() {
-        std::ostringstream oss;
-        oss << "processEvent => " << eventToString(event);
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-        int currentStateIndex_ = static_cast<int>(currentState_);
-        const auto& stateTransitions = stateTransitionTable[currentStateIndex_].transitions;
-
-        bool eventHandled = false;
-        for (const auto& transition : stateTransitions)
+    boost::asio::post(
+        ioContext_,
+        [this, event]()
         {
-            if (transition.event == event)
+            if (stopping_.load())
             {
-                eventHandled = true;
+                return;
+            }
 
-                std::ostringstream oss;
-                oss << "Current State : " << stateToString(currentState_);
-                oss << " , Event : " << eventToString(event);
-                oss << " , Event Handler : " << (transition.eventHandler ? "YES" : "NO");
-                oss << " , Next State : " << stateToString(transition.nextState);
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            const int currentStateIndex = static_cast<int>(currentState_);
+
+            if (currentStateIndex < 0 ||
+                currentStateIndex >= static_cast<int>(STATE::STATE_COUNT))
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FSM] Invalid state | Recovery=IDLE",
+                    logFileName_,
+                    "LCSC");
+
+                currentState_ = STATE::IDLE;
+                checkCommandQueue();
+                return;
+            }
+
+            const auto& stateTransitions = stateTransitionTable[currentStateIndex].transitions;
+
+            for (const auto& transition : stateTransitions)
+            {
+                if (transition.event != event)
+                {
+                    continue;
+                }
+
+                const STATE previousState = currentState_;
+
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FSM] Transition | From=" +
+                        stateToString(previousState) +
+                        " | Event=" +
+                        eventToString(event) +
+                        " | To=" +
+                        stateToString(
+                            transition.nextState),
+                    logFileName_,
+                    "LCSC");
 
                 if (transition.eventHandler != nullptr)
                 {
                     (this->*transition.eventHandler)(event);
                 }
+
                 currentState_ = transition.nextState;
 
                 if (currentState_ == STATE::IDLE)
                 {
-                    boost::asio::post(strand_, [this]() {
-                        checkCommandQueue();
-                    });
+                    // Post the next queue check so any event generated by the
+                    // handler above observes the completed state transition.
+                    boost::asio::post(
+                        ioContext_,
+                        [this]()
+                        {
+                            if (!stopping_.load())
+                            {
+                                checkCommandQueue();
+                            }
+                        });
                 }
+
                 return;
             }
-        }
 
-        if (!eventHandled)
-        {
-            std::ostringstream oss;
-            oss << "Event '" << eventToString(event) << "' not handled in state '" << stateToString(currentState_) << "'";
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        }
-    });
+            Logger::getInstance()->FnLog(
+                "LCSC: [FSM] Event ignored | State=" +
+                    stateToString(currentState_) +
+                    " | Event=" +
+                    eventToString(event),
+                logFileName_,
+                "LCSC");
+        });
 }
 
 bool LCSCReader::isChunkedCommand(LCSCReader::LCSC_CMD cmd)
 {
-    bool ret = false;
-
     switch (cmd)
     {
         case LCSC_CMD::UPLOAD_CFG_FILE:
         case LCSC_CMD::UPLOAD_CIL_FILE:
         case LCSC_CMD::UPLOAD_BL_FILE:
-        {
-            ret = true;
-            break;
-        }
-    }
+            return true;
 
-    return ret;
+        default:
+            return false;
+    }
 }
 
 bool LCSCReader::isChunkedCommandType(LCSCReader::LCSC_CMD_TYPE cmd)
 {
-    bool ret = false;
-
     switch (cmd)
     {
         case LCSC_CMD_TYPE::BL_UPLOAD:
         case LCSC_CMD_TYPE::CIL_UPLOAD:
         case LCSC_CMD_TYPE::CFG_UPLOAD:
-        {
-            ret = true;
-        }
-    }
+            return true;
 
-    return ret;
+        default:
+            return false;
+    }
 }
 
 void LCSCReader::popFromCommandQueueAndEnqueueWrite()
 {
-    std::lock_guard<std::mutex> lock(commandQueueMutex_);
+    if (commandQueue_.empty())
+    {
+        Logger::getInstance()->FnLog("LCSC: [QUEUE] Empty", logFileName_, "LCSC");
+        return;
+    }
 
-    std::ostringstream oss;
-    oss << "Command queue size: " << commandQueue_.size() << std::endl;
-    if (!commandQueue_.empty())
-    {
-        oss << "Commands in queue: " << std::endl;
-        for (const auto& cmdData : commandQueue_)
-        {
-            oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
-        }
-    }
-    else
-    {
-        oss << "Command queue is empty." << std::endl;
-    }
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+    CommandWithData cmdData = std::move(commandQueue_.front());
+    commandQueue_.pop_front();
 
-    if (!commandQueue_.empty())
-    {
-        CommandWithData cmdData = commandQueue_.front();
-        commandQueue_.pop_front();
-        setCurrentCmd(cmdData.cmd);
-        enqueueWrite(prepareCmd(cmdData.cmd, cmdData.data));
-    }
+    setCurrentCmd(cmdData.cmd);
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [QUEUE] Dequeued | Cmd=" +
+            getCommandString(cmdData.cmd) +
+            " | Remaining=" +
+            std::to_string(commandQueue_.size()),
+        logFileName_,
+        "LCSC");
+
+    enqueueWrite(prepareCmd(cmdData.cmd, std::move(cmdData.data)));
 }
 
 void LCSCReader::popFromChunkCommandQueueAndEnqueueWrite()
 {
     try
     {
-        bool hasCommand = false;
-        struct CommandWithData cmdData(LCSC_CMD::GET_STATUS_CMD);
-
-        std::lock_guard<std::mutex> lock(commandQueueMutex_);
-
-        std::ostringstream oss;
-        oss << "Command queue size: " << commandQueue_.size() << std::endl;
-        if (!commandQueue_.empty())
+        if (commandQueue_.empty())
         {
-            oss << "Commands in queue: " << std::endl;
-            for (const auto& cmdData : commandQueue_)
-            {
-                oss << "[Cmd: " << getCommandString(cmdData.cmd) << "]" << std::endl;
-            }
-        }
-        else
-        {
-            oss << "Command queue is empty." << std::endl;
-        }
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-        {
-            if (!commandQueue_.empty())
-            {
-                hasCommand = true;
-                cmdData = commandQueue_.front();
-                commandQueue_.pop_front();
-            }
+            Logger::getInstance()->FnLog(
+                "LCSC: [QUEUE] Empty | Type=Chunk command",
+                logFileName_,
+                "LCSC");
+            return;
         }
 
-        if (hasCommand)
+        CommandWithData cmdData = std::move(commandQueue_.front());
+        commandQueue_.pop_front();
+
+        setCurrentCmd(cmdData.cmd);
+
+        auto chunksData = std::static_pointer_cast<std::vector<std::vector<uint8_t>>>(cmdData.data);
+
+        if (!chunksData ||
+            chunksData->empty())
         {
-            setCurrentCmd(cmdData.cmd);
-            auto chunksData = std::static_pointer_cast<std::vector<std::vector<uint8_t>>>(cmdData.data);
+            Logger::getInstance()->FnLog(
+                "LCSC: [CHUNK] Prepare failed | Cmd=" +
+                    getCommandString(cmdData.cmd) +
+                    " | Reason=No chunk data",
+                logFileName_,
+                "LCSC");
 
-            for (const auto& chunk : *chunksData)
-            {
-                std::shared_ptr<void> req_data = std::make_shared<std::vector<uint8_t>>(chunk);
-                enqueueChunkCommand(cmdData.cmd, req_data);
-            }
-
-            sendNextChunkCommandData();
+            processEvent(EVENT::CHUNK_COMMAND_ERROR);
+            return;
         }
+
+        for (const auto& chunk : *chunksData)
+        {
+            enqueueChunkCommandOnIoThread(cmdData.cmd, std::make_shared<std::vector<uint8_t>>(chunk));
+        }
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [CHUNK] Prepared | Cmd=" +
+                getCommandString(cmdData.cmd) +
+                " | Chunks=" +
+                std::to_string(
+                    chunkCommandQueue_.size()),
+            logFileName_,
+            "LCSC");
+
+        sendNextChunkCommandData();
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError(std::string("popFromChunkCommandQueueAndEnqueueWrite, Exception: ") + e.what());
+
+        processEvent( EVENT::CHUNK_COMMAND_ERROR);
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLogExceptionError("popFromChunkCommandQueueAndEnqueueWrite, Exception: Unknown Exception");
+
+        processEvent(EVENT::CHUNK_COMMAND_ERROR);
     }
 }
 
 void LCSCReader::sendNextChunkCommandData()
 {
-    std::lock_guard<std::mutex> lock(chunkCommandQueueMutex_);
-    if (!chunkCommandQueue_.empty())
+    if (chunkCommandQueue_.empty())
     {
-        CommandWithData cmdData = chunkCommandQueue_.front();
-        chunkCommandQueue_.pop_front();
-        enqueueWrite(prepareCmd(cmdData.cmd, cmdData.data));
+        Logger::getInstance()->FnLog(
+            "LCSC: [CHUNK] No pending chunk",
+            logFileName_,
+            "LCSC");
+        return;
     }
+
+    CommandWithData cmdData = std::move(chunkCommandQueue_.front());
+    chunkCommandQueue_.pop_front();
+
+    enqueueWrite(prepareCmd(cmdData.cmd, std::move(cmdData.data)));
 }
 
 void LCSCReader::handleIdleState(LCSCReader::EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == EVENT::COMMAND_ENQUEUED)
     {
-        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "LCSC");
         popFromCommandQueueAndEnqueueWrite();
         startSerialWriteTimer(NORMAL_CMD_WRITE_TIMEOUT);
     }
     else if (event == EVENT::CHUNK_COMMAND_ENQUEUED)
     {
-        Logger::getInstance()->FnLog("Pop from chunk command queue and write.", logFileName_, "LCSC");
         popFromChunkCommandQueueAndEnqueueWrite();
         startSerialWriteTimer(CHUNK_CMD_WRITE_TIMEOUT);
     }
@@ -1078,97 +1445,140 @@ void LCSCReader::handleIdleState(LCSCReader::EVENT event)
 
 void LCSCReader::handleSendingRequestAsyncState(LCSCReader::EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == EVENT::WRITE_COMPLETED)
     {
-        Logger::getInstance()->FnLog("Write completed. Start receiving response.", logFileName_, "LCSC");
+        boost::system::error_code ec;
+        serialWriteTimer_.cancel(ec);
         startResponseTimer();
-        serialWriteTimer_.cancel();
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [TX] Completed | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Action=Wait response",
+            logFileName_,
+            "LCSC");
     }
     else if (event == EVENT::WRITE_FAILED)
     {
-        Logger::getInstance()->FnLog("Write failed.", logFileName_, "LCSC");
-        serialWriteTimer_.cancel();
+        boost::system::error_code ec;
+        serialWriteTimer_.cancel(ec);
+
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
     }
     else if (event == EVENT::WRITE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Received serial write timeout event in Sending Request Async State.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
     }
 }
 
 void LCSCReader::handleWaitingForResponseState(LCSCReader::EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == EVENT::RESPONSE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sTimeout);
     }
     else if (event == EVENT::RESPONSE_RECEIVED)
     {
-        Logger::getInstance()->FnLog("Response Received. Handling the response.", logFileName_, "LCSC");
-        handleReceivedCmd(getRxBuffer());
+        const auto frame = getRxBuffer();
         resetRxBuffer();
+        handleReceivedCmd(frame);
+    }
+    else if (event == EVENT::RESPONSE_HANDLED)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [RSP] Completed | Cmd=" +
+                getCommandString(getCurrentCmd()),
+            logFileName_,
+            "LCSC");
+    }
+    else if (event == EVENT::RESPONSE_REJECTED)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [RSP] Rejected | Cmd=" +
+                getCommandString(getCurrentCmd()),
+            logFileName_,
+            "LCSC");
     }
 }
 
 void LCSCReader::handleSendingChunkCommandRequestAsyncState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == EVENT::WRITE_COMPLETED)
     {
-        Logger::getInstance()->FnLog("Write completed. Start receiving response.", logFileName_, "LCSC");
+        boost::system::error_code ec;
+        serialWriteTimer_.cancel(ec);
         startResponseTimer();
-        serialWriteTimer_.cancel();
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [CHUNK] Write completed | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Remaining=" +
+                std::to_string(
+                    chunkCommandQueue_.size()),
+            logFileName_,
+            "LCSC");
     }
     else if (event == EVENT::WRITE_FAILED)
     {
-        Logger::getInstance()->FnLog("Write failed.", logFileName_, "LCSC");
-        serialWriteTimer_.cancel();
+        boost::system::error_code ec;
+        serialWriteTimer_.cancel(ec);
+
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
         clearChunkCommandQueue();
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
     }
     else if (event == EVENT::WRITE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Received serial write timeout event in Sending Chunk Cmd Request Async State.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sSendcmdfail);
         clearChunkCommandQueue();
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+    }
+    else if (event == EVENT::CHUNK_COMMAND_ERROR)
+    {
+        boost::system::error_code ec;
+        serialWriteTimer_.cancel(ec);
+
+        handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::rNotRespCmd);
+        clearChunkCommandQueue();
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
     }
 }
 
 void LCSCReader::handleWaitingForChunkCommandResponseState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == EVENT::RESPONSE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::sTimeout);
         clearChunkCommandQueue();
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
     }
     else if (event == EVENT::RESPONSE_RECEIVED)
     {
-        Logger::getInstance()->FnLog("Response Received. Handling the response.", logFileName_, "LCSC");
-        handleReceivedCmd(getRxBuffer());
+        const auto frame = getRxBuffer();
         resetRxBuffer();
+        handleReceivedCmd(frame);
+    }
+    else if (event == EVENT::RESPONSE_REJECTED)
+    {
+        clearChunkCommandQueue();
     }
     else if (event == EVENT::SEND_NEXT_CHUNK_COMMAND)
     {
-        Logger::getInstance()->FnLog("Send next chunk of command data", logFileName_, "LCSC");
         sendNextChunkCommandData();
+
+        // Every chunk needs its own write timeout.
+        startSerialWriteTimer(CHUNK_CMD_WRITE_TIMEOUT);
     }
     else if (event == EVENT::ALL_CHUNK_COMMAND_COMPLETED)
     {
-        Logger::getInstance()->FnLog("All chunk of command data sent completely.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [CHUNK] Upload completed | Cmd=" +
+                getCommandString(getCurrentCmd()),
+            logFileName_,
+            "LCSC");
     }
     else if (event == EVENT::CHUNK_COMMAND_ERROR)
     {
-        Logger::getInstance()->FnLog("Chunk of command data error.", logFileName_, "LCSC");
         handleCmdErrorOrTimeout(getCurrentCmd(), mCSCEvents::rNotRespCmd);
         clearChunkCommandQueue();
     }
@@ -1176,71 +1586,122 @@ void LCSCReader::handleWaitingForChunkCommandResponseState(EVENT event)
 
 void LCSCReader::startSerialWriteTimer(int seconds)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    if (stopping_.load())
+    {
+        return;
+    }
+
+    boost::system::error_code ec;
+    serialWriteTimer_.cancel(ec);
 
     serialWriteTimer_.expires_after(std::chrono::seconds(seconds));
-    serialWriteTimer_.async_wait(boost::asio::bind_executor(strand_, 
-        std::bind(&LCSCReader::handleSerialWriteTimeout, this, std::placeholders::_1)));
+
+    serialWriteTimer_.async_wait(
+        [this](
+            const boost::system::error_code& error)
+        {
+            handleSerialWriteTimeout(error);
+        });
 }
 
 void LCSCReader::handleSerialWriteTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
-    if (!error)
+    if (error == boost::asio::error::operation_aborted ||
+        stopping_.load())
     {
-        Logger::getInstance()->FnLog("Serial Timer Timeout.", logFileName_, "LCSC");
-        write_in_progress_ = false;  // Reset flag to allow next write
-        processEvent(EVENT::WRITE_TIMEOUT);
-    }
-    else if (error == boost::asio::error::operation_aborted)
-    {
-        Logger::getInstance()->FnLog("Serial Write Timer was cancelled (likely because write completed in time).", logFileName_, "LCSC");
         return;
+    }
+
+    if (error)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [TX] Write timer error | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Error=" +
+                error.message(),
+            logFileName_,
+            "LCSC");
     }
     else
     {
-        std::ostringstream oss;
-        oss << "Serial Write Timer error : " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [TX] Timeout | Cmd=" +
+                getCommandString(getCurrentCmd()),
+            logFileName_,
+            "LCSC");
+    }
 
-        write_in_progress_ = false; // Reset flag to allow retry
+    if (!writeInProgress_)
+    {
         processEvent(EVENT::WRITE_TIMEOUT);
+        return;
+    }
+
+    // Do not destroy writeQueue_.front() while async_write() may still be
+    // using it. Mark the timeout and cancel the serial operation. The actual
+    // WRITE_TIMEOUT event is generated from writeEnd() after Asio releases
+    // the buffer.
+    writeTimedOut_ = true;
+
+    if (pSerialPort_ &&
+        pSerialPort_->is_open())
+    {
+        boost::system::error_code ec;
+        pSerialPort_->cancel(ec);
     }
 }
 
 void LCSCReader::startResponseTimer()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    if (stopping_.load())
+    {
+        return;
+    }
+
+    boost::system::error_code ec;
+    rspTimer_.cancel(ec);
 
     rspTimer_.expires_after(std::chrono::seconds(2));
-    rspTimer_.async_wait(boost::asio::bind_executor(strand_, 
-        std::bind(&LCSCReader::handleCmdResponseTimeout, this, std::placeholders::_1)));
+
+    rspTimer_.async_wait(
+        [this](
+            const boost::system::error_code& error)
+        {
+            handleCmdResponseTimeout(error);
+        });
 }
 
 void LCSCReader::handleCmdResponseTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
-    if (!error)
+    if (error == boost::asio::error::operation_aborted ||
+        stopping_.load())
     {
-        Logger::getInstance()->FnLog("Response Timer Timeout.", logFileName_, "LCSC");
-        processEvent(EVENT::RESPONSE_TIMEOUT);
+        return;
     }
-    else if (error == boost::asio::error::operation_aborted)
+
+    if (error)
     {
-        Logger::getInstance()->FnLog("Response Timer Cancelled.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [RSP] Timer error | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Error=" +
+                error.message(),
+            logFileName_,
+            "LCSC");
     }
     else
     {
-        std::ostringstream oss;
-        oss << "Response Timer error : " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        processEvent(EVENT::RESPONSE_TIMEOUT);
+        Logger::getInstance()->FnLog(
+            "LCSC: [RSP] Timeout | Cmd=" +
+                getCommandString(getCurrentCmd()),
+            logFileName_,
+            "LCSC");
     }
+
+    processEvent(EVENT::RESPONSE_TIMEOUT);
 }
 
-uint16_t LCSCReader::CRC16_CCITT(const uint8_t* inStr, size_t length)
+uint16_t LCSCReader::CRC16_CCITT(const uint8_t* inStr, std::size_t length)
 {
     uint8_t CL = 0xFF;
     uint8_t Ch = 0xFF;
@@ -1639,154 +2100,300 @@ std::vector<uint8_t> LCSCReader::getRxBuffer() const
 
 void LCSCReader::startRead()
 {
-    boost::asio::post(strand_, [this]() {
-        pSerialPort_->async_read_some(
-            boost::asio::buffer(readBuffer_, readBuffer_.size()),
-            boost::asio::bind_executor(strand_,
-                                        std::bind(&LCSCReader::readEnd, this,
-                                        std::placeholders::_1,
-                                        std::placeholders::_2)));
-    });
+    if (stopping_.load() ||
+        !pSerialPort_ ||
+        !pSerialPort_->is_open())
+    {
+        return;
+    }
+
+    pSerialPort_->async_read_some(
+        boost::asio::buffer(
+            readBuffer_,
+            readBuffer_.size()),
+        [this](
+            const boost::system::error_code& error,
+            std::size_t bytesTransferred)
+        {
+            readEnd(error, bytesTransferred);
+        });
 }
 
 void LCSCReader::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
     lastSerialReadTime_ = std::chrono::steady_clock::now();
 
+    if (stopping_.load())
+    {
+        return;
+    }
+
     if (!error)
     {
-        std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);
+        const std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + static_cast<std::ptrdiff_t>(bytesTransferred));
+
         if (isRxResponseComplete(data))
         {
             processEvent(EVENT::RESPONSE_RECEIVED);
         }
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Serial Read Error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+
+        startRead();
+        return;
     }
 
-    startRead();
+    if (error == boost::asio::error::operation_aborted)
+    {
+        // serial_port::cancel() is also used to terminate an overdue write.
+        // The read operation is cancelled at the same time, so re-arm it
+        // unless the module itself is shutting down.
+        if (pSerialPort_ &&
+            pSerialPort_->is_open())
+        {
+            startRead();
+        }
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [RX] Read error | Error=" +
+            error.message(),
+        logFileName_,
+        "LCSC");
+
+    // Preserve the original behaviour of keeping the receive loop alive for
+    // recoverable serial errors.
+    if (pSerialPort_ &&
+        pSerialPort_->is_open())
+    {
+        startRead();
+    }
 }
 
 bool LCSCReader::isRxResponseComplete(const std::vector<uint8_t>& dataBuff)
 {
-    bool ret = false;
-
-    for (const auto& data : dataBuff)
+    for (const uint8_t data : dataBuff)
     {
         switch (rxState_)
         {
             case RX_STATE::RX_START:
             {
-                if (data == 0xa5)
+                if (data == 0xA5)
                 {
                     resetRxBuffer();
+
                     rxBuffer_[rxNum_++] = data;
                     rxState_ = RX_STATE::RX_RECEIVING;
                 }
                 break;
             }
+
             case RX_STATE::RX_RECEIVING:
             {
+                if (rxNum_ >= rxBuffer_.size())
+                {
+                    Logger::getInstance()->FnLog(
+                        "LCSC: [RX] Frame rejected | Reason=Buffer overflow",
+                        logFileName_,
+                        "LCSC");
+
+                    resetRxBuffer();
+                    rxState_ = RX_STATE::RX_START;
+
+                    // A5 may also be the beginning of a new frame.
+                    if (data == 0xA5)
+                    {
+                        rxBuffer_[rxNum_++] = data;
+                        rxState_ = RX_STATE::RX_RECEIVING;
+                    }
+                    break;
+                }
+
                 rxBuffer_[rxNum_++] = data;
 
-                if (rxNum_ > 4)
+                if (rxNum_ < 4)
                 {
-                    uint16_t dataLen = (static_cast<uint16_t>(rxBuffer_[2] << 8) | (static_cast<uint16_t>(rxBuffer_[3])));
+                    break;
+                }
 
-                    if (rxNum_ == dataLen)
-                    {
-                        rxState_ = RX_STATE::RX_START;
-                        ret = true;
-                    }
-                    else
-                    {
-                        ret = false;
-                    }
-                }
-                else
+                const std::uint16_t dataLen = (static_cast<std::uint16_t>(rxBuffer_[2]) << 8) | static_cast<std::uint16_t>(rxBuffer_[3]);
+
+                if (dataLen < 6 ||
+                    dataLen > rxBuffer_.size())
                 {
-                    ret = false;
+                    Logger::getInstance()->FnLog(
+                        "LCSC: [RX] Frame rejected | Reason=Invalid length | Length=" +
+                            std::to_string(dataLen),
+                        logFileName_,
+                        "LCSC");
+
+                    resetRxBuffer();
+                    rxState_ = RX_STATE::RX_START;
+                    break;
                 }
+
+                if (rxNum_ == dataLen)
+                {
+                    // This protocol has one outstanding request at a time.
+                    // Stop at the first complete frame so later bytes in the
+                    // same read cannot overwrite the frame before the posted
+                    // RESPONSE_RECEIVED event consumes it.
+                    rxState_ = RX_STATE::RX_START;
+                    return true;
+                }
+                else if (rxNum_ > dataLen)
+                {
+                    Logger::getInstance()->FnLog(
+                        "LCSC: [RX] Frame rejected | Reason=Length overflow | Expected=" +
+                            std::to_string(dataLen) +
+                            " | Received=" +
+                            std::to_string(rxNum_),
+                        logFileName_,
+                        "LCSC");
+
+                    resetRxBuffer();
+                    rxState_ = RX_STATE::RX_START;
+                }
+
                 break;
             }
         }
     }
 
-    return ret;
+    return false;
 }
 
 void LCSCReader::enqueueWrite(const std::vector<uint8_t>& data)
 {
-    boost::asio::dispatch(strand_, [this, data = std::move(data)]() {
-        bool wasWriting_ = this->write_in_progress_;
-        writeQueue_.push(std::move(data));
-        if (!wasWriting_)
+    boost::asio::dispatch(
+        ioContext_,
+        [this, data]()
         {
-            startWrite();
-        }
-    });
+            if (stopping_.load())
+            {
+                return;
+            }
+
+            const bool wasWriting = writeInProgress_;
+
+            writeQueue_.push(data);
+
+            if (!wasWriting)
+            {
+                startWrite();
+            }
+        });
 }
 
 void LCSCReader::startWrite()
 {
+    if (stopping_.load())
+    {
+        return;
+    }
+
     if (writeQueue_.empty())
     {
-        Logger::getInstance()->FnLog(__func__ + std::string(" Write Queue is empty."), logFileName_, "UPT");
-        write_in_progress_ = false;  // Ensure flag is reset when queue is empty
+        writeInProgress_ = false;
         return;
     }
 
-    write_in_progress_ = true;  // Set this immediately to prevent duplicate writes
-
-    auto now = std::chrono::steady_clock::now();
-    auto timeSinceLastRead = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSerialReadTime_).count();
-
-    // Check if less than 200 milliseconds
-    /* Temp: Disable due to send CD files slow
-    if (timeSinceLastRead < 200)
+    if (!pSerialPort_ ||
+        !pSerialPort_->is_open())
     {
-        auto boostTime = std::chrono::milliseconds(200 - timeSinceLastRead);
-        serialWriteDelayTimer_.expires_after(boostTime);
-        serialWriteDelayTimer_.async_wait(boost::asio::bind_executor(strand_, 
-                [this](const boost::system::error_code&) {
-                    boost::asio::post(strand_, [this]() { startWrite(); });
-            }));
-        
+        writeInProgress_ = false;
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [TX] Failed | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Reason=Serial port not open",
+            logFileName_,
+            "LCSC");
+
+        processEvent(EVENT::WRITE_FAILED);
         return;
     }
-    */
+
+    writeInProgress_ = true;
+    writeTimedOut_ = false;
 
     const auto& data = writeQueue_.front();
-    std::ostringstream oss;
-    oss << "Data sent : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-    boost::asio::async_write(*pSerialPort_,
-                            boost::asio::buffer(data),
-                            boost::asio::bind_executor(strand_,
-                                                        std::bind(&LCSCReader::writeEnd, this,
-                                                                    std::placeholders::_1,
-                                                                    std::placeholders::_2)));
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [TX] Frame | Cmd=" +
+            getCommandString(getCurrentCmd()) +
+            " | Bytes=" +
+            std::to_string(data.size()) +
+            " | Hex=" +
+            toHexString(data),
+        logFileName_,
+        "LCSC");
+
+    boost::asio::async_write(
+        *pSerialPort_,
+        boost::asio::buffer(data),
+        [this](
+            const boost::system::error_code& error,
+            std::size_t bytesTransferred)
+        {
+            writeEnd(error, bytesTransferred);
+        });
 }
 
 void LCSCReader::writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
-    if (!error)
+    boost::system::error_code timerEc;
+    serialWriteTimer_.cancel(timerEc);
+
+    if (!writeQueue_.empty())
     {
         writeQueue_.pop();
-        processEvent(EVENT::WRITE_COMPLETED);
     }
-    else
+
+    writeInProgress_ = false;
+
+    if (stopping_.load())
     {
-        std::ostringstream oss;
-        oss << "Serial Write error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        processEvent(EVENT::WRITE_FAILED);
+        writeTimedOut_ = false;
+        return;
     }
-    write_in_progress_ = false;
+
+    if (writeTimedOut_)
+    {
+        writeTimedOut_ = false;
+        processEvent(EVENT::WRITE_TIMEOUT);
+        return;
+    }
+
+    if (!error)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [TX] Write completed | Cmd=" +
+                getCommandString(getCurrentCmd()) +
+                " | Bytes=" +
+                std::to_string(bytesTransferred),
+            logFileName_,
+            "LCSC");
+
+        processEvent(EVENT::WRITE_COMPLETED);
+        return;
+    }
+
+    if (error == boost::asio::error::operation_aborted)
+    {
+        // Cancellation not associated with a timeout is expected only during
+        // shutdown, which was handled above.
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [TX] Write failed | Cmd=" +
+            getCommandString(getCurrentCmd()) +
+            " | Error=" +
+            error.message(),
+        logFileName_,
+        "LCSC");
+
+    processEvent(EVENT::WRITE_FAILED);
 }
 
 bool LCSCReader::isCurrentCmdResponse(LCSCReader::LCSC_CMD currCmd, uint8_t respType)
@@ -1816,73 +2423,148 @@ bool LCSCReader::isCurrentCmdResponse(LCSCReader::LCSC_CMD currCmd, uint8_t resp
 
 void LCSCReader::handleReceivedCmd(const std::vector<uint8_t>& msgDataBuff)
 {
-    bool isResponse = false;
-    std::stringstream receivedRespStream;
-    std::stringstream rspEventStream;
+    const auto rejectCurrentResponse =
+        [this, &msgDataBuff](mCSCEvents status,
+                            const std::string& reason)
+        {
+            boost::system::error_code ec;
+            rspTimer_.cancel(ec);
 
-    receivedRespStream << "Received MSG data buffer: " << Common::getInstance()->FnGetDisplayVectorCharToHexString(msgDataBuff);
-    Logger::getInstance()->FnLog(receivedRespStream.str(), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [RX] Rejected | Cmd=" +
+                    getCommandString(getCurrentCmd()) +
+                    " | Reason=" + reason +
+                    " | Bytes=" +
+                    std::to_string(msgDataBuff.size()) +
+                    " | Hex=" +
+                    toHexString(msgDataBuff),
+                logFileName_,
+                "LCSC");
+
+            handleCmdErrorOrTimeout(getCurrentCmd(), status);
+
+            if (isChunkedCommand(getCurrentCmd()))
+            {
+                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+            }
+
+            processEvent(EVENT::RESPONSE_REJECTED);
+        };
+
+    if (msgDataBuff.size() < 6)
+    {
+        rejectCurrentResponse(mCSCEvents::rCorruptedCmd, "Frame too short");
+        return;
+    }
+
+    const std::uint16_t declaredLength =
+        (static_cast<std::uint16_t>(msgDataBuff[2]) << 8) |
+        static_cast<std::uint16_t>(msgDataBuff[3]);
+
+    if (msgDataBuff[0] != 0xA5)
+    {
+        rejectCurrentResponse(mCSCEvents::rCorruptedCmd, "Invalid attention code");
+        return;
+    }
+
+    if (declaredLength != msgDataBuff.size())
+    {
+        rejectCurrentResponse(
+            mCSCEvents::rCorruptedCmd,
+            "Length mismatch (declared=" +
+                std::to_string(declaredLength) +
+                ", actual=" +
+                std::to_string(msgDataBuff.size()) +
+                ")");
+        return;
+    }
 
     CscPacket msg;
     msg.deserialize(msgDataBuff);
 
-    // Check CRC
-    uint16_t crc_result = CRC16_CCITT(msgDataBuff.data(), (msgDataBuff.size() - 2));
-    if (crc_result == msg.getCrc())
+    const std::uint16_t calculatedCrc = CRC16_CCITT(msgDataBuff.data(), msgDataBuff.size() - 2);
+
+    if (calculatedCrc != msg.getCrc())
     {
-        // Check command code is response
-        if ((msg.getCode() == static_cast<uint8_t>(LCSC_CMD_CODE::RESPONSE)) && isCurrentCmdResponse(getCurrentCmd(), msg.getType()))
-        {
-            isResponse = true;
-            // Cancel rspTimer_ timer
-            rspTimer_.cancel();
-            // Handle command response
-            std::string msgRsp = handleCmdResponse(msg);
-            rspEventStream << msgRsp;
-        }
-        else
-        {
-            Logger::getInstance()->FnLog("Invalid Command Code.", logFileName_, "LCSC");
-            rspEventStream << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::rNotRespCmd));
+        std::ostringstream reason;
+        reason << "CRC mismatch (expected=0x"
+               << std::uppercase
+               << std::hex
+               << std::setw(4)
+               << std::setfill('0')
+               << calculatedCrc
+               << ", received=0x"
+               << std::setw(4)
+               << msg.getCrc()
+               << ')';
 
-            // Raise internal event with response received by checking its command type
-            if (isChunkedCommandType(static_cast<LCSC_CMD_TYPE>(msg.getType())))
-            {
-                // Display the cmd response when error
-                Logger::getInstance()->FnLog(msg.getMsgCscPacketOutput(), logFileName_, "LCSC");
-
-                processEvent(EVENT::CHUNK_COMMAND_ERROR);
-                handleUploadLcscFilesCmdResponse(msg, rspEventStream.str());
-            }
-        }
-    }
-    else
-    {
-        Logger::getInstance()->FnLog("Invalid CRC.", logFileName_, "LCSC");
-        rspEventStream << "msgStatus=" << std::to_string(static_cast<int>(mCSCEvents::rCRCError));
-
-        // Raise internal event with response received by checking its command type
-        if (isChunkedCommandType(static_cast<LCSC_CMD_TYPE>(msg.getType())))
-        {
-            // Display the cmd response when error
-            Logger::getInstance()->FnLog(msg.getMsgCscPacketOutput(), logFileName_, "LCSC");
-
-            processEvent(EVENT::CHUNK_COMMAND_ERROR);
-            handleUploadLcscFilesCmdResponse(msg, rspEventStream.str());
-        }
+        rejectCurrentResponse(mCSCEvents::rCRCError, reason.str());
+        return;
     }
 
-    if (isResponse == false && continueReadFlag_.load() == false && (getCurrentCmd() == LCSC_CMD::GET_CARD_ID || getCurrentCmd() == LCSC_CMD::CARD_BALANCE))
+    if (msg.getCode() != static_cast<std::uint8_t>(LCSC_CMD_CODE::RESPONSE))
     {
-        rspEventStream.str("");
-        rspEventStream.clear();
-        Logger::getInstance()->FnLog("No raise event due to stop read.", logFileName_, "LCSC");
+        rejectCurrentResponse(mCSCEvents::rNotRespCmd, "Packet code is not RESPONSE");
+        return;
     }
 
-    // Raise event
-    if (!(rspEventStream.str().empty()))
+    if (!isCurrentCmdResponse(getCurrentCmd(), msg.getType()))
     {
-        EventManager::getInstance()->FnEnqueueEvent(getEventStringFromResponseCmdType(msg.getType()), rspEventStream.str());
+        rejectCurrentResponse(mCSCEvents::rNotRespCmd, "Response type mismatch (type=" + getCommandTypeString(msg.getType()) + ")");
+        return;
+    }
+
+    // Every currently supported LCSC response starts with a result/status byte
+    // and handleCmdResponse() indexes payload[0]. Reject an empty payload here
+    // instead of allowing malformed input to reach the protocol parser.
+    if (msg.getPayload().empty())
+    {
+        rejectCurrentResponse(mCSCEvents::rCorruptedCmd, "Empty response payload");
+        return;
+    }
+
+    boost::system::error_code timerEc;
+    rspTimer_.cancel(timerEc);
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [RX] Parsed | Cmd=" +
+            getCommandString(getCurrentCmd()) +
+            " | Type=" +
+            getCommandTypeString(msg.getType()) +
+            " | Code=RESP" +
+            " | Length=" +
+            std::to_string(msg.getLength()) +
+            " | PayloadBytes=" +
+            std::to_string(msg.getPayload().size()),
+        logFileName_,
+        "LCSC");
+
+    const std::string msgRsp = handleCmdResponse(msg);
+
+    if (!msgRsp.empty())
+    {
+        const std::string eventName = getEventStringFromResponseCmdType(msg.getType());
+
+        if (!eventName.empty())
+        {
+            EventManager::getInstance()->FnEnqueueEvent(eventName, msgRsp);
+
+            Logger::getInstance()->FnLog(
+                "LCSC: [EVENT] Queued | Name=" +
+                    eventName +
+                    " | Type=" +
+                    getCommandTypeString(msg.getType()),
+                logFileName_,
+                "LCSC");
+        }
+    }
+
+    // Chunk responses drive SEND_NEXT_CHUNK_COMMAND /
+    // ALL_CHUNK_COMMAND_COMPLETED / CHUNK_COMMAND_ERROR from
+    // handleCmdResponse(). A normal response is complete here.
+    if (!isChunkedCommandType(static_cast<LCSC_CMD_TYPE>(msg.getType())))
+    {
+        processEvent(EVENT::RESPONSE_HANDLED);
     }
 }
 
@@ -1892,7 +2574,7 @@ void LCSCReader::handleUploadLcscFilesCmdResponse(const CscPacket& msg, const st
         || (msg.getType() == static_cast<uint8_t>(LCSC_CMD_TYPE::CIL_UPLOAD))
         || (msg.getType() == static_cast<uint8_t>(LCSC_CMD_TYPE::CFG_UPLOAD)))
     {
-        std:string cdFilesRsp = msgRsp;
+        std::string cdFilesRsp = msgRsp;
         uint8_t msg_status = 0xFF;
         try
         {
@@ -1970,7 +2652,6 @@ void LCSCReader::handleUploadLcscGetStatusCmdResponse(const CscPacket& msg, cons
 
 std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
     // If not chunk command (other than upload BL, CIL, CFG cmd), will display the cmd response immediately
     if (!isChunkedCommandType(static_cast<LCSC_CMD_TYPE>(msg.getType())))
     {
@@ -2191,7 +2872,7 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
             // If received the stop read, no need to proceed the response
             if (continueReadFlag_.load() == false)
             {
-                Logger::getInstance()->FnLog("Stop read, no need to process the response.", logFileName_, "LCSC");
+                Logger::getInstance()->FnLog("LCSC: [CARD] Response ignored | Reason=Continuous read disabled", logFileName_, "LCSC");
                 break;
             }
 
@@ -2267,7 +2948,7 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
             if ((continueReadFlag_.load() == true) && (getCardIDSuccess == false))
             {
                 oss.str("");
-                Logger::getInstance()->FnLog("No card detected, continue detect.", logFileName_, "LCSC");
+                Logger::getInstance()->FnLog("LCSC: [CARD] Card not detected | Action=Retry", logFileName_, "LCSC");
                 enqueueCommandToFront(LCSC_CMD::GET_CARD_ID);
             }
             break;
@@ -2278,7 +2959,7 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
             // If received the stop read, no need to proceed the response
             if (continueReadFlag_.load() == false)
             {
-                Logger::getInstance()->FnLog("Stop read, no need to process the response.", logFileName_, "LCSC");
+                Logger::getInstance()->FnLog("LCSC: [CARD] Response ignored | Reason=Continuous read disabled", logFileName_, "LCSC");
                 break;
             }
 
@@ -2919,200 +3600,151 @@ std::string LCSCReader::handleCmdResponse(const CscPacket& msg)
 
 void LCSCReader::handleCmdErrorOrTimeout(LCSCReader::LCSC_CMD cmd, LCSCReader::mCSCEvents eventStatus)
 {
+    const std::string status = std::to_string(static_cast<int>(eventStatus));
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [CMD] Failed | Cmd=" + getCommandString(cmd) +
+            " | Status=" + status,
+        logFileName_,
+        "LCSC");
+
+    // A GET_STATUS issued by the CD-upload FSM is a dependency of CDACK
+    // generation. If the command itself times out or cannot be sent, the
+    // upload FSM must also be released from GENERATE_CDACKFILES.
+    if (cmd == LCSC_CMD::GET_STATUS_CMD &&
+        currentUploadLcscFilesState_ == UPLOAD_LCSC_FILES_STATE::GENERATE_CDACKFILES)
+    {
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_FAILED);
+    }
+
+    // Continuous card polling is intentionally retried instead of publishing
+    // a timeout/failure event while card detection remains enabled.
+    if (cmd == LCSC_CMD::GET_CARD_ID)
+    {
+        if (continueReadFlag_.load())
+        {
+            Logger::getInstance()->FnLog("LCSC: [CARD] No card response | Action=Retry CardID", logFileName_, "LCSC");
+            enqueueCommandToFront(LCSC_CMD::GET_CARD_ID);
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("LCSC: [CARD] No card response | Action=Ignore | Reason=Continuous read disabled", logFileName_, "LCSC");
+        }
+        return;
+    }
+
+    if (cmd == LCSC_CMD::CARD_BALANCE)
+    {
+        if (continueReadFlag_.load())
+        {
+            Logger::getInstance()->FnLog("LCSC: [CARD] No balance response | Action=Retry Balance", logFileName_, "LCSC");
+            enqueueCommandToFront(LCSC_CMD::CARD_BALANCE);
+        }
+        else
+        {
+            Logger::getInstance()->FnLog("LCSC: [CARD] No balance response | Action=Ignore | Reason=Continuous read disabled", logFileName_, "LCSC");
+        }
+        return;
+    }
+
+    std::string eventName;
+
     switch (cmd)
     {
         case LCSC_CMD::GET_STATUS_CMD:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_LcscReaderStatus", oss.str());
+            eventName = "Evt_LcscReaderStatus";
             break;
-        }
         case LCSC_CMD::LOGIN_1:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_LcscReaderLogin", oss.str());
-            break;
-        }
         case LCSC_CMD::LOGIN_2:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_LcscReaderLogin", oss.str());
+            eventName = "Evt_LcscReaderLogin";
             break;
-        }
         case LCSC_CMD::LOGOUT:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderLogout", oss.str());
+            eventName = "Evt_handleLcscReaderLogout";
             break;
-        }
-        case LCSC_CMD::GET_CARD_ID:
-        {
-            if (continueReadFlag_.load())
-            {
-                Logger::getInstance()->FnLog("Timeout and no card detected, continue detect.", logFileName_, "LCSC");
-                enqueueCommandToFront(LCSC_CMD::GET_CARD_ID);
-            }
-            else
-            {
-                Logger::getInstance()->FnLog("Timeout but stop read, no need to raise event.", logFileName_, "LCSC");
-                /*
-                std::ostringstream oss;
-                oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-                EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardID", oss.str());
-                */
-            }
-            break;
-        }
-        case LCSC_CMD::CARD_BALANCE:
-        {
-            if (continueReadFlag_.load())
-            {
-                Logger::getInstance()->FnLog("Timeout and no card balance detected, continue detect.", logFileName_, "LCSC");
-                enqueueCommandToFront(LCSC_CMD::CARD_BALANCE);
-            }
-            else
-            {
-                Logger::getInstance()->FnLog("Timeout but stop read, no need to raise event.", logFileName_, "LCSC");
-                /*
-                std::ostringstream oss;
-                oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-                EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardBalance", oss.str());
-                */
-            }
-            break;
-        }
         case LCSC_CMD::CARD_DEDUCT:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardDeduct", oss.str());
+            eventName = "Evt_handleLcscReaderGetCardDeduct";
             break;
-        }
         case LCSC_CMD::CARD_RECORD:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardRecord", oss.str());
+            eventName = "Evt_handleLcscReaderGetCardRecord";
             break;
-        }
         case LCSC_CMD::CARD_FLUSH:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetCardFlush", oss.str());
+            eventName = "Evt_handleLcscReaderGetCardFlush";
             break;
-        }
         case LCSC_CMD::GET_TIME:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderGetTime", oss.str());
+            eventName = "Evt_handleLcscReaderGetTime";
             break;
-        }
         case LCSC_CMD::SET_TIME:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderSetTime", oss.str());
+            eventName = "Evt_handleLcscReaderSetTime";
             break;
-        }
         case LCSC_CMD::UPLOAD_CFG_FILE:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadCFGFile", oss.str());
+            eventName = "Evt_handleLcscReaderUploadCFGFile";
             break;
-        }
         case LCSC_CMD::UPLOAD_CIL_FILE:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadCILFile", oss.str());
+            eventName = "Evt_handleLcscReaderUploadCILFile";
             break;
-        }
         case LCSC_CMD::UPLOAD_BL_FILE:
-        {
-            std::ostringstream oss;
-            oss << "msgStatus=" << std::to_string(static_cast<int>(eventStatus));
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handleLcscReaderUploadBLFile", oss.str());
+            eventName = "Evt_handleLcscReaderUploadBLFile";
             break;
-        }
+        case LCSC_CMD::GET_CARD_ID:
+        case LCSC_CMD::CARD_BALANCE:
+            // Handled above.
+            break;
     }
+
+    if (eventName.empty())
+    {
+        return;
+    }
+
+    const std::string payload = "msgStatus=" + status;
+
+    EventManager::getInstance()->FnEnqueueEvent(eventName, payload);
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [EVENT] Queued | Name=" + eventName +
+            " | Cmd=" + getCommandString(cmd) +
+            " | Status=" + status,
+        logFileName_,
+        "LCSC");
 }
 
 void LCSCReader::FnLCSCReaderStopRead()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     continueReadFlag_.store(false);
+
+    Logger::getInstance()->FnLog("LCSC: [CARD] Continuous read disabled", logFileName_, "LCSC");
 }
 
 void LCSCReader::FnSendGetStatusCmd()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     enqueueCommand(LCSC_CMD::GET_STATUS_CMD);
 }
 
 void LCSCReader::FnSendGetLoginCmd()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     enqueueCommand(LCSC_CMD::LOGIN_1);
 }
 
 void LCSCReader::FnSendGetLogoutCmd()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     enqueueCommand(LCSC_CMD::LOGOUT);
 }
 
 void LCSCReader::FnSendGetCardIDCmd()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     continueReadFlag_.store(true);
+
+    Logger::getInstance()->FnLog("LCSC: [CARD] Continuous read enabled | Mode=CardID", logFileName_, "LCSC");
+
     enqueueCommand(LCSC_CMD::GET_CARD_ID);
 }
 
 void LCSCReader::FnSendGetCardBalance()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     continueReadFlag_.store(true);
+
+    Logger::getInstance()->FnLog("LCSC: [CARD] Continuous read enabled | Mode=Balance", logFileName_, "LCSC");
+
     enqueueCommand(LCSC_CMD::CARD_BALANCE);
 }
 
@@ -3124,30 +3756,22 @@ void LCSCReader::FnSendCardDeduct(uint32_t amount)
 
 void LCSCReader::FnSendCardRecord()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     enqueueCommand(LCSC_CMD::CARD_RECORD);
 }
 
 void LCSCReader::FnSendCardFlush(uint32_t seed)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     std::shared_ptr<void> req_data = std::make_shared<uint32_t>(seed);
     enqueueCommand(LCSC_CMD::CARD_FLUSH, req_data);
 }
 
 void LCSCReader::FnSendGetTime()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     enqueueCommand(LCSC_CMD::GET_TIME);
 }
 
 void LCSCReader::FnSendSetTime()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     enqueueCommand(LCSC_CMD::SET_TIME);
 }
 
@@ -3155,44 +3779,69 @@ std::vector<uint8_t> LCSCReader::readFile(const std::filesystem::path& filePath)
 {
     try
     {
-        std::ifstream file(filePath.string(), std::ios::binary | std::ios::ate);
-        
+        std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+
         if (!file.is_open())
         {
-            std::ostringstream oss;
-            oss << __func__ << " Error opening file: " << filePath;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LSCS");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Read failed | Path=" + filePath.string() +
+                    " | Reason=Open failed",
+                logFileName_,
+                "LCSC");
             return {};
         }
 
-        std::streamsize fileSize = file.tellg();
+        const std::streamsize fileSize = file.tellg();
+        if (fileSize <= 0)
+        {
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Read failed | Path=" + filePath.string() +
+                    " | Reason=Invalid size | Bytes=" +
+                    std::to_string(fileSize),
+                logFileName_,
+                "LCSC");
+            return {};
+        }
+
         file.seekg(0, std::ios::beg);
 
-        std::vector<uint8_t> fileData(fileSize);
-        if (file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+        std::vector<uint8_t> fileData(static_cast<std::size_t>(fileSize));
+
+        if (!file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
         {
-            return fileData;
-        }
-        else
-        {
-            std::ostringstream oss;
-            oss << __func__ << " Error reading file: " << filePath;
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Read failed | Path=" + filePath.string() +
+                    " | Reason=I/O error | Bytes=" +
+                    std::to_string(fileSize),
+                logFileName_,
+                "LCSC");
             return {};
         }
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Read completed | Path=" + filePath.string() +
+                " | Bytes=" + std::to_string(fileData.size()),
+            logFileName_,
+            "LCSC");
+
+        return fileData;
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", file path: " << filePath.string() << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(
+            std::string("LCSC: [FILE] Read exception | Path=") +
+                filePath.string() + " | Error=" + e.what(),
+            logFileName_,
+            "LCSC");
         return {};
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", file path: " << filePath.string() << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Read exception | Path=" + filePath.string() +
+                " | Error=Unknown exception",
+            logFileName_,
+            "LCSC");
         return {};
     }
 }
@@ -3218,7 +3867,10 @@ int LCSCReader::FnSendUploadCFGFile(const std::string& path)
 
     try
     {
-        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Prepare upload | Cmd=UPLOAD_CFG_FILE | Path=" + path,
+            logFileName_,
+            "LCSC");
 
         const std::filesystem::path filePath(path);
         if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
@@ -3253,7 +3905,7 @@ int LCSCReader::FnSendUploadCFGFile(const std::string& path)
             {
                 // Todo: need to raise event - sCFGUploadCorrupt
                 std::ostringstream oss;
-                oss << "File not found or not a regular file :" << filePath;
+                oss << "LCSC: [FILE] Upload prepare failed | Path=" << filePath << " | Reason=Invalid or empty file";
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
             }
         }
@@ -3261,7 +3913,7 @@ int LCSCReader::FnSendUploadCFGFile(const std::string& path)
         {
             // Todo: need to raise event - sendFailed
             std::ostringstream oss;
-            oss << "File not found or not a regular file :" <<filePath;
+            oss << "LCSC: [FILE] Upload prepare failed | Path=" << filePath << " | Reason=File not found or not regular";
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
         }
     }
@@ -3286,7 +3938,10 @@ int LCSCReader::FnSendUploadCILFile(const std::string& path)
 
     try
     {
-        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Prepare upload | Cmd=UPLOAD_CIL_FILE | Path=" + path,
+            logFileName_,
+            "LCSC");
 
         const std::filesystem::path filePath(path);
         if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
@@ -3339,7 +3994,7 @@ int LCSCReader::FnSendUploadCILFile(const std::string& path)
             {
                 // Todo: need to raise event - sCILUploadCorrupt
                 std::ostringstream oss;
-                oss << "File not found or not a regular file :" << filePath;
+                oss << "LCSC: [FILE] Upload prepare failed | Path=" << filePath << " | Reason=Invalid or empty file";
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
             }
         }
@@ -3347,7 +4002,7 @@ int LCSCReader::FnSendUploadCILFile(const std::string& path)
         {
             // Todo: need to raise event - sendFailed
             std::ostringstream oss;
-            oss << "File not found or not a regular file :" <<filePath;
+            oss << "LCSC: [FILE] Upload prepare failed | Path=" << filePath << " | Reason=File not found or not regular";
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
         }
     }
@@ -3373,7 +4028,10 @@ int LCSCReader::FnSendUploadBLFile(const std::string& path)
 
     try
     {
-        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Prepare upload | Cmd=UPLOAD_BL_FILE | Path=" + path,
+            logFileName_,
+            "LCSC");
 
         const std::filesystem::path filePath(path);
         if (std::filesystem::exists(filePath) && std::filesystem::is_regular_file(filePath))
@@ -3426,7 +4084,7 @@ int LCSCReader::FnSendUploadBLFile(const std::string& path)
             {
                 // Todo: need to raise event - BLuploadCorrupt
                 std::ostringstream oss;
-                oss << "File not found or not a regular file :" << filePath;
+                oss << "LCSC: [FILE] Upload prepare failed | Path=" << filePath << " | Reason=Invalid or empty file";
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
             }
         }
@@ -3434,7 +4092,7 @@ int LCSCReader::FnSendUploadBLFile(const std::string& path)
         {
             // Todo: need to raise event - sendFailed
             std::ostringstream oss;
-            oss << "File not found or not a regular file :" <<filePath;
+            oss << "LCSC: [FILE] Upload prepare failed | Path=" << filePath << " | Reason=File not found or not regular";
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
         }
     }
@@ -3471,6 +4129,11 @@ bool LCSCReader::FnMoveCDAckFile()
         MountManager mountManager(sharedFolderPath, mountPoint, username, password, logFileName_, "LCSC");
         if (!mountManager.isMounted())
         {
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CDACK move failed | Reason=Mount failed | Share=" +
+                    sharedFolderPath,
+                logFileName_,
+                "LCSC");
             return false;
         }
 
@@ -3489,15 +4152,22 @@ bool LCSCReader::FnMoveCDAckFile()
                     std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
                     std::filesystem::remove(entry.path());
 
-                    std::ostringstream oss;
-                    oss << "Move " << entry.path() << " to " << dest_file << " successfully";
-                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    Logger::getInstance()->FnLog(
+                        "LCSC: [FILE] CDACK moved | From=" +
+                            entry.path().string() +
+                            " | To=" + dest_file.string(),
+                        logFileName_,
+                        "LCSC");
                 }
             }
         }
         else
         {
-            Logger::getInstance()->FnLog("Folder doesn't exists or is not a directory.", logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CDACK move failed | Reason=Local folder unavailable | Path=" +
+                    cdAckFilePath,
+                logFileName_,
+                "LCSC");
             return false;
         }
 
@@ -3505,7 +4175,7 @@ bool LCSCReader::FnMoveCDAckFile()
     }
     else
     {
-        Logger::getInstance()->FnLog("CDACK files failed to upload due to ping failed.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] CDACK move failed | Reason=Ping failed", logFileName_, "LCSC");
         return false;
     }
 }
@@ -3540,12 +4210,12 @@ std::string LCSCReader::calculateSHA256(const std::string& data)
     }
     catch (const std::exception& e)
     {
-        Logger::getInstance()->FnLog("SHA256 calculation error: " + std::string(e.what()), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] SHA256 failed | Error=" + std::string(e.what()), logFileName_, "LCSC");
         return {};
     }
     catch (...)
     {
-        Logger::getInstance()->FnLog("SHA256 calculation unknown error occurred.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] SHA256 failed | Error=Unknown exception", logFileName_, "LCSC");
         return {};
     }
 }
@@ -3562,17 +4232,27 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
         std::error_code ec;
         if (!std::filesystem::create_directories(cdAckFilePath, ec))
         {
-            Logger::getInstance()->FnLog(("Failed to create " + cdAckFilePath + " directory : " + ec.message()), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CDACK directory failed | Path=" + cdAckFilePath +
+                    " | Error=" + ec.message(),
+                logFileName_,
+                "LCSC");
             return false;
         }
         else
         {
-            Logger::getInstance()->FnLog(("Successfully to create " + cdAckFilePath + " directory."), logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CDACK directory created | Path=" + cdAckFilePath,
+                logFileName_,
+                "LCSC");
         }
     }
     else
     {
-        Logger::getInstance()->FnLog(("CD Ack directory: " + cdAckFilePath + " exists."), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] CDACK directory ready | Path=" + cdAckFilePath,
+            logFileName_,
+            "LCSC");
     }
 
     // Construct cd ack file name
@@ -3690,20 +4370,20 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
     std::string hash = calculateSHA256(sDataO);
     if (hash.empty())
     {
-        Logger::getInstance()->FnLog("Failed to calculate SHA256 hash.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] CDACK generation failed | Reason=SHA256 failed", logFileName_, "LCSC");
     }
 
     sData = sData + hash + '\n';
 
     if (!(outFile << sData))
     {
-        Logger::getInstance()->FnLog(("Failed to write data into " + sAckFile), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] CDACK write failed | Path=" + sAckFile, logFileName_, "LCSC");
         outFile.close();
         return false;
     }
     else
     {
-        Logger::getInstance()->FnLog(("Successfully write data into " + sAckFile), logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] CDACK written | Path=" + sAckFile, logFileName_, "LCSC");
     }
 
     outFile.close();
@@ -3728,6 +4408,11 @@ bool LCSCReader::FnDownloadCDFiles()
         MountManager mountManager(sharedFolderPath, mountPoint, username, password, logFileName_, "LCSC");
         if (!mountManager.isMounted())
         {
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CD download failed | Reason=Mount failed | Share=" +
+                    sharedFolderPath,
+                logFileName_,
+                "LCSC");
             return false;
         }
 
@@ -3747,7 +4432,10 @@ bool LCSCReader::FnDownloadCDFiles()
 
         if (fileCount == 0)
         {
-            Logger::getInstance()->FnLog("No CD file to download.", logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CD download skipped | Reason=No remote files",
+                logFileName_,
+                "LCSC");
             return false;
         }
 
@@ -3757,17 +4445,29 @@ bool LCSCReader::FnDownloadCDFiles()
             std::error_code ec;
             if (!std::filesystem::create_directories(outputFolderPath, ec))
             {
-                Logger::getInstance()->FnLog("Failed to create " + outputFolderPath + " directory: " + ec.message(), logFileName_, "LCSC");
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FILE] CD local directory failed | Path=" +
+                        outputFolderPath + " | Error=" + ec.message(),
+                    logFileName_,
+                    "LCSC");
                 return false;
             }
             else
             {
-                Logger::getInstance()->FnLog("Successfully to create " + outputFolderPath + " directory.", logFileName_, "LCSC");
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FILE] CD local directory created | Path=" +
+                        outputFolderPath,
+                    logFileName_,
+                    "LCSC");
             }
         }
         else
         {
-            Logger::getInstance()->FnLog("Output folder directory: " + outputFolderPath + " exists.", logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CD local directory ready | Path=" +
+                    outputFolderPath,
+                logFileName_,
+                "LCSC");
         }
 
         int downloadTotal = 0;
@@ -3783,7 +4483,8 @@ bool LCSCReader::FnDownloadCDFiles()
                     downloadTotal++;
 
                     std::ostringstream oss;
-                    oss << "Download " << entry.path() << " to " << dest_file << " successfully.";
+                    oss << "LCSC: [FILE] CD file downloaded | From=" <<
+                            entry.path().string() << " | To=" << dest_file.string();
                     Logger::getInstance()->FnLog(oss.str());
                     Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
                 }
@@ -3791,12 +4492,16 @@ bool LCSCReader::FnDownloadCDFiles()
         }
         else
         {
-            Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", logFileName_, "LCSC");
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] CD download failed | Reason=Remote folder unavailable | Path=" +
+                    folder.string(),
+                logFileName_,
+                "LCSC");
             return false;
         }
 
         std::ostringstream oss;
-        oss << "Total " << downloadTotal << " cd files downloaded successfully.";
+        oss << "LCSC: [FILE] CD download completed | Files=" << std::to_string(downloadTotal);
         Logger::getInstance()->FnLog(oss.str());
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
 
@@ -3804,7 +4509,7 @@ bool LCSCReader::FnDownloadCDFiles()
     }
     else
     {
-        Logger::getInstance()->FnLog("Download CD files failed due to ping failed.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog("LCSC: [FILE] CD download failed | Reason=Ping failed", logFileName_, "LCSC");
         return false;
     }
 }
@@ -3826,13 +4531,24 @@ const LCSCReader::UploadLcscStateTransition LCSCReader::UploadLcscStateTransitio
     {
         {UPLOAD_LCSC_FILES_EVENT::CDFILES_UPLOADING                       , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::UPLOAD_CDFILES                         },
         {UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS                  , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::GENERATE_CDACKFILES                    },
-        {UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOADED                         , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::IDLE                                   },
-        {UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED                    , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::IDLE                                   }
+        // Upload completion only starts local-file cleanup. Keep the FSM busy
+        // until the worker reports that cleanup has finished.
+        {UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOADED                         , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::UPLOAD_CDFILES                         },
+        {UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED                    , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::UPLOAD_CDFILES                         },
+        {UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_COMPLETED                , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::IDLE                                   },
+        {UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_FAILED                   , &LCSCReader::handleUploadCDFilesState                         , UPLOAD_LCSC_FILES_STATE::IDLE                                   }
     }},
     {UPLOAD_LCSC_FILES_STATE::GENERATE_CDACKFILES,
     {
-        {UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_OK               , &LCSCReader::handleGenerateCDAckFilesState                    , UPLOAD_LCSC_FILES_STATE::IDLE                                   },
+        // GET_STATUS_OK only starts the blocking CDACK generation/finalize
+        // job. Keep the upload FSM busy until that job reports completion.
+        {UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_OK               , &LCSCReader::handleGenerateCDAckFilesState                    , UPLOAD_LCSC_FILES_STATE::MOVE_CDACKFILES                        },
         {UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_FAILED           , &LCSCReader::handleGenerateCDAckFilesState                    , UPLOAD_LCSC_FILES_STATE::IDLE                                   }
+    }},
+    {UPLOAD_LCSC_FILES_STATE::MOVE_CDACKFILES,
+    {
+        {UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_COMPLETED                , &LCSCReader::handleMoveCDAckFilesState                        , UPLOAD_LCSC_FILES_STATE::IDLE                                   },
+        {UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_FAILED                   , &LCSCReader::handleMoveCDAckFilesState                        , UPLOAD_LCSC_FILES_STATE::IDLE                                   }
     }}
 };
 
@@ -3887,6 +4603,16 @@ std::string LCSCReader::uploadLcscFilesEventToString(LCSCReader::UPLOAD_LCSC_FIL
             returnStr = "CDFILE_UPLOAD_FAILED";
             break;
         }
+        case UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_COMPLETED:
+        {
+            returnStr = "CDFILE_CLEANUP_COMPLETED";
+            break;
+        }
+        case UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_FAILED:
+        {
+            returnStr = "CDFILE_CLEANUP_FAILED";
+            break;
+        }
         case UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_OK:
         {
             returnStr = "GET_LCSC_DEVICE_STATUS_OK";
@@ -3895,6 +4621,21 @@ std::string LCSCReader::uploadLcscFilesEventToString(LCSCReader::UPLOAD_LCSC_FIL
         case UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_FAILED:
         {
             returnStr = "GET_LCSC_DEVICE_STATUS_FAILED";
+            break;
+        }
+        case UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_COMPLETED:
+        {
+            returnStr = "CDACK_FINALIZE_COMPLETED";
+            break;
+        }
+        case UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_FAILED:
+        {
+            returnStr = "CDACK_FINALIZE_FAILED";
+            break;
+        }
+        case UPLOAD_LCSC_FILES_EVENT::EVENT_COUNT:
+        default:
+        {
             break;
         }
     }
@@ -3928,6 +4669,16 @@ std::string LCSCReader::uploadLcscFilesStateToString(LCSCReader::UPLOAD_LCSC_FIL
             returnStr = "GENERATE_CDACKFILES";
             break;
         }
+        case UPLOAD_LCSC_FILES_STATE::MOVE_CDACKFILES:
+        {
+            returnStr = "MOVE_CDACKFILES";
+            break;
+        }
+        case UPLOAD_LCSC_FILES_STATE::STATE_COUNT:
+        default:
+        {
+            break;
+        }
     }
 
     return returnStr;
@@ -3935,284 +4686,667 @@ std::string LCSCReader::uploadLcscFilesStateToString(LCSCReader::UPLOAD_LCSC_FIL
 
 void LCSCReader::processUploadLcscFilesEvent(LCSCReader::UPLOAD_LCSC_FILES_EVENT event, const std::string& str)
 {
-    boost::asio::post(strand_, [this, event, str]() {
+    if (!acceptingWork_.load())
+    {
+        return;
+    }
 
-        // In idle state it will keep checking and don't want to log it
-        if (event != UPLOAD_LCSC_FILES_EVENT::CHECK_CONDITION)
+    boost::asio::post(
+        ioContext_,
+        [this, event, str]()
         {
-            std::ostringstream oss;
-            oss << "processUploadLcscFilesEvent => " << uploadLcscFilesEventToString(event);
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        }
-
-        int currentStateIndex_ = static_cast<int>(currentUploadLcscFilesState_);
-        const auto& stateTransitions = UploadLcscStateTransitionTable[currentStateIndex_].transitions;
-
-        bool eventHandled = false;
-        for (const auto& transition : stateTransitions)
-        {
-            if (transition.event == event)
+            if (stopping_.load())
             {
-                eventHandled = true;
+                return;
+            }
+
+            const int currentStateIndex = static_cast<int>(currentUploadLcscFilesState_);
+
+            if (currentStateIndex < 0 ||
+                currentStateIndex >= static_cast<int>(UPLOAD_LCSC_FILES_STATE::STATE_COUNT))
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [UPLOAD_FSM] Invalid state | Recovery=IDLE",
+                    logFileName_,
+                    "LCSC");
+
+                currentUploadLcscFilesState_ = UPLOAD_LCSC_FILES_STATE::IDLE;
+                return;
+            }
+
+            const auto& stateTransitions = UploadLcscStateTransitionTable[currentStateIndex].transitions;
+
+            for (const auto& transition : stateTransitions)
+            {
+                if (transition.event != event)
+                {
+                    continue;
+                }
 
                 if (event != UPLOAD_LCSC_FILES_EVENT::CHECK_CONDITION)
                 {
-                    std::ostringstream oss;
-                    oss << "Current State : " << uploadLcscFilesStateToString(currentUploadLcscFilesState_);
-                    oss << " , Event : " << uploadLcscFilesEventToString(event);
-                    oss << " , Event Handler : " << (transition.lcscEventHandler ? "YES" : "NO");
-                    oss << " , Next State : " << uploadLcscFilesStateToString(transition.nextState);
-                    Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
+                    Logger::getInstance()->FnLog(
+                        "LCSC: [UPLOAD_FSM] Transition | From=" +
+                            uploadLcscFilesStateToString(
+                                currentUploadLcscFilesState_) +
+                            " | Event=" +
+                            uploadLcscFilesEventToString(
+                                event) +
+                            " | To=" +
+                            uploadLcscFilesStateToString(
+                                transition.nextState),
+                        logFileName_,
+                        "LCSC");
                 }
 
                 if (transition.lcscEventHandler != nullptr)
                 {
                     (this->*transition.lcscEventHandler)(event, str);
                 }
+
                 currentUploadLcscFilesState_ = transition.nextState;
                 return;
             }
-        }
 
-        if (!eventHandled)
+            if (event != UPLOAD_LCSC_FILES_EVENT::CHECK_CONDITION)
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [UPLOAD_FSM] Event ignored | State=" +
+                        uploadLcscFilesStateToString(
+                            currentUploadLcscFilesState_) +
+                        " | Event=" +
+                        uploadLcscFilesEventToString(
+                            event),
+                    logFileName_,
+                    "LCSC");
+            }
+        });
+}
+
+void LCSCReader::startDownloadCdFilesJob()
+{
+    if (stopping_.load() || !filePool_)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] CD download not started | Reason=Worker unavailable",
+            logFileName_,
+            "LCSC");
+
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::NO_CDFILES_DOWNLOADED);
+        return;
+    }
+
+    Logger::getInstance()->FnLog("LCSC: [FILE] CD download started", logFileName_, "LCSC");
+
+    boost::asio::post(
+        *filePool_,
+        [this]()
         {
-            std::ostringstream oss;
-            oss << "Event '" << uploadLcscFilesEventToString(event) << "' not handled in state '" << uploadLcscFilesStateToString(currentUploadLcscFilesState_) << "'";
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-        }
-    });
+            bool downloaded = false;
+
+            try
+            {
+                downloaded = FnDownloadCDFiles();
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog(
+                    std::string("LCSC: [FILE] CD download exception | Error=") +
+                        e.what(),
+                    logFileName_,
+                    "LCSC");
+            }
+            catch (...)
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FILE] CD download exception | Error=Unknown exception",
+                    logFileName_,
+                    "LCSC");
+            }
+
+            if (stopping_.load() || !acceptingWork_.load())
+            {
+                return;
+            }
+
+            processUploadLcscFilesEvent(
+                downloaded
+                    ? UPLOAD_LCSC_FILES_EVENT::CDFILES_DOWNLOADED
+                    : UPLOAD_LCSC_FILES_EVENT::NO_CDFILES_DOWNLOADED);
+        });
+}
+
+void LCSCReader::startScanDownloadedCdFilesJob()
+{
+    if (stopping_.load() || !filePool_)
+    {
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS);
+        return;
+    }
+
+    const std::string localFolder = LOCAL_LCSC_FOLDER_PATH;
+
+    boost::asio::post(
+        *filePool_,
+        [this, localFolder]()
+        {
+            std::string cdFileName;
+
+            try
+            {
+                const std::filesystem::path folder(localFolder);
+
+                if (std::filesystem::exists(folder) &&
+                    std::filesystem::is_directory(folder))
+                {
+                    for (const auto& entry : std::filesystem::directory_iterator(folder))
+                    {
+                        const std::string filename = entry.path().filename().string();
+
+                        if (((filename.size() >= 4) &&
+                             (filename.substr(filename.size() - 4) != ".lcs")) &&
+                            ((filename.size() >= 6) &&
+                             (filename.substr(filename.size() - 6) != ".cdack")) &&
+                            ((filename.size() >= 4) &&
+                             (filename.substr(filename.size() - 4) != ".cfg")))
+                        {
+                            cdFileName = entry.path().string();
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog(
+                    std::string("LCSC: [FILE] Local CD scan failed | Error=") +
+                        e.what(),
+                    logFileName_,
+                    "LCSC");
+            }
+
+            if (stopping_.load() || !acceptingWork_.load())
+            {
+                return;
+            }
+
+            boost::asio::post(
+                ioContext_,
+                [this, cdFileName]()
+                {
+                    if (stopping_.load())
+                    {
+                        return;
+                    }
+
+                    if (!cdFileName.empty())
+                    {
+                        uploadLcscFileName_ = cdFileName;
+
+                        Logger::getInstance()->FnLog(
+                            "LCSC: [FILE] CD file selected | Path=" +
+                                cdFileName,
+                            logFileName_,
+                            "LCSC");
+
+                        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILES_UPLOADING, cdFileName);
+                    }
+                    else
+                    {
+                        Logger::getInstance()->FnLog(
+                            "LCSC: [FILE] No pending CD file | Action=Read device status",
+                            logFileName_,
+                            "LCSC");
+
+                        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS);
+                    }
+                });
+        });
+}
+
+void LCSCReader::startUploadCdFileJob(std::string path)
+{
+    if (stopping_.load() || !filePool_)
+    {
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [FILE] Upload preparation started | Path=" + path,
+        logFileName_,
+        "LCSC");
+
+    boost::asio::post(
+        *filePool_,
+        [this, path = std::move(path)]() mutable
+        {
+            try
+            {
+                FnUploadCDFile2(std::move(path));
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog(
+                    std::string("LCSC: [FILE] Upload preparation exception | Error=") +
+                        e.what(),
+                    logFileName_,
+                    "LCSC");
+
+                if (!stopping_.load() && acceptingWork_.load())
+                {
+                    processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+                }
+            }
+            catch (...)
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FILE] Upload preparation exception | Error=Unknown exception",
+                    logFileName_,
+                    "LCSC");
+
+                if (!stopping_.load() && acceptingWork_.load())
+                {
+                    processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+                }
+            }
+        });
+}
+
+void LCSCReader::startCleanupCdFileJob(std::string path)
+{
+    if (path.empty())
+    {
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_COMPLETED);
+        return;
+    }
+
+    if (stopping_.load() || !filePool_)
+    {
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_FAILED);
+        return;
+    }
+
+    boost::asio::post(
+        *filePool_,
+        [this, path = std::move(path)]()
+        {
+            std::error_code ec;
+            const bool removed = std::filesystem::remove(path, ec);
+
+            if (ec)
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FILE] Delete failed | Path=" + path +
+                        " | Error=" + ec.message(),
+                    logFileName_,
+                    "LCSC");
+            }
+            else
+            {
+                Logger::getInstance()->FnLog(
+                    "LCSC: [FILE] Delete completed | Path=" + path +
+                        " | Removed=" + (removed ? "true" : "false"),
+                    logFileName_,
+                    "LCSC");
+            }
+
+            if (stopping_.load() || !acceptingWork_.load())
+            {
+                return;
+            }
+
+            processUploadLcscFilesEvent(
+                ec
+                    ? UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_FAILED
+                    : UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_COMPLETED);
+        });
+}
+
+void LCSCReader::startFinalizeCdAckFilesJob(
+    const std::string& serialNum,
+    const std::string& fwVer,
+    const std::string& bl1Ver,
+    const std::string& bl2Ver,
+    const std::string& bl3Ver,
+    const std::string& cil1Ver,
+    const std::string& cil2Ver,
+    const std::string& cil3Ver,
+    const std::string& cfgVer)
+{
+    if (stopping_.load() || !filePool_)
+    {
+        processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_FAILED);
+        return;
+    }
+
+    Logger::getInstance()->FnLog("LCSC: [FILE] CDACK finalize started", logFileName_, "LCSC");
+
+    boost::asio::post(
+        *filePool_,
+        [this,
+         serialNum,
+         fwVer,
+         bl1Ver,
+         bl2Ver,
+         bl3Ver,
+         cil1Ver,
+         cil2Ver,
+         cil3Ver,
+         cfgVer]()
+        {
+            bool success = false;
+
+            try
+            {
+                const bool generated =
+                    FnGenerateCDAckFile(
+                        serialNum,
+                        fwVer,
+                        bl1Ver,
+                        bl2Ver,
+                        bl3Ver,
+                        cil1Ver,
+                        cil2Ver,
+                        cil3Ver,
+                        cfgVer);
+
+                if (generated)
+                {
+                    const std::filesystem::path folder(LOCAL_LCSC_FOLDER_PATH);
+
+                    if (std::filesystem::exists(folder) &&
+                        std::filesystem::is_directory(folder))
+                    {
+                        // Preserve .lcs and .cdack files. Remove the already
+                        // consumed CD input files before moving the ACK file.
+                        for (const auto& entry : std::filesystem::directory_iterator(folder))
+                        {
+                            const std::string filename = entry.path().filename().string();
+
+                            if (((filename.size() >= 4) &&
+                                 (filename.substr(filename.size() - 4) != ".lcs")) &&
+                                ((filename.size() >= 6) &&
+                                 (filename.substr(filename.size() - 6) != ".cdack")))
+                            {
+                                std::error_code removeEc;
+                                std::filesystem::remove(entry.path(), removeEc);
+
+                                if (removeEc)
+                                {
+                                    Logger::getInstance()->FnLog(
+                                        "LCSC: [FILE] Cleanup failed | Path=" +
+                                            entry.path().string() +
+                                            " | Error=" +
+                                            removeEc.message(),
+                                        logFileName_,
+                                        "LCSC");
+                                }
+                            }
+                        }
+                    }
+
+                    // FnMoveCDAckFile() already moves every .cdack file in
+                    // the directory. Call it once, not once per iterator item.
+                    success = FnMoveCDAckFile();
+                }
+            }
+            catch (const std::exception& e)
+            {
+                Logger::getInstance()->FnLog(
+                    std::string("LCSC: [FILE] CDACK finalize failed | Error=") +
+                        e.what(),
+                    logFileName_,
+                    "LCSC");
+            }
+
+            if (stopping_.load() || !acceptingWork_.load())
+            {
+                return;
+            }
+
+            processUploadLcscFilesEvent(
+                success
+                    ? UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_COMPLETED
+                    : UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_FAILED);
+        });
 }
 
 void LCSCReader::handleUploadLcscIdleState(LCSCReader::UPLOAD_LCSC_FILES_EVENT event, const std::string& str)
 {
     if (event == UPLOAD_LCSC_FILES_EVENT::CHECK_CONDITION)
     {
-        if ((operation::getInstance()->tParas.giCommPortLCSC > 0)
-            && (operation::getInstance()->tProcess.gbLoopApresent.load() == false)
-            && ((Common::getInstance()->FnGetCurrentHour() < 20)))
+        if ((operation::getInstance()->tParas.giCommPortLCSC > 0) &&
+            !operation::getInstance()->tProcess.gbLoopApresent.load() &&
+            (Common::getInstance()->FnGetCurrentHour() < 20))
         {
-            if ((HasCDFileToUpload_ == false)
-                && (LastCDUploadDate_ != Common::getInstance()->FnGetCurrentDay())
-                && (LastCDUploadTime_ != Common::getInstance()->FnGetCurrentHour()))
+            if (!HasCDFileToUpload_ &&
+                (LastCDUploadDate_ != Common::getInstance()->FnGetCurrentDay()) &&
+                (LastCDUploadTime_ != Common::getInstance()->FnGetCurrentHour()))
             {
-                Logger::getInstance()->FnLog("Allow to download CD files.", logFileName_, "LCSC");
                 LastCDUploadTime_ = Common::getInstance()->FnGetCurrentHour();
+
+                Logger::getInstance()->FnLog(
+                    "LCSC: [UPLOAD] Download allowed | LastDate=" +
+                        std::to_string(LastCDUploadDate_) +
+                        " | LastHour=" +
+                        std::to_string(LastCDUploadTime_),
+                    logFileName_,
+                    "LCSC");
+
                 processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::ALLOW_DOWNLOAD);
             }
-            else if (HasCDFileToUpload_ == true)
+            else if (HasCDFileToUpload_)
             {
-                Logger::getInstance()->FnLog("Already downloaded, proceed to next upload.", logFileName_, "LCSC");
+                Logger::getInstance()->FnLog(
+                    "LCSC: [UPLOAD] Continue pending files",
+                    logFileName_,
+                    "LCSC");
+
                 processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CONTINUE_UPLOAD);
             }
         }
     }
     else if (event == UPLOAD_LCSC_FILES_EVENT::ALLOW_DOWNLOAD)
     {
-        if (FnDownloadCDFiles())
-        {
-            Logger::getInstance()->FnLog("CD files downloaded.", logFileName_, "LCSC");
-            HasCDFileToUpload_ = true;
-            processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILES_DOWNLOADED);
-        }
-        else
-        {
-            Logger::getInstance()->FnLog("No CD files to download.", logFileName_, "LCSC");
-            processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::NO_CDFILES_DOWNLOADED);
-        }
+        startDownloadCdFilesJob();
     }
     else if (event == UPLOAD_LCSC_FILES_EVENT::CONTINUE_UPLOAD)
     {
-        Logger::getInstance()->FnLog("Continue upload LCSC files.", logFileName_, "LCSC");
         processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILES_DOWNLOADED);
     }
 }
 
 void LCSCReader::handleDownloadCDFilesState(LCSCReader::UPLOAD_LCSC_FILES_EVENT event, const std::string& str)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == UPLOAD_LCSC_FILES_EVENT::CDFILES_DOWNLOADED)
     {
-        std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
-        std::filesystem::path folder(localLCSCFolder);
-        int fileCount = 0;
-        std::string cdFileName;
+        HasCDFileToUpload_ = true;
 
-        for (const auto& entry : std::filesystem::directory_iterator(folder))
-        {
-            std::string filename = entry.path().filename().string();
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] CD download completed | Action=Scan local files",
+            logFileName_,
+            "LCSC");
 
-            if (((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".lcs"))
-                && ((filename.size() >= 6) && (filename.substr(filename.size() - 6) != ".cdack"))
-                && ((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".cfg")))
-            {
-                fileCount = fileCount + 1;
-                cdFileName = entry.path();
-            }
-        }
-
-        if (fileCount > 0)
-        {
-            uploadLcscFileName_ = cdFileName;
-            Logger::getInstance()->FnLog("Found the CD files to be uploaded.", logFileName_, "LCSC");
-            processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILES_UPLOADING, cdFileName);
-        }
-        else
-        {
-            Logger::getInstance()->FnLog("Get LCSC device status before generating CD ack file.", logFileName_, "LCSC");
-            processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS);
-        }
+        startScanDownloadedCdFilesJob();
     }
     else if (event == UPLOAD_LCSC_FILES_EVENT::NO_CDFILES_DOWNLOADED)
     {
-        Logger::getInstance()->FnLog("No CD files to be uploaded.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] CD download completed | Files=0",
+            logFileName_,
+            "LCSC");
     }
 }
 
 void LCSCReader::handleUploadCDFilesState(LCSCReader::UPLOAD_LCSC_FILES_EVENT event, const std::string& str)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
     if (event == UPLOAD_LCSC_FILES_EVENT::CDFILES_UPLOADING)
     {
-        Logger::getInstance()->FnLog("Uploading the CD file.", logFileName_, "LCSC");
-        FnUploadCDFile2(str);
+        startUploadCdFileJob(str);
     }
     else if (event == UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS)
     {
-        Logger::getInstance()->FnLog("Getting LCSC device status.", logFileName_, "LCSC");
+        Logger::getInstance()->FnLog(
+            "LCSC: [UPLOAD] Request device status | Reason=Prepare CDACK",
+            logFileName_,
+            "LCSC");
+
         FnSendGetStatusCmd();
     }
-    else if (event == UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOADED)
+    else if (event == UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOADED ||
+             event == UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED)
     {
-        Logger::getInstance()->FnLog("Upload " + uploadLcscFileName_ + " successfully.");
-        Logger::getInstance()->FnLog("Upload " + uploadLcscFileName_ + " successfully.", logFileName_, "LCSC");
-        std::filesystem::remove(uploadLcscFileName_.c_str());
+        const bool uploaded =
+            event == UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOADED;
+        const std::string path = uploadLcscFileName_;
+
+        Logger::getInstance()->FnLog(
+            std::string("LCSC: [UPLOAD] File ") +
+                (uploaded ? "completed" : "failed") +
+                " | Path=" + path +
+                " | Action=Cleanup local file",
+            logFileName_,
+            "LCSC");
+
+        startCleanupCdFileJob(path);
     }
-    else if (event == UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED)
+    else if (event == UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_COMPLETED ||
+             event == UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_FAILED)
     {
-        Logger::getInstance()->FnLog("Upload " + uploadLcscFileName_ + " failed.");
-        Logger::getInstance()->FnLog("Upload " + uploadLcscFileName_ + " failed.", logFileName_, "LCSC");
-        std::filesystem::remove(uploadLcscFileName_.c_str());
+        const bool cleanupOk =
+            event == UPLOAD_LCSC_FILES_EVENT::CDFILE_CLEANUP_COMPLETED;
+
+        Logger::getInstance()->FnLog(
+            std::string("LCSC: [UPLOAD] Local cleanup ") +
+                (cleanupOk ? "completed" : "failed") +
+                " | Path=" + uploadLcscFileName_,
+            logFileName_,
+            "LCSC");
+
+        uploadLcscFileName_.clear();
     }
 }
 
 void LCSCReader::handleGenerateCDAckFilesState(LCSCReader::UPLOAD_LCSC_FILES_EVENT event, const std::string& str)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
-
-    if (event == UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_OK)
+    if (event == UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_FAILED)
     {
-        Logger::getInstance()->FnLog("Get LCSC device status successfully, now proceed to generate CD ACK file.", logFileName_, "LCSC");
-
-        std::string serial_num = "";
-        std::string firmware_version = "";
-        std::string bl1_version = "";
-        std::string bl2_version = "";
-        std::string bl3_version = "";
-        std::string cil1_version = "";
-        std::string cil2_version = "";
-        std::string cil3_version = "";
-        std::string cfg_version = "";
-
-        std::string eventData = str;
-        if (!eventData.empty())
-        {
-            try
-            {
-                std::vector<std::string> subVector = Common::getInstance()->FnParseString(eventData, ',');
-                for (unsigned int i = 0; i < subVector.size(); i++)
-                {
-                    std::string pair = subVector[i];
-                    std::string param = Common::getInstance()->FnBiteString(pair, '=');
-                    std::string value = pair;
-
-                    if (param == "serialNum")
-                    {
-                        serial_num = value;
-                    }
-                    else if (param == "firmwareVersion")
-                    {
-                        firmware_version = value;
-                    }
-                    else if (param == "bl1Version")
-                    {
-                        bl1_version = value;
-                    }
-                    else if (param == "bl2Version")
-                    {
-                        bl2_version = value;
-                    }
-                    else if (param == "bl3Version")
-                    {
-                        bl3_version = value;
-                    }
-                    else if (param == "cil1Version")
-                    {
-                        cil1_version = value;
-                    }
-                    else if (param == "cil2Version")
-                    {
-                        cil2_version = value;
-                    }
-                    else if (param == "cil3Version")
-                    {
-                        cil3_version = value;
-                    }
-                    else if (param == "cfgVersion")
-                    {
-                        cfg_version = value;
-                    }
-                }
-            }
-            catch (const std::exception& ex)
-            {
-                std::ostringstream oss;
-                oss << "Exception : " << ex.what();
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "EVT");
-            }
-        }
-
-        bool ret = FnGenerateCDAckFile(serial_num, firmware_version, bl1_version, bl2_version, bl3_version, cil1_version, cil2_version, cil3_version, cfg_version);
-        if (ret == true)
-        {
-            HasCDFileToUpload_ = false;
-            Logger::getInstance()->FnLog("Generate CD Ack file successfully", logFileName_, "LCSC");
-            std::string localLCSCFolder = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
-            std::filesystem::path folder(localLCSCFolder);
-            LastCDUploadDate_ = 0;
-
-            for (const auto& entry : std::filesystem::directory_iterator(folder))
-            {
-                std::string filename = entry.path().filename().string();
-
-                if (((filename.size() >= 4) && (filename.substr(filename.size() - 4) != ".lcs"))
-                    && ((filename.size() >= 6) && (filename.substr(filename.size() - 6) != ".cdack")))
-                {
-                    std::filesystem::remove(entry.path());
-                    std::stringstream ss;
-                    ss << "File " << filename << " deleted";
-                    Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
-                }
-
-                if ((filename.size() >= 6) && (filename.substr(filename.size() - 6) == ".cdack"))
-                {
-                    if (FnMoveCDAckFile())
-                    {
-                        LastCDUploadDate_ = Common::getInstance()->FnGetCurrentDay();
-                    }
-                }
-            }
-        }
-        else
-        {
-            Logger::getInstance()->FnLog("Generate CD Ack file failed", logFileName_, "LCSC");
-        }
-
+        Logger::getInstance()->FnLog(
+            "LCSC: [UPLOAD] CDACK cancelled | Reason=Device status failed",
+            logFileName_,
+            "LCSC");
+        return;
     }
-    else if (event == UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_FAILED)
+
+    if (event != UPLOAD_LCSC_FILES_EVENT::GET_LCSC_DEVICE_STATUS_OK)
     {
-        Logger::getInstance()->FnLog("Get LCSC device status failed, cannot proceed to generate CD ACK file", logFileName_, "LCSC");
+        return;
+    }
+
+    std::string serialNum;
+    std::string firmwareVersion;
+    std::string bl1Version;
+    std::string bl2Version;
+    std::string bl3Version;
+    std::string cil1Version;
+    std::string cil2Version;
+    std::string cil3Version;
+    std::string cfgVersion;
+
+    try
+    {
+        const std::vector<std::string> subVector =
+            Common::getInstance()->FnParseString(str, ',');
+
+        for (std::string pair : subVector)
+        {
+            const std::string param =
+                Common::getInstance()->FnBiteString(pair, '=');
+            const std::string value = pair;
+
+            if (param == "serialNum")
+            {
+                serialNum = value;
+            }
+            else if (param == "firmwareVersion")
+            {
+                firmwareVersion = value;
+            }
+            else if (param == "bl1Version")
+            {
+                bl1Version = value;
+            }
+            else if (param == "bl2Version")
+            {
+                bl2Version = value;
+            }
+            else if (param == "bl3Version")
+            {
+                bl3Version = value;
+            }
+            else if (param == "cil1Version")
+            {
+                cil1Version = value;
+            }
+            else if (param == "cil2Version")
+            {
+                cil2Version = value;
+            }
+            else if (param == "cil3Version")
+            {
+                cil3Version = value;
+            }
+            else if (param == "cfgVersion")
+            {
+                cfgVersion = value;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLog(
+            std::string("LCSC: [UPLOAD] Status parse failed | Error=") +
+                e.what(),
+            logFileName_,
+            "LCSC");
+
+        processUploadLcscFilesEvent(
+            UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_FAILED);
+        return;
+    }
+
+    startFinalizeCdAckFilesJob(
+        serialNum,
+        firmwareVersion,
+        bl1Version,
+        bl2Version,
+        bl3Version,
+        cil1Version,
+        cil2Version,
+        cil3Version,
+        cfgVersion);
+}
+
+void LCSCReader::handleMoveCDAckFilesState(LCSCReader::UPLOAD_LCSC_FILES_EVENT event, const std::string&)
+{
+    if (event == UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_COMPLETED)
+    {
+        HasCDFileToUpload_ = false;
+        LastCDUploadDate_ = Common::getInstance()->FnGetCurrentDay();
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] CDACK finalize completed | UploadDate=" +
+                std::to_string(LastCDUploadDate_),
+            logFileName_,
+            "LCSC");
+    }
+    else if (event == UPLOAD_LCSC_FILES_EVENT::CDACK_FINALIZE_FAILED)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] CDACK finalize failed | Action=Retry on next cycle",
+            logFileName_,
+            "LCSC");
     }
 }
 
@@ -4223,62 +5357,104 @@ void LCSCReader::FnUploadLCSCCDFiles()
 
 void LCSCReader::FnUploadCDFile2(std::string path)
 {
-    std::string CDFPath_ = path;
+    const auto postFailure =
+        [this](LCSC_CMD cmd)
+        {
+            if (stopping_.load() || !acceptingWork_.load())
+            {
+                return;
+            }
 
-    if (!CDFPath_.empty())
+            boost::asio::post(
+                ioContext_,
+                [this, cmd]()
+                {
+                    if (stopping_.load())
+                    {
+                        return;
+                    }
+
+                    handleCmdErrorOrTimeout(
+                        cmd,
+                        mCSCEvents::sSendcmdfail);
+                    processUploadLcscFilesEvent(
+                        UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+                });
+        };
+
+    if (path.empty())
     {
-        if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".zip"))
-        {
-            std::stringstream ss;
-            ss << "Uploading the CFG file :" << CDFPath_ << " to LCSC device.";
-            Logger::getInstance()->FnLog(ss.str());
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
-
-            int ret = FnSendUploadCFGFile(CDFPath_);
-            if (ret == -1)
-            {
-                handleCmdErrorOrTimeout(LCSC_CMD::UPLOAD_CFG_FILE, mCSCEvents::sSendcmdfail);
-                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
-            }
-        }
-        else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".sys"))
-        {
-            std::stringstream ss;
-            ss << "Uploading the CIL file :" << CDFPath_ << " to LCSC device.";
-            Logger::getInstance()->FnLog(ss.str());
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
-
-            int ret = FnSendUploadCILFile(CDFPath_);
-            if (ret == -1)
-            {
-                handleCmdErrorOrTimeout(LCSC_CMD::UPLOAD_CIL_FILE, mCSCEvents::sSendcmdfail);
-                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
-            }
-        }
-        else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".blk"))
-        {
-            std::stringstream ss;
-            ss << "Uploading the BL file :" << CDFPath_ << " to LCSC device.";
-            Logger::getInstance()->FnLog(ss.str());
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "LCSC");
-
-            int ret = FnSendUploadBLFile(CDFPath_);
-            if (ret == -1)
-            {
-                handleCmdErrorOrTimeout(LCSC_CMD::UPLOAD_BL_FILE, mCSCEvents::sSendcmdfail);
-                processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
-            }
-        }
-        else if ((CDFPath_.size() >= 4) && (CDFPath_.substr(CDFPath_.size() - 4) == ".lbs"))
-        {
-            // Temp: Need to implement update FW
-        }
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Upload prepare failed | Reason=Empty path",
+            logFileName_,
+            "LCSC");
+        processUploadLcscFilesEvent(
+            UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+        return;
     }
+
+    LCSC_CMD cmd = LCSC_CMD::GET_STATUS_CMD;
+    int ret = -1;
+
+    if ((path.size() >= 4) &&
+        (path.substr(path.size() - 4) == ".zip"))
+    {
+        cmd = LCSC_CMD::UPLOAD_CFG_FILE;
+        ret = FnSendUploadCFGFile(path);
+    }
+    else if ((path.size() >= 4) &&
+             (path.substr(path.size() - 4) == ".sys"))
+    {
+        cmd = LCSC_CMD::UPLOAD_CIL_FILE;
+        ret = FnSendUploadCILFile(path);
+    }
+    else if ((path.size() >= 4) &&
+             (path.substr(path.size() - 4) == ".blk"))
+    {
+        cmd = LCSC_CMD::UPLOAD_BL_FILE;
+        ret = FnSendUploadBLFile(path);
+    }
+    else
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Upload prepare failed | Path=" + path +
+                " | Reason=Unsupported extension",
+            logFileName_,
+            "LCSC");
+
+        processUploadLcscFilesEvent(
+            UPLOAD_LCSC_FILES_EVENT::CDFILE_UPLOAD_FAILED);
+        return;
+    }
+
+    if (ret == -1)
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Upload prepare failed | Cmd=" +
+                getCommandString(cmd) +
+                " | Path=" + path,
+            logFileName_,
+            "LCSC");
+
+        postFailure(cmd);
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [FILE] Upload prepared | Cmd=" +
+            getCommandString(cmd) +
+            " | Path=" + path,
+        logFileName_,
+        "LCSC");
 }
 
 void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+    Logger::getInstance()->FnLog(
+        "LCSC: [TRANS] Build settlement record | PayloadBytes=" +
+            std::to_string(payload.size()),
+        logFileName_,
+        "LCSC");
 
     // Transaction Record 1
     std::vector<uint8_t> transRecordVec1;
@@ -4392,90 +5568,145 @@ void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
 
 void LCSCReader::writeLCSCTrans(const std::string& data)
 {
+    // This function is called from the LCSC I/O thread. Build/snapshot the
+    // filename and header here, then move only blocking file access to the
+    // worker pool. Do not read mutable module/FSM state from a pool thread.
+    const std::string cpoId = operation::getInstance()->tParas.gsCPOID;
+    const std::string cpId = operation::getInstance()->tParas.gsCPID;
+    const int stationId = operation::getInstance()->gtStation.iSID;
+
+    const std::string fileName =
+        cpoId + "_" + cpId + "_" +
+        Common::getInstance()->FnGetDateTimeFormat_yyyymmdd() + "_" +
+        Common::getInstance()->FnPadLeft0(2, stationId) +
+        Common::getInstance()->FnGetDateTimeFormat_hh() + ".lcs";
+
+    const std::string settleFile =
+        LOCAL_LCSC_SETTLEMENT_FOLDER_PATH + "/" + fileName;
+
+    std::string header =
+        "H" + cpId +
+        Common::getInstance()->FnConvertHexStringToString(
+            Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()) +
+        Common::getInstance()->FnPadLeftSpace(40, fileName);
+    header.append(67, ' ');
+
+    if (!filePool_ || stopping_.load())
+    {
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Settlement write skipped | Reason=Worker unavailable | Path=" +
+                settleFile,
+            logFileName_,
+            "LCSC");
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "LCSC: [FILE] Settlement queued | Path=" + settleFile +
+            " | Bytes=" + std::to_string(data.size()),
+        logFileName_,
+        "LCSC");
+
+    boost::asio::post(
+        *filePool_,
+        [this,
+         settleFile,
+         header = std::move(header),
+         detail = data]() mutable
+        {
+            writeLCSCTransBlocking(settleFile, std::move(header), std::move(detail));
+        });
+}
+
+void LCSCReader::writeLCSCTransBlocking(std::string settleFile, std::string header, std::string detail)
+{
+    // filePool_ has two workers. Serialize the create/header/append sequence so
+    // two settlement records cannot race on the same hourly .lcs file.
+    std::lock_guard<std::mutex> lock(settlementFileMutex_);
+
     try
     {
-        Logger::getInstance()->FnLog(__func__, logFileName_, "LCSC");
+        std::error_code fsEc;
+        std::filesystem::create_directories(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH, fsEc);
 
-        std::string settleFile = "";
-        std::string remoteSettleFile = "";
-        std::string detail = "";
-        std::string header = "";
-        std::string fileName = "";
-
-        if (!(boost::filesystem::exists(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
+        if (fsEc)
         {
-            std::ostringstream oss;
-            oss << "Settle folder: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH << " Not Found, Create it.";
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-
-            if (!(boost::filesystem::create_directories(LOCAL_LCSC_SETTLEMENT_FOLDER_PATH)))
-            {
-                std::ostringstream oss;
-                oss << "Failed to create directory: " << LOCAL_LCSC_SETTLEMENT_FOLDER_PATH;
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "LCSC");
-            }
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Settlement directory failed | Path=" +
+                    LOCAL_LCSC_SETTLEMENT_FOLDER_PATH +
+                    " | Error=" + fsEc.message(),
+                logFileName_,
+                "LCSC");
+            return;
         }
 
-        fileName = operation::getInstance()->tParas.gsCPOID + "_" + operation::getInstance()->tParas.gsCPID + "_"
-                    + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd() + "_" + Common::getInstance()->FnPadLeft0(2, operation::getInstance()->gtStation.iSID)
-                    + Common::getInstance()->FnGetDateTimeFormat_hh() + ".lcs";
-        settleFile = LOCAL_LCSC_SETTLEMENT_FOLDER_PATH + "/" + fileName;
-
-        detail = data;
-
-        // Write to local
-        Logger::getInstance()->FnLog("Write settlement to local.", logFileName_, "LCSC");
-
-        std::fstream file;
-        file.open(settleFile, std::ios::in | std::ios::binary);
-        if (!file.is_open())
+        const bool exists = std::filesystem::exists(settleFile, fsEc);
+        if (fsEc)
         {
-            // File does not exist, create and write
-            file.clear();
-            file.open(settleFile, std::ios::out | std::ios::binary);
-            if (!file.is_open())
-            {
-                Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
-                Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
-                return;
-            }
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Settlement stat failed | Path=" + settleFile +
+                    " | Error=" + fsEc.message(),
+                logFileName_,
+                "LCSC");
+            return;
+        }
 
-            // Create header
-            header = "H" + operation::getInstance()->tParas.gsCPID + Common::getInstance()->FnConvertHexStringToString(Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss()) + Common::getInstance()->FnPadLeftSpace(40, fileName);
-            header.append(67, ' '); // Padding with 67 spaces
-
-            // Write the header and detail to the file
-            file.write(header.c_str(), header.size());
-            file.write(detail.c_str(), detail.size());
+        std::ofstream file;
+        if (exists)
+        {
+            file.open(settleFile, std::ios::binary | std::ios::app);
         }
         else
         {
-            // File exists, append the details
-            file.close();
-            file.open(settleFile, std::ios::out | std::ios::binary | std::ios::app);
-            if (!file.is_open())
-            {
-                Logger::getInstance()->FnLog("Error opening file for writing settlement to " + settleFile, logFileName_, "LCSC");
-                Logger::getInstance()->FnLog("Settlement Data: " + detail, logFileName_, "LCSC");
-                return;
-            }
-
-            // Now to the end of file and append the details
-            file.write(detail.c_str(), detail.size());
+            file.open(settleFile, std::ios::binary | std::ios::out);
         }
 
-        file.close();
+        if (!file.is_open())
+        {
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Settlement open failed | Path=" + settleFile,
+                logFileName_,
+                "LCSC");
+            return;
+        }
+
+        if (!exists)
+        {
+            file.write(header.data(), static_cast<std::streamsize>(header.size()));
+        }
+
+        file.write(detail.data(), static_cast<std::streamsize>(detail.size()));
+
+        if (!file.good())
+        {
+            Logger::getInstance()->FnLog(
+                "LCSC: [FILE] Settlement write failed | Path=" + settleFile,
+                logFileName_,
+                "LCSC");
+            return;
+        }
+
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Settlement written | Path=" + settleFile +
+                " | Bytes=" + std::to_string(detail.size()) +
+                " | Mode=" + (exists ? "Append" : "Create"),
+            logFileName_,
+            "LCSC");
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(
+            std::string("LCSC: [FILE] Settlement exception | Path=") +
+                settleFile + " | Error=" + e.what(),
+            logFileName_,
+            "LCSC");
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        Logger::getInstance()->FnLog(
+            "LCSC: [FILE] Settlement exception | Path=" + settleFile +
+                " | Error=Unknown exception",
+            logFileName_,
+            "LCSC");
     }
 }

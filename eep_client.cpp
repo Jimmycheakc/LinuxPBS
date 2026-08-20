@@ -1,139 +1,315 @@
 #include <algorithm>
-#include <boost/asio/thread_pool.hpp>
-#include <boost/algorithm/string.hpp>
-#include <boost/filesystem.hpp>
-#include <iostream>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
-#include <string>
+#include <future>
+#include <iomanip>
 #include <memory>
 #include <sstream>
+#include <string>
+#include <system_error>
+#include <unordered_set>
+#include <utility>
+
+#if defined(__linux__)
+#include <pthread.h>
+#endif
+
+#include <boost/asio/post.hpp>
+#include <boost/filesystem.hpp>
+
 #include "common.h"
 #include "eep_client.h"
-#include "log.h"
-#include <unordered_set>
 #include "event_manager.h"
+#include "ini_parser.h"
+#include "log.h"
+#include "mount.h"
 #include "operation.h"
+#include "thread_pool_helper.h"
 
 
-EEPClient* EEPClient::eepClient_ = nullptr;
-std::mutex EEPClient::mutex_;
-std::mutex EEPClient::currentCmdMutex_;
-std::mutex EEPClient::currentCmdRequestedMutex_;
-uint16_t EEPClient::sequenceNo_ = 0;
-std::mutex EEPClient::sequenceNoMutex_;
-uint16_t EEPClient::lastDeductCmdSerialNo_ = 0;
-uint16_t EEPClient::deductCmdSerialNo_ = 0;
-std::mutex EEPClient::deductCmdSerialNoMutex_;
+namespace
+{
+std::string bytesToHexString(const std::vector<std::uint8_t>& data)
+{
+    std::ostringstream oss;
+    oss << std::hex << std::uppercase << std::setfill('0');
+
+    for (const std::uint8_t byte : data)
+    {
+        oss << std::setw(2) << static_cast<unsigned int>(byte);
+    }
+
+    return oss.str();
+}
+}
 
 EEPClient::EEPClient()
-    : filePool_(2),
-    ioContext_(),
-    strand_(boost::asio::make_strand(ioContext_)),
-    workGuard_(boost::asio::make_work_guard(ioContext_)),
-    connectTimer_(ioContext_),
-    sendTimer_(ioContext_),
-    responseTimer_(ioContext_),
-    ackTimer_(ioContext_),
-    watchdogTimer_(ioContext_),
-    healthStatusTimer_(ioContext_),
-    reconnectTimer_(ioContext_),
-    currentState_(EEPClient::STATE::IDLE),
-    watchdogMissedRspCount_(0),
-    iStationID_(0),
-    serverIP_(""),
-    serverPort_(0),
-    eepSourceId_(0),
-    eepDestinationId_(0),
-    eepCarparkID_(0),
-    commandSequence_(0),
-    lastConnectionState_(false),
-    logFileName_("eep")
+    : reconnectTimer_(ioContext_),
+      connectTimer_(ioContext_),
+      sendTimer_(ioContext_),
+      responseTimer_(ioContext_),
+      ackTimer_(ioContext_),
+      watchdogTimer_(ioContext_),
+      healthStatusTimer_(ioContext_),
+      logFileName_("eep")
 {
-    status_data_.clear();
+}
+
+EEPClient::~EEPClient()
+{
+    // Normal shutdown should happen through FnEEPClientClose(). This is only
+    // an emergency fallback for process/static destruction.
+    acceptingWork_.store(false);
+    stopping_.store(true);
+    workGuard_.reset();
+    ioContext_.stop();
+
+    if (ioContextThread_.joinable() &&
+        ioContextThread_.get_id() != std::this_thread::get_id())
+    {
+        ioContextThread_.join();
+    }
+
+    if (filePool_)
+    {
+        filePool_->join();
+        filePool_.reset();
+    }
+
+    client_.reset();
 }
 
 EEPClient* EEPClient::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (eepClient_ == nullptr)
-    {
-        eepClient_ = new EEPClient();
-    }
-    return eepClient_;
+    static EEPClient instance;
+    return &instance;
 }
 
 void EEPClient::FnEEPClientInit(const std::string& serverIP, unsigned short serverPort, const std::string& stationID)
 {
+std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
 
     Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    bool exceptionFound = false;
+    if (moduleRunning_.load() || ioContextThread_.joinable())
+    {
+        Logger::getInstance()->FnLog(
+            "EEP: [INIT] Ignored | Reason=Already running",
+            logFileName_,
+            "EEP");
+        return;
+    }
+
+    int stationId = 0;
+    try
+    {
+        stationId = std::stoi(stationID);
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLog(
+            std::string("EEP: [INIT] Failed | InvalidStationID=") +
+                stationID + " | Error=" + e.what(),
+            logFileName_,
+            "EEP");
+        return;
+    }
+
+    resetRuntimeState();
+
+    ioContext_.restart();
+    workGuard_.emplace(ioContext_.get_executor());
+    filePool_ = ThreadPoolHelper::create(2, "EEP_FILE");
+
+    iStationID_ = stationId;
+    serverIP_ = serverIP;
+    serverPort_ = serverPort;
+    eepSourceId_ = 96 + iStationID_;
+    eepDestinationId_ = 32 + iStationID_;
 
     try
     {
-        iStationID_ = std::stoi(stationID);
+        client_ = std::make_unique<AppTcpClient>(
+            ioContext_,
+            serverIP_,
+            serverPort_);
     }
-    catch(const std::exception& e)
+    catch (const std::exception& e)
     {
-        exceptionFound = true;
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        workGuard_.reset();
+        filePool_->join();
+        filePool_.reset();
+
+        Logger::getInstance()->FnLog(
+            std::string("EEP: [INIT] Failed | TCP client creation | Error=") +
+                e.what(),
+            logFileName_,
+            "EEP");
+        return;
     }
 
-    client_ = std::make_unique<AppTcpClient>(ioContext_, serverIP, serverPort);
-    serverIP_ = serverIP;
-    serverPort_ = serverPort;
-    // Source ID = TS (Start from 0x60h - 9Fh) + station id
-    eepSourceId_ = 96 + iStationID_;
-    // Destination ID = EEP DSRC Device (0x20h - 0x5Fh) + station id
-    eepDestinationId_ = 32 + iStationID_;
-
-    if (client_ && !exceptionFound)
-    {
-        client_->setConnectHandler([this](bool success, const std::string& message) {
-            boost::asio::post(ioContext_, [this, success, message]() {
-                handleConnect(success, message);
+    client_->setConnectHandler(
+        [this](bool success, const std::string& message)
+        {
+            // AppTcpClient is bound to this same io_context. Deferring the
+            // callback avoids state-machine re-entrancy while preserving the
+            // single-thread ownership model.
+            boost::asio::post(
+                ioContext_,
+                [this, success, message]()
+                {
+                    if (!stopping_.load())
+                    {
+                        handleConnect(success, message);
+                    }
                 });
         });
-        client_->setCloseHandler([this](bool success, const std::string& message) { 
-            boost::asio::post(ioContext_, [this, success, message]() {
-                handleClose(success, message);
-            });
-        });
-        client_->setReceiveHandler([this](bool success, const std::vector<uint8_t>& data) { 
-            boost::asio::post(ioContext_, [this, success, data]() {
-                handleReceivedData(success, data); 
-            });
-        });
-        client_->setSendHandler([this](bool success, const std::string& message) { 
-            boost::asio::post(ioContext_, [this, success, message]() {
-                handleSend(success, message);
-            });
+
+    client_->setCloseHandler(
+        [this](bool success, const std::string& message)
+        {
+            boost::asio::post(
+                ioContext_,
+                [this, success, message]()
+                {
+                    handleClose(success, message);
+                });
         });
 
-        startIoContextThread();
-        processEvent(EVENT::CONNECT);
-    }
-    else
+    client_->setReceiveHandler(
+        [this](bool success, const std::vector<std::uint8_t>& data)
+        {
+            boost::asio::post(
+                ioContext_,
+                [this, success, data]()
+                {
+                    if (!stopping_.load())
+                    {
+                        handleReceivedData(success, data);
+                    }
+                });
+        });
+
+    client_->setSendHandler(
+        [this](bool success, const std::string& message)
+        {
+            boost::asio::post(
+                ioContext_,
+                [this, success, message]()
+                {
+                    if (!stopping_.load())
+                    {
+                        handleSend(success, message);
+                    }
+                });
+        });
+
+    stopping_.store(false);
+    acceptingWork_.store(true);
+
+    if (!startIoContextThread())
     {
-        Logger::getInstance()->FnLog("Failed to create EEP Client.", logFileName_, "EEP");
+        acceptingWork_.store(false);
+        stopping_.store(true);
+        workGuard_.reset();
+        client_.reset();
+
+        if (filePool_)
+        {
+            filePool_->join();
+            filePool_.reset();
+        }
+
+        Logger::getInstance()->FnLog(
+            "EEP: [INIT] Failed | Unable to start io_context thread",
+            logFileName_,
+            "EEP");
+        return;
     }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [INIT] Started | Server=" + serverIP_ +
+            " | Port=" + std::to_string(serverPort_) +
+            " | Station=" + std::to_string(iStationID_),
+        logFileName_,
+        "EEP");
+
+    processEvent(EVENT::CONNECT);
 }
 
 void EEPClient::FnEEPClientClose()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
 
-    eepClientClose();
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        Logger::getInstance()->FnLog(
+            "EEP: [SHUTDOWN] Rejected | Called from EEP I/O thread",
+            logFileName_,
+            "EEP");
+        return;
+    }
 
-    filePool_.join();  // Wait for all background jobs to finish
+    acceptingWork_.store(false);
+
+    if (!ioContextThread_.joinable())
+    {
+        if (filePool_)
+        {
+            filePool_->join();
+            filePool_.reset();
+        }
+        client_.reset();
+        return;
+    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [SHUTDOWN] Begin",
+        logFileName_,
+        "EEP");
+
+    stopping_.store(true);
+
+    auto shutdownPromise = std::make_shared<std::promise<void>>();
+    auto shutdownFuture = shutdownPromise->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [this, shutdownPromise]()
+        {
+            shutdownOnIoThread();
+            shutdownPromise->set_value();
+        });
+
+    shutdownFuture.wait();
+
+    // No new work will be accepted. Let cancellation/close handlers already
+    // queued in the context drain naturally.
     workGuard_.reset();
-    ioContext_.stop();
+
     if (ioContextThread_.joinable())
     {
         ioContextThread_.join();
     }
+
+    // No more I/O-thread code can post settlement jobs after this point.
+    if (filePool_)
+    {
+        filePool_->join();
+        filePool_.reset();
+    }
+
+    client_.reset();
+    resetRuntimeState();
+
+    moduleRunning_.store(false);
+    stopping_.store(false);
+
+    Logger::getInstance()->FnLog(
+        "EEP: [SHUTDOWN] Completed",
+        logFileName_,
+        "EEP");
 }
 
 void EEPClient::FnSendAck(uint16_t seqNo_, uint8_t reqDataTypeCode_)
@@ -248,8 +424,7 @@ void EEPClient::FnSendDeductReq(const std::string& obuLabel_, const std::string&
 
     if (obuParseSuccess && feeParseSuccess && entryDateTimeParseSuccess && exitDateTimeParseSuccess)
     {
-        uint16_t serialNum = getDeductCmdSerialNo();
-        incrementDeductCmdSerialNo();
+        const std::uint16_t serialNum = allocateDeductCmdSerialNo();
 
         uint16_t entryYear = static_cast<uint16_t>(parsedEntryDateTime.tm_year + 1900);
         uint8_t entryMonth = static_cast<uint8_t>(parsedEntryDateTime.tm_mon + 1);
@@ -292,16 +467,14 @@ void EEPClient::FnSendDeductReq(const std::string& obuLabel_, const std::string&
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
-        oss << "Result of Fee parse: " << feeParseSuccess << ", Fee param value: " << fee_;
-        oss << "Result of Entry datetime parse: " << entryDateTimeParseSuccess << ", Entry datetime param value: " << entryTime_;
-        oss << "Result of Exit datetime parse: " << exitDateTimeParseSuccess << ", Exit datetime param value: " << exitTime_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
+        oss << " | FeeValid=" << feeParseSuccess << " | Fee=" << fee_;
+        oss << " | EntryTimeValid=" << entryDateTimeParseSuccess << " | EntryTime=" << entryTime_;
+        oss << " | ExitTimeValid=" << exitDateTimeParseSuccess << " | ExitTime=" << exitTime_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::DEDUCT_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::DEDUCT_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -325,13 +498,11 @@ void EEPClient::FnSendDeductStopReq(const std::string& obuLabel_, uint16_t seria
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::DEDUCT_STOP_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::DEDUCT_STOP_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -355,13 +526,11 @@ void EEPClient::FnSendTransactionReq(const std::string& obuLabel_, uint16_t seri
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::TRANSACTION_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::TRANSACTION_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -412,14 +581,12 @@ void EEPClient::FnSendCPOInfoDisplayReq(const std::string& obuLabel_, const std:
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
-        oss << "Result of data type parse: " << dataTypeParseSuccess << ", Data Type param value: " << parsedDataType_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
+        oss << " | DataTypeValid=" << dataTypeParseSuccess << " | DataType=" << parsedDataType_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::CPO_INFO_DISPLAY_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::CPO_INFO_DISPLAY_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -458,15 +625,13 @@ void EEPClient::FnSendCarparkProcessCompleteNotificationReq(const std::string& o
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
-        oss << " ,Result of processingResult parse: " << resultParseSuccess << ", processingResult param value: " << processingResult_;
-        oss << " ,Result of fee parse: " << feeParseSuccess << ", fee param value: " << fee_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
+        oss << " | ProcessingResultValid=" << resultParseSuccess << " | ProcessingResult=" << processingResult_;
+        oss << " | FeeValid=" << feeParseSuccess << " | Fee=" << fee_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -488,13 +653,11 @@ void EEPClient::FnSendDSRCProcessCompleteNotificationReq(const std::string& obuL
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -516,13 +679,11 @@ void EEPClient::FnSendStopReqOfRelatedInfoDistributionReq(const std::string& obu
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of Obu label parse: " << obuParseSuccess << ", Obu param value: " << obuLabel_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "ObuLabelValid=" << obuParseSuccess << " | ObuLabel=" << obuLabel_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -573,14 +734,12 @@ void EEPClient::FnSendSetCarparkAvailabilityReq(const std::string& availLots_, c
     else
     {
         std::ostringstream oss;
-        oss << __func__ << " failed to send. ";
-        oss << "Result of available lots parse: " << availLotsParseSuccess << ", available lots param value: " << availLots_;
-        oss << "Result of total lots parse: " << totalLotsParseSuccess << ", total lots param value: " << totalLots_;
+        oss << "EEP: [CMD] Rejected | Reason=Invalid parameter | ";
+        oss << "AvailableLotsValid=" << availLotsParseSuccess << " | AvailableLots=" << availLots_;
+        oss << " | TotalLotsValid=" << totalLotsParseSuccess << " | TotalLots=" << totalLots_;
         Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
-        struct Command cmdData = {};
-        cmdData.type = CommandType::SET_CARPARK_AVAIL_REQ_CMD;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        postCommandFailure(CommandType::SET_CARPARK_AVAIL_REQ_CMD, MSG_STATUS::SEND_FAILED);
     }
 }
 
@@ -600,66 +759,199 @@ void EEPClient::FnSendRestartInquiryResponseReq(uint8_t response)
     enqueueCommand(CommandType::EEP_RESTART_INQUIRY_REQ_CMD, static_cast<int>(PRIORITY::NORMAL), reqData);
 }
 
-void EEPClient::startIoContextThread()
+bool EEPClient::startIoContextThread()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
-    if (!ioContextThread_.joinable())
+   if (ioContextThread_.joinable())
     {
-        ioContextThread_ = std::thread([this]() { ioContext_.run(); });
+        return true;
+    }
+
+    moduleRunning_.store(true);
+
+    try
+    {
+        ioContextThread_ = std::thread(
+            [this]()
+            {
+#if defined(__linux__)
+                ::pthread_setname_np(::pthread_self(), "EEP_IO");
+#endif
+                Logger::getInstance()->FnLog(
+                    "EEP: [THREAD] io_context started",
+                    logFileName_,
+                    "EEP");
+
+                for (;;)
+                {
+                    try
+                    {
+                        ioContext_.run();
+                        break;
+                    }
+                    catch (const std::exception& e)
+                    {
+                        Logger::getInstance()->FnLog(
+                            std::string("EEP: [THREAD] Handler exception | Error=") +
+                                e.what(),
+                            logFileName_,
+                            "EEP");
+
+                        if (stopping_.load())
+                        {
+                            break;
+                        }
+                    }
+                    catch (...)
+                    {
+                        Logger::getInstance()->FnLog(
+                            "EEP: [THREAD] Handler exception | Error=Unknown",
+                            logFileName_,
+                            "EEP");
+
+                        if (stopping_.load())
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                moduleRunning_.store(false);
+
+                Logger::getInstance()->FnLog(
+                    "EEP: [THREAD] io_context stopped",
+                    logFileName_,
+                    "EEP");
+            });
+    }
+    catch (...)
+    {
+        moduleRunning_.store(false);
+        return false;
+    }
+
+    return true;
+}
+
+void EEPClient::shutdownOnIoThread()
+{
+    boost::system::error_code ec;
+
+    reconnectTimer_.cancel(ec);
+    connectTimer_.cancel(ec);
+    sendTimer_.cancel(ec);
+    responseTimer_.cancel(ec);
+    ackTimer_.cancel(ec);
+    watchdogTimer_.cancel(ec);
+    healthStatusTimer_.cancel(ec);
+
+    while (!commandQueue_.empty())
+    {
+        commandQueue_.pop();
+    }
+
+    if (client_)
+    {
+        try
+        {
+            client_->close();
+        }
+        catch (...)
+        {
+            // Best-effort shutdown. The client object will be destroyed only
+            // after the io_context thread has drained and joined.
+        }
+    }
+}
+
+void EEPClient::resetRuntimeState()
+{
+    currentState_ = STATE::IDLE;
+    commandSequence_ = 0;
+    currentCmd_ = Command{};
+    currentCmdRequested_ = Command{};
+    sequenceNo_ = 0;
+    expectedResponseSeqNo_.reset();
+    watchdogMissedRspCount_ = 0;
+    lastConnectionState_ = false;
+    EEPData_In.store(0);
+
+    while (!commandQueue_.empty())
+    {
+        commandQueue_.pop();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(statusDataMutex_);
+        status_data_.clear();
     }
 }
 
 void EEPClient::handleConnect(bool success, const std::string& message)
 {
+    boost::system::error_code ec;
+    connectTimer_.cancel(ec);
+
     if (success)
     {
-        std::stringstream ss;
-        ss << __func__ << "() Successfully connected to EEP server at IP: " << serverIP_ << ", Port: " << serverPort_;
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [CONNECT] Success | Server=" + serverIP_ +
+                " | Port=" + std::to_string(serverPort_),
+            logFileName_,
+            "EEP");
+        processEvent(EVENT::CONNECT_SUCCESS);
+        return;
+    }
 
-        connectTimer_.cancel();
-    }
-    else
-    {
-        std::stringstream ss;
-        ss << __func__ << "() Failed to connect to EEP server at IP: " << serverIP_ << ", Port: " << serverPort_ << ", Error: " << message;
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-    }
+    Logger::getInstance()->FnLog(
+        "EEP: [CONNECT] Failed | Server=" + serverIP_ +
+            " | Port=" + std::to_string(serverPort_) +
+            " | Error=" + message,
+        logFileName_,
+        "EEP");
+    processEvent(EVENT::CONNECT_FAIL);
 }
 
 void EEPClient::handleSend(bool success, const std::string& message)
 {
+    boost::system::error_code ec;
+    sendTimer_.cancel(ec);
+
     if (success)
     {
-        std::stringstream ss;
-        ss << __func__ << "() Successfully sent to EEP server.";
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [TX] Completed | Cmd=" + getCommandString(currentCmd_.type),
+            logFileName_,
+            "EEP");
+        processEvent(EVENT::WRITE_COMPLETED);
+        return;
+    }
 
-        sendTimer_.cancel();
-    }
-    else
-    {
-        std::stringstream ss;
-        ss << __func__ << "() Failed to send to EEP server, Error: " << message;
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-    }
+    Logger::getInstance()->FnLog(
+        "EEP: [TX] Failed | Cmd=" + getCommandString(currentCmd_.type) +
+            " | Error=" + message,
+        logFileName_,
+        "EEP");
+    processEvent(EVENT::WRITE_TIMEOUT);
 }
 
 void EEPClient::handleClose(bool success, const std::string& message)
 {
     if (success)
     {
-        std::stringstream ss;
-        ss << __func__ << "() Successfully closed the EEP server at IP: " << serverIP_ << ", Port: " << serverPort_;
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [CONNECT] Closed | Server=" + serverIP_ +
+                " | Port=" + std::to_string(serverPort_),
+            logFileName_,
+            "EEP");
+        return;
     }
-    else
-    {
-        std::stringstream ss;
-        ss << __func__ << "() Failed to close the EEP server at IP: " << serverIP_ << ", Port: " << serverPort_ << " ,Error: " << message;
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [CONNECT] Close failed | Server=" + serverIP_ +
+            " | Port=" + std::to_string(serverPort_) +
+            " | Error=" + message,
+        logFileName_,
+        "EEP");
 }
 
 bool EEPClient::isValidCheckSum(const std::vector<uint8_t>& data)
@@ -687,21 +979,21 @@ bool EEPClient::parseMessage(const std::vector<uint8_t>& data, MessageHeader& he
     // Validate minimum size
     if (data.size() < MessageHeader::HEADER_SIZE)
     {
-        Logger::getInstance()->FnLog("Parse message failed due to invalid header size.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RX] Parse failed | Reason=Header too short | Bytes=" + std::to_string(data.size()) + " | Required=" + std::to_string(MessageHeader::HEADER_SIZE), logFileName_, "EEP");
         return false;
     }
 
     // Deserialize header
     if (!header.deserialize(data))
     {
-        Logger::getInstance()->FnLog("Parse message failed due to header deserialize failed.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RX] Parse failed | Reason=Header deserialize failed", logFileName_, "EEP");
         return false;
     }
 
     std::size_t expectedTotalSize = MessageHeader::HEADER_SIZE + header.dataLen_;
     if (data.size() < expectedTotalSize)
     {
-        Logger::getInstance()->FnLog("Parse message failed due to actual doesn't match expected data size.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RX] Parse failed | Reason=Frame shorter than declared length | Bytes=" + std::to_string(data.size()) + " | Expected=" + std::to_string(expectedTotalSize), logFileName_, "EEP");
         return false;
     }
 
@@ -832,7 +1124,14 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
 
     MESSAGE_CODE code = static_cast<MESSAGE_CODE>(header.dataTypeCode_);
 
-    oss << "(" << messageCodeToString(code) << ") - Message Header\n";
+    oss << "EEP: [RX] Parsed"
+        << " | Code=" << messageCodeToString(code)
+        << " | Seq=" << header.seqNo_
+        << " | Src=" << static_cast<unsigned int>(header.sourceID_)
+        << " | Dst=" << static_cast<unsigned int>(header.destinationID_)
+        << " | DataLen=" << header.dataLen_
+        << '\n';
+    oss << "  Header\n";
     oss << std::setw(32) << std::setfill(' ') << "" << "----------------------------------\n";
     printField(oss, "Destination ID", header.destinationID_, 2);
     printField(oss, "Source ID", header.sourceID_, 2);
@@ -857,7 +1156,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 4)
                 {
-                    Logger::getInstance()->FnLog("Invalid ACK message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=ACK | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -872,7 +1171,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 4)
                 {
-                    Logger::getInstance()->FnLog("Invalid NAK message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=NAK | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -900,7 +1199,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 64)
                 {
-                    Logger::getInstance()->FnLog("Invalid Health Status Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=HEALTH_STATUS_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1082,7 +1381,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 4)
                 {
-                    Logger::getInstance()->FnLog("Invalid Start Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=START_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1106,7 +1405,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 4)
                 {
-                    Logger::getInstance()->FnLog("Invalid Stop Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=STOP_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1128,7 +1427,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 8)
                 {
-                    Logger::getInstance()->FnLog("Invalid DI Status Notification/Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=DI_STATUS | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1157,7 +1456,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 56)
                 {
-                    Logger::getInstance()->FnLog("Invalid OBU Information Notification message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=OBU_INFORMATION_NOTIFICATION | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1226,7 +1525,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 340)
                 {
-                    Logger::getInstance()->FnLog("Invalid Transaction Data message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=TRANSACTION_DATA | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1419,7 +1718,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 20)
                 {
-                    Logger::getInstance()->FnLog("Invalid CPO Information Display Result message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=CPO_INFORMATION_DISPLAY_RESULT | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1449,7 +1748,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 20)
                 {
-                    Logger::getInstance()->FnLog("Invalid Carpark Process Complete Result message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=CARPARK_PROCESS_COMPLETE_RESULT | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1476,7 +1775,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 100)
                 {
-                    Logger::getInstance()->FnLog("Invalid DSRC Status Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=DSRC_STATUS_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1582,7 +1881,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 4)
                 {
-                    Logger::getInstance()->FnLog("Invalid Time Calibration Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=TIME_CALIBRATION_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1603,7 +1902,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 4)
                 {
-                    Logger::getInstance()->FnLog("Invalid EEP Restart Inquiry Response message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=EEP_RESTART_INQUIRY_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1627,7 +1926,7 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
             {
                 if (body.size() < 12)
                 {
-                    Logger::getInstance()->FnLog("Invalid Notification Log message body size.",  logFileName_, "EEP");
+                    Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=NOTIFICATION_LOG | Reason=Body too short", logFileName_, "EEP");
                     break;
                 }
 
@@ -1681,7 +1980,8 @@ void EEPClient::showParsedMessage(const MessageHeader& header, const std::vector
     }
     else if (body.size() != header.dataLen_)
     {
-        oss << "The actual message body length does not match the data length specified in the header.";
+        oss << "  ParseWarning | Reason=Body length mismatch | HeaderDataLen=" << header.dataLen_
+            << " | ActualBodyLen=" << body.size() << '\n';
     }
 
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
@@ -1700,7 +2000,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 4)
             {
-                Logger::getInstance()->FnLog("Invalid ACK message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=ACK | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1711,7 +2011,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
 
                 ackDeductData.resultCode = body[0];
                 ackDeductData.rsv = Common::getInstance()->FnReadUint24LE(body, 1);
-                ackDeductData.deductSerialNo = getLastDeductCmdSerialNo();
+                ackDeductData.deductSerialNo = getDeductSerialFromCurrentRequest();
 
                 // Serialization
                 boost::json::value jv = ackDeductData.to_json();
@@ -1743,7 +2043,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 4)
             {
-                Logger::getInstance()->FnLog("Invalid NAK message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=NAK | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1782,7 +2082,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 64)
             {
-                Logger::getInstance()->FnLog("Invalid Health Status Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=HEALTH_STATUS_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1859,7 +2159,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 4)
             {
-                Logger::getInstance()->FnLog("Invalid Start Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=START_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1882,7 +2182,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 4)
             {
-                Logger::getInstance()->FnLog("Invalid Stop Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=STOP_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1905,7 +2205,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 8)
             {
-                Logger::getInstance()->FnLog("Invalid DI Status Notification/Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=DI_STATUS | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1928,7 +2228,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 100)
             {
-                Logger::getInstance()->FnLog("Invalid DSRC Status Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=DSRC_STATUS_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -1984,7 +2284,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         {
             if (body.size() < 4)
             {
-                Logger::getInstance()->FnLog("Invalid Time Calibration Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=TIME_CALIBRATION_RESPONSE | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2006,7 +2306,7 @@ void EEPClient::handleParsedResponseMessage(const MessageHeader& header, const s
         default:
         {
             ret = false;
-            Logger::getInstance()->FnLog("Invalid data type code.",  logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [RX] Parse failed | Reason=Unsupported data type", logFileName_, "EEP");
             break;
         }
     }
@@ -2030,7 +2330,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 8)
             {
-                Logger::getInstance()->FnLog("Invalid DI Status Notification/Response message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=DI_STATUS | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2053,7 +2353,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 56)
             {
-                Logger::getInstance()->FnLog("Invalid OBU Information Notification message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=OBU_INFORMATION_NOTIFICATION | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2097,7 +2397,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 340)
             {
-                Logger::getInstance()->FnLog("Invalid Transaction Data message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=TRANSACTION_DATA | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2209,7 +2509,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 20)
             {
-                Logger::getInstance()->FnLog("Invalid CPO Information Display Result message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=CPO_INFORMATION_DISPLAY_RESULT | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2241,7 +2541,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 20)
             {
-                Logger::getInstance()->FnLog("Invalid Carpark Process Complete Result message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=CARPARK_PROCESS_COMPLETE_RESULT | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2273,7 +2573,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 4)
             {
-                Logger::getInstance()->FnLog("Invalid EEP Restart Inquiry message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=EEP_RESTART_INQUIRY | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2298,7 +2598,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         {
             if (body.size() < 12)
             {
-                Logger::getInstance()->FnLog("Invalid Notification Log message body size.",  logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [RX] Invalid payload | Code=NOTIFICATION_LOG | Reason=Body too short", logFileName_, "EEP");
                 break;
             }
 
@@ -2328,7 +2628,7 @@ void EEPClient::handleParsedNotificationMessage(const MessageHeader& header, con
         default:
         {
             ret = false;
-            Logger::getInstance()->FnLog("Invalid data type code.",  logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [RX] Parse failed | Reason=Unsupported data type", logFileName_, "EEP");
             break;
         }
     }
@@ -2527,7 +2827,7 @@ void EEPClient::handleInvalidMessage(const std::vector<uint8_t>& data, uint8_t r
     }
     else
     {
-        Logger::getInstance()->FnLog("Unable to send the ACK/NAK due to received data size less than message header length.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RX] NAK skipped | Reason=Frame shorter than header | Bytes=" + std::to_string(data.size()), logFileName_, "EEP");
     }
 }
 
@@ -2535,165 +2835,258 @@ void EEPClient::handleReceivedData(bool success, const std::vector<uint8_t>& dat
 {
     try
     {
-        if (success)
+        if (!success)
         {
-            if (isValidCheckSum(data))
+            Logger::getInstance()->FnLog(
+                "EEP: [RX] Failed | Reason=TCP read failed",
+                logFileName_,
+                "EEP");
+
+            if (!stopping_.load())
             {
-                std::stringstream ss;
-                ss << __func__ << "() Received EEP Data: ";
-                for (uint8_t byte : data)
-                {
-                    ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
-                }
+                processEvent(EVENT::RECONNECT_REQUEST);
+            }
+            return;
+        }
 
-                ss << std::dec << ", Length: " << data.size();
-                Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        if (!isValidCheckSum(data))
+        {
+            Logger::getInstance()->FnLog(
+                "EEP: [RX] Rejected | Reason=Checksum mismatch | Bytes=" +
+                    std::to_string(data.size()) +
+                    " | Hex=" + bytesToHexString(data),
+                logFileName_,
+                "EEP");
 
-                std::vector<uint8_t> dataWithoutCheckSum(data.begin(), data.end() - 4);
-                MessageHeader msgHeader{};
-                std::vector<uint8_t> msgBody;
+            // NAK reason: Check Code Mismatch.
+            handleInvalidMessage(data, 0x03);
+            return;
+        }
 
-                if (parseMessage(dataWithoutCheckSum, msgHeader, msgBody))
-                {
-                    if (isValidSourceDestination(msgHeader.sourceID_, msgHeader.destinationID_))
-                    {
-                        showParsedMessage(msgHeader, msgBody);
+        const std::vector<uint8_t> dataWithoutCheckSum(data.begin(), data.end() - 4);
+        MessageHeader msgHeader{};
+        std::vector<uint8_t> msgBody;
 
-                        // Handle for normal request cmd from station and response from EEP
-                        if (isResponseMatchedDataTypeCode(getCurrentCmdRequested(), msgHeader.dataTypeCode_, msgBody))
-                        {
-                            if (msgHeader.seqNo_ == (getSequenceNo() - 1))
-                            {
-                                // Cancelled ACK timer
-                                ackTimer_.cancel();
+        if (!parseMessage(dataWithoutCheckSum, msgHeader, msgBody))
+        {
+            Logger::getInstance()->FnLog(
+                "EEP: [RX] Rejected | Reason=Message parse failed | Bytes=" +
+                    std::to_string(data.size()) +
+                    " | Hex=" + bytesToHexString(data),
+                logFileName_,
+                "EEP");
 
-                                std::string eventMsg = "";
-                                handleParsedResponseMessage(msgHeader, msgBody, eventMsg, data);
-                                
-                                if (!eventMsg.empty())
-                                {
-                                    //----- added on 15/07/2026
-                                    EEPData_In = 1;
-                                    EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
-                                    Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
-                                }
-                            }
-                            else
-                            {
-                                Logger::getInstance()->FnLog("Invalid sequence number after parsing the message.", logFileName_, "EEP");
-                            }
-                        }
-                        // Handle for those notification received from EEP
-                        else if (isNotificationReceived(msgHeader.dataTypeCode_))
-                        {
-                            if (isResponseNotificationComplete(getCurrentCmdRequested(), msgHeader.dataTypeCode_))
-                            {
-                                Logger::getInstance()->FnLog("Valid notification response received. Cancelling response timer.", logFileName_, "EEP");
-                                responseTimer_.cancel();
-                            }
-                            else
-                            {
-                                Logger::getInstance()->FnLog("Notification received, send ACK as response.", logFileName_, "EEP");
-                            }
+            // NAK reason: Data Length Error.
+            handleInvalidMessage(data, 0x02);
+            return;
+        }
 
-                            // Send ACK with requested data type code
-                            std::string eventMsg = "";
-                            handleParsedNotificationMessage(msgHeader, msgBody, eventMsg);
-                            FnSendAck(msgHeader.seqNo_, msgHeader.dataTypeCode_);
+        if (!isValidSourceDestination(msgHeader.sourceID_, msgHeader.destinationID_))
+        {
+            Logger::getInstance()->FnLog(
+                "EEP: [RX] Rejected | Reason=Invalid endpoint"
+                " | Src=" + std::to_string(msgHeader.sourceID_) +
+                " | Dst=" + std::to_string(msgHeader.destinationID_) +
+                " | ExpectedSrc=" + std::to_string(eepDestinationId_) +
+                " | ExpectedDst=" + std::to_string(eepSourceId_) +
+                " | Seq=" + std::to_string(msgHeader.seqNo_),
+                logFileName_,
+                "EEP");
 
-                            if (!eventMsg.empty())
-                            {
-                                EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
-                                Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
-                            }
-                        }
-                        else
-                        {
-                            Logger::getInstance()->FnLog("Invalid data type code after parsing the message.", logFileName_, "EEP");
-                            // Send NAK with reason code : Unsupported Data Type Code
-                            handleInvalidMessage(data, 0x01);
-                        }
-                    }
-                    else
-                    {
-                        Logger::getInstance()->FnLog("Invalid message source/destination.", logFileName_, "EEP");
-                        // Send NAK with reason code : Others
-                        handleInvalidMessage(data, 0x04);
-                    }
-                }
-                else
-                {
-                    Logger::getInstance()->FnLog("Invalid message length, parsed failed.", logFileName_, "EEP");
-                    // Send NAK with reason code : Data Length Error
-                    handleInvalidMessage(data, 0x02);
-                }
+            // NAK reason: Others.
+            handleInvalidMessage(data, 0x04);
+            return;
+        }
+
+        // Valid RX packets are logged as decoded protocol fields, not as a raw
+        // byte dump. Raw hex is kept for rejected frames above where it is most
+        // useful for diagnostics.
+        showParsedMessage(msgHeader, msgBody);
+
+        // Handle for normal request cmd from station and response from EEP
+        if (isResponseMatchedDataTypeCode(getCurrentCmdRequested(), msgHeader.dataTypeCode_, msgBody))
+        {
+            if (!expectedResponseSeqNo_ || msgHeader.seqNo_ != *expectedResponseSeqNo_)
+            {
+                Logger::getInstance()->FnLog(
+                    "EEP: [RX] Rejected | Reason=Sequence mismatch"
+                    " | Code=" + messageCodeToString(
+                        static_cast<MESSAGE_CODE>(msgHeader.dataTypeCode_)) +
+                    " | Expected=" +
+                        (expectedResponseSeqNo_
+                            ? std::to_string(*expectedResponseSeqNo_)
+                            : std::string("None")) +
+                    " | Received=" + std::to_string(msgHeader.seqNo_),
+                    logFileName_,
+                    "EEP");
+                return;
+            }
+
+            boost::system::error_code timerEc;
+            ackTimer_.cancel(timerEc);
+
+            std::string eventMsg;
+            handleParsedResponseMessage(msgHeader, msgBody, eventMsg, data);
+
+            if (!eventMsg.empty())
+            {
+                EEPData_In.store(1);
+                EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
+                Logger::getInstance()->FnLog(
+                    "EEP: [EVENT] Queued | Name=Evt_handleEEPClientResponse"
+                    " | Source=Response"
+                    " | Code=" + messageCodeToString(
+                        static_cast<MESSAGE_CODE>(msgHeader.dataTypeCode_)) +
+                    " | Seq=" + std::to_string(msgHeader.seqNo_),
+                    logFileName_,
+                    "EEP");
+            }
+
+            const auto responseCode = static_cast<MESSAGE_CODE>(msgHeader.dataTypeCode_);
+            expectedResponseSeqNo_.reset();
+
+            // Only a positive ACK for commands that explicitly require
+            // a follow-up notification should keep the FSM waiting.
+            // NAK and direct response messages complete the request.
+            if (responseCode == MESSAGE_CODE::ACK &&
+                doesCmdRequireNotification(getCurrentCmdRequested()))
+            {
+                processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
             }
             else
             {
-                Logger::getInstance()->FnLog("Invalid checksum.", logFileName_, "EEP");
-                // Send NAK with reason code : Check Code Mismatch
-                handleInvalidMessage(data, 0x03);
+                processEvent(EVENT::ACK_AS_RSP_RECEIVED);
             }
+            return;
         }
-        else
+
+        // Unsolicited EEP notification.
+        if (isNotificationReceived(msgHeader.dataTypeCode_))
         {
-            Logger::getInstance()->FnLog("Failed to receive EEP Data. Likely socket read error.", logFileName_, "EEP");
+            const bool completesOutstandingRequest =
+                isResponseNotificationComplete(getCurrentCmdRequested(), msgHeader.dataTypeCode_);
+            
+            if (completesOutstandingRequest)
+            {
+                Logger::getInstance()->FnLog(
+                    "EEP: [RSP] Follow-up received"
+                    " | Cmd=" + getCommandString(currentCmdRequested_.type) +
+                    " | Code=" + messageCodeToString(
+                        static_cast<MESSAGE_CODE>(msgHeader.dataTypeCode_)) +
+                    " | Seq=" + std::to_string(msgHeader.seqNo_),
+                    logFileName_,
+                    "EEP");
+
+                boost::system::error_code timerEc;
+                responseTimer_.cancel(timerEc);
+                processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
+            }
+            else
+            {
+                Logger::getInstance()->FnLog(
+                    "EEP: [RX] Notification"
+                    " | Code=" + messageCodeToString(
+                        static_cast<MESSAGE_CODE>(msgHeader.dataTypeCode_)) +
+                    " | Seq=" + std::to_string(msgHeader.seqNo_) +
+                    " | Action=Send ACK",
+                    logFileName_,
+                    "EEP");
+            }
+
+            // Send ACK with requested data type code
+            std::string eventMsg = "";
+            handleParsedNotificationMessage(msgHeader, msgBody, eventMsg);
+            FnSendAck(msgHeader.seqNo_, msgHeader.dataTypeCode_);
+
+            if (!eventMsg.empty())
+            {
+                EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
+                Logger::getInstance()->FnLog(
+                    "EEP: [EVENT] Queued | Name=Evt_handleEEPClientResponse"
+                    " | Source=Notification"
+                    " | Code=" + messageCodeToString(
+                        static_cast<MESSAGE_CODE>(msgHeader.dataTypeCode_)) +
+                    " | Seq=" + std::to_string(msgHeader.seqNo_),
+                    logFileName_,
+                    "EEP");
+            }
+            return;
         }
+
+        Logger::getInstance()->FnLog(
+            "EEP: [RX] Rejected | Reason=Unsupported data type"
+            " | Code=0x" + [&msgHeader]()
+            {
+                std::ostringstream oss;
+                oss << std::uppercase << std::hex << std::setw(2)
+                    << std::setfill('0')
+                    << static_cast<unsigned int>(msgHeader.dataTypeCode_);
+                return oss.str();
+            }() +
+            " | Seq=" + std::to_string(msgHeader.seqNo_),
+            logFileName_,
+            "EEP");
+
+        // Send NAK with reason code : Unsupported Data Type Code
+        handleInvalidMessage(data, 0x01);
     }
     catch (const std::exception& ex)
     {
-        Logger::getInstance()->FnLog("Exception in handleParsedResponseMessage: " + std::string(ex.what()), logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RX] Exception | Error=" + std::string(ex.what()), logFileName_, "EEP");
     }
     catch (...)
     {
-        Logger::getInstance()->FnLog("Unknown Exception in handleParsedResponseMessage", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RX] Exception | Error=Unknown", logFileName_, "EEP");
     }
 }
 
 void EEPClient::eepClientConnect()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    if (!client_ || stopping_.load())
+    {
+        return;
+    }
 
-    boost::asio::dispatch(strand_, [this]() {
-
-        if (client_)
-        {
-            client_->connect();
-        }
-    });
+    client_->connect();
 }
 
 void EEPClient::eepClientSend(const std::vector<uint8_t>& message)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    if (!client_ || stopping_.load())
+    {
+        return;
+    }
 
-    boost::asio::dispatch(strand_, [this, message]() {
+    std::uint16_t seqNo = 0;
+    std::uint8_t dataTypeCode = 0;
 
-        if (client_)
-        {
-            std::stringstream ss;
-            ss << "Sent EEP data: ";
-            for (uint8_t byte : message)
-            {
-                ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
-            }
-            Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-            client_->send(message);
-        }
-    });
+    if (message.size() >= MessageHeader::HEADER_SIZE)
+    {
+        dataTypeCode = message[2];
+        seqNo = static_cast<std::uint16_t>(message[12]) |
+                (static_cast<std::uint16_t>(message[13]) << 8);
+    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [TX] Frame"
+        " | Cmd=" + getCommandString(currentCmd_.type) +
+        " | Code=" + messageCodeToString(
+            static_cast<MESSAGE_CODE>(dataTypeCode)) +
+        " | Seq=" + std::to_string(seqNo) +
+        " | Bytes=" + std::to_string(message.size()) +
+        " | Hex=" + bytesToHexString(message),
+        logFileName_,
+        "EEP");
+
+    client_->send(message);
 }
 
 void EEPClient::eepClientClose()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
-    boost::asio::dispatch(strand_, [this]() {
-
-        if (client_)
-        {
-            client_->close();
-        }
-    });
+    if (client_)
+    {
+        client_->close();
+    }
 }
 
 const EEPClient::StateTransition EEPClient::stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)] = 
@@ -2727,6 +3120,7 @@ const EEPClient::StateTransition EEPClient::stateTransitionTable[static_cast<int
         {EVENT::ACK_TIMEOUT                                     , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
         {EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED           , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
         {EVENT::RESPONSE_TIMEOUT                                , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             },
+        {EVENT::RECONNECT_REQUEST                               , &EEPClient::handleWaitingForResponseState     , STATE::IDLE                  },
 
         {EVENT::UNSOLICITED_REQUEST_DONE                        , &EEPClient::handleWaitingForResponseState     , STATE::CONNECTED             }
     }}
@@ -3178,62 +3572,77 @@ std::string EEPClient::getCommandString(CommandType cmd)
 
 void EEPClient::processEvent(EVENT event)
 {
-    boost::asio::post(strand_, [this, event]() {
-        int currentStateIndex_ = static_cast<int>(currentState_);
-        const auto& stateTransitions = stateTransitionTable[currentStateIndex_].transitions;
-
-        bool eventHandled = false;
-        for (const auto& transition : stateTransitions)
+    boost::asio::post(
+        ioContext_,
+        [this, event]()
         {
-            if (transition.event == event)
+            if (stopping_.load())
             {
-                eventHandled = true;
-                
-                std::ostringstream oss;
-                oss << "Current State : " << stateToString(currentState_);
-                oss << " , Event : " << eventToString(event);
-                oss << " , Event Handler : " << (transition.eventHandler ? "YES" : "NO");
-                oss << " , Next State : " << stateToString(transition.nextState);
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+                return;
+            }
+
+            const auto stateIndex = static_cast<std::size_t>(currentState_);
+            if (stateIndex >= static_cast<std::size_t>(STATE::STATE_COUNT))
+            {
+                Logger::getInstance()->FnLog(
+                    "EEP: [FSM] Invalid state | Recovery=IDLE",
+                    logFileName_,
+                    "EEP");
+                currentState_ = STATE::IDLE;
+                return;
+            }
+
+            const auto& transitions = stateTransitionTable[stateIndex].transitions;
+
+            for (const auto& transition : transitions)
+            {
+                if (transition.event != event)
+                {
+                    continue;
+                }
+
+                Logger::getInstance()->FnLog(
+                    "EEP: [FSM] Transition | From=" + stateToString(currentState_) +
+                        " | Event=" + eventToString(event) +
+                        " | To=" + stateToString(transition.nextState),
+                    logFileName_,
+                    "EEP");
 
                 if (transition.eventHandler != nullptr)
                 {
                     (this->*transition.eventHandler)(event);
                 }
+
                 currentState_ = transition.nextState;
 
                 if (currentState_ == STATE::CONNECTED)
                 {
-                    boost::asio::post(strand_, [this]() {
-                        checkCommandQueue();
-                    });
+                    boost::asio::post(
+                        ioContext_,
+                        [this]()
+                        {
+                            checkCommandQueue();
+                        });
                 }
                 return;
             }
-        }
 
-        if (!eventHandled)
-        {
-            std::ostringstream oss;
-            oss << "Event '" << eventToString(event) << "' not handled in state '" << stateToString(currentState_) << "'";
-            Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-        }
-    });
+            Logger::getInstance()->FnLog(
+                "EEP: [FSM] Event ignored | State=" + stateToString(currentState_) +
+                    " | Event=" + eventToString(event),
+                logFileName_,
+                "EEP");
+        });
 }
 
 void EEPClient::checkCommandQueue()
 {
-    bool hasCommand = false;
-
+    if (stopping_.load() || currentState_ != STATE::CONNECTED)
     {
-        std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-        if (!commandQueue_.empty())
-        {
-            hasCommand = true;
-        }
+        return;
     }
 
-    if (hasCommand)
+    if (!commandQueue_.empty())
     {
         processEvent(EVENT::WRITE_COMMAND);
     }
@@ -3241,159 +3650,174 @@ void EEPClient::checkCommandQueue()
 
 void EEPClient::enqueueCommand(CommandType type, int priority, std::shared_ptr<CommandDataBase> data)
 {
-    if (client_->isConnected())
+    if (!acceptingWork_.load())
     {
-        boost::asio::post(strand_, [this, type, priority, data] () {
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this, type, priority, data = std::move(data)]() mutable
+        {
+            if (stopping_.load())
             {
-                std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-
-                std::ostringstream oss;
-                oss << "Sending EEP Command to queue: " << getCommandString(type);
-                Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-
-                commandQueue_.emplace(type, priority, commandSequence_++, data);
+                return;
             }
+
+            Command command{type, priority, commandSequence_++, std::move(data)};
+
+            if (!client_ || !client_->isConnected())
+            {
+                Logger::getInstance()->FnLog("EEP: [QUEUE] Rejected | Cmd=" + getCommandString(type) + " | Reason=Disconnected", logFileName_, "EEP");
+                handleCommandErrorOrTimeout(command, MSG_STATUS::SEND_FAILED);
+                return;
+            }
+
+            commandQueue_.push(std::move(command));
+
+            Logger::getInstance()->FnLog(
+                "EEP: [QUEUE] Enqueued | Cmd=" + getCommandString(type) +
+                    " | Priority=" + std::to_string(priority) +
+                    " | Size=" + std::to_string(commandQueue_.size()),
+                logFileName_,
+                "EEP");
+
             checkCommandQueue();
         });
-    }
-    else
+}
+
+void EEPClient::postCommandFailure(CommandType type, MSG_STATUS status)
+{
+    if (!moduleRunning_.load() || stopping_.load())
     {
-        struct Command cmdData = {};
-        cmdData.type = type;
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        return;
     }
+
+    boost::asio::post(
+        ioContext_,
+        [this, type, status]()
+        {
+            if (stopping_.load())
+            {
+                return;
+            }
+
+            Command cmd{};
+            cmd.type = type;
+            handleCommandErrorOrTimeout(cmd, status);
+        });
 }
 
 void EEPClient::popFromCommandQueueAndEnqueueWrite()
 {
-    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
+    if (commandQueue_.empty())
+    {
+        return;
+    }
 
-    std::ostringstream oss;
-    oss << "Command queue size: " << commandQueue_.size() << std::endl;
-    if (!commandQueue_.empty())
-    {
-        oss << "Commands in queue: " << std::endl;
-        // Copy the queue for safe iteration
-        auto tempQueue = commandQueue_;
-        while (!tempQueue.empty())
-        {
-            const Command& cmdData = tempQueue.top();
-            oss << "[Cmd: " << getCommandString(cmdData.type)
-                << " , Priority: " << cmdData.priority
-                << " , Cmd Sequence: " << cmdData.sequence << "]" << std::endl;
-            tempQueue.pop();
-        }
-    }
-    else
-    {
-        oss << "Command queue is empty." << std::endl;
-    }
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+    Command cmd = commandQueue_.top();
+    commandQueue_.pop();
 
-    if (!commandQueue_.empty())
+    setCurrentCmd(cmd);
+
+    // ACK/NAK are unsolicited replies. They must not overwrite the request
+    // whose ACK/notification we are still correlating.
+    if (cmd.type != CommandType::ACK && cmd.type != CommandType::NAK)
     {
-        Command cmd = commandQueue_.top();
-        commandQueue_.pop();
-        setCurrentCmd(cmd);
-        if (cmd.type != CommandType::ACK || cmd.type != CommandType::NAK)
-        {
-            setCurrentCmdRequested(cmd);
-        }
-        auto [packet, ok] = prepareCmd(cmd);
-        
-        if (ok)
-        {
-            eepClientSend(packet);
-        }
-        else
-        {
-            Logger::getInstance()->FnLog("PrepareCmd failed, waiting for send failed.", logFileName_, "EEP");
-        }
+        setCurrentCmdRequested(cmd);
     }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [QUEUE] Dequeued | Cmd=" + getCommandString(cmd.type) +
+            " | Priority=" + std::to_string(cmd.priority) +
+            " | Remaining=" + std::to_string(commandQueue_.size()),
+        logFileName_,
+        "EEP");
+
+    auto [packet, ok] = prepareCmd(cmd);
+    if (!ok)
+    {
+        Logger::getInstance()->FnLog(
+            "EEP: [TX] Prepare failed | Cmd=" + getCommandString(cmd.type),
+            logFileName_,
+            "EEP");
+        processEvent(EVENT::WRITE_TIMEOUT);
+        return;
+    }
+
+    eepClientSend(packet);
 }
 
 void EEPClient::clearCommandQueue()
 {
-    std::unique_lock<std::mutex> lock(cmdQueueMutex_);
-    std::ostringstream oss;
-    oss << "Clearing command queue. Current size: " << commandQueue_.size() << std::endl;
+    const auto queueSize = commandQueue_.size();
 
     while (!commandQueue_.empty())
     {
-        const Command& cmdData = commandQueue_.top();
-        oss << "Removing command: [Cmd: " << getCommandString(cmdData.type)
-            << " , Priority: " << cmdData.priority
-            << " , Cmd Sequence: " << cmdData.sequence << "]" << std::endl;
-
-        handleCommandErrorOrTimeout(cmdData, MSG_STATUS::SEND_FAILED);
+        Command cmd = commandQueue_.top();
         commandQueue_.pop();
+        handleCommandErrorOrTimeout(cmd, MSG_STATUS::SEND_FAILED);
     }
 
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+    Logger::getInstance()->FnLog(
+        "EEP: [QUEUE] Cleared | Count=" + std::to_string(queueSize),
+        logFileName_,
+        "EEP");
 }
 
 void EEPClient::setCurrentCmd(Command cmd)
 {
-    std::unique_lock<std::mutex> lock(currentCmdMutex_);
-
-    currentCmd = cmd;
+    currentCmd_ = std::move(cmd);
 }
 
-EEPClient::Command EEPClient::getCurrentCmd()
+EEPClient::Command EEPClient::getCurrentCmd() const
 {
-    std::unique_lock<std::mutex> lock(currentCmdMutex_);
-
-    return currentCmd;
+    return currentCmd_;
 }
 
 void EEPClient::setCurrentCmdRequested(Command cmd)
 {
-    std::unique_lock<std::mutex> lock(currentCmdRequestedMutex_);
-
-    currentCmd = cmd;
+    currentCmdRequested_ = std::move(cmd);
 }
 
-EEPClient::Command EEPClient::getCurrentCmdRequested()
+EEPClient::Command EEPClient::getCurrentCmdRequested() const
 {
-    std::unique_lock<std::mutex> lock(currentCmdRequestedMutex_);
-
-    return currentCmd;
+    return currentCmdRequested_;
 }
 
 void EEPClient::incrementSequenceNo()
 {
-    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
-
     ++sequenceNo_;
 }
 
-uint16_t EEPClient::getSequenceNo()
+uint16_t EEPClient::getSequenceNo() const
 {
-    std::unique_lock<std::mutex> lock(sequenceNoMutex_);
-
     return sequenceNo_;
 }
 
-void EEPClient::incrementDeductCmdSerialNo()
+std::uint16_t EEPClient::allocateDeductCmdSerialNo()
 {
-    std::unique_lock<std::mutex> lock(deductCmdSerialNoMutex_);
-
-    lastDeductCmdSerialNo_ = deductCmdSerialNo_;
-    ++deductCmdSerialNo_;
+    return deductCmdSerialNo_.fetch_add(1);
 }
 
-uint16_t EEPClient::getDeductCmdSerialNo()
+std::uint16_t EEPClient::getDeductSerialFromCurrentRequest() const
 {
-    std::unique_lock<std::mutex> lock(deductCmdSerialNoMutex_);
+    if (currentCmdRequested_.type != CommandType::DEDUCT_REQ_CMD ||
+        !currentCmdRequested_.data)
+    {
+        return 0;
+    }
 
-    return deductCmdSerialNo_;
-}
+    const auto deductData =
+        std::dynamic_pointer_cast<DeductData>(currentCmdRequested_.data);
 
-uint16_t EEPClient::getLastDeductCmdSerialNo()
-{
-    std::unique_lock<std::mutex> lock(deductCmdSerialNoMutex_);
+    if (!deductData)
+    {
+        return 0;
+    }
 
-    return lastDeductCmdSerialNo_;
+    return static_cast<std::uint16_t>(deductData->serialNum[0]) |
+           (static_cast<std::uint16_t>(deductData->serialNum[1]) << 8);
 }
 
 void EEPClient::appendMessageHeader(std::vector<uint8_t>& msg, uint8_t messageCode, uint16_t seqNo, uint16_t length)
@@ -3457,8 +3881,12 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
     std::vector<uint8_t> msg;
     bool success = true;
 
-    uint16_t seqNo = getSequenceNo();
-    incrementSequenceNo();
+    const bool usesControllerSequence =
+        cmd.type != CommandType::ACK && cmd.type != CommandType::NAK;
+
+    const std::uint16_t seqNo = usesControllerSequence
+        ? getSequenceNo()
+        : 0;
 
     switch (cmd.type)
     {
@@ -3477,7 +3905,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty ACK message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=ACK | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3497,7 +3925,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty NAK message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=NAK | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3522,7 +3950,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty Watchdog message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=WATCHDOG_REQ_CMD | Reason=Missing CarparkID", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3558,7 +3986,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty DI Port Configuration message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=DO_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3576,7 +4004,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty DI Port Configuration message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=SET_DI_PORT_CONFIG_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3606,7 +4034,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty deduct message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=DEDUCT_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3624,7 +4052,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty deduct stop message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=DEDUCT_STOP_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3642,7 +4070,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty transaction message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=TRANSACTION_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3660,7 +4088,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty CPO info display message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=CPO_INFO_DISPLAY_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3678,7 +4106,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty carpark process complete notification message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=CARPARK_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3696,7 +4124,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty DSRC process complete notification message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=DSRC_PROCESS_COMPLETE_NOTIFICATION_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3714,7 +4142,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty Stop request of related info distribution message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=STOP_REQ_OF_RELATED_INFO_DISTRIBUTION_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3738,7 +4166,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty Time calibration message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=TIME_CALIBRATION_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3756,7 +4184,7 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty Set carpark avaliable message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=SET_CARPARK_AVAIL_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
@@ -3780,14 +4208,14 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
             }
             else
             {
-                Logger::getInstance()->FnLog("Empty Restart inquiry response request message to be sent.", logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Cmd=EEP_RESTART_INQUIRY_REQ_CMD | Reason=Missing payload", logFileName_, "EEP");
                 success = false;
             }
             break;
         }
         default:
         {
-            Logger::getInstance()->FnLog("Invalid command type, unable to prepare message to be sent.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [TX] Prepare failed | Reason=Unsupported command type", logFileName_, "EEP");
             success = false;
             break;
         }
@@ -3798,6 +4226,14 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
         // Append checkcode
         uint32_t checkcode = calculateChecksumNoPadding(msg);
         Common::getInstance()->FnAppendUint32LE(msg, checkcode);
+
+        // ACK/NAK echo the peer sequence number and must not consume a
+        // controller request sequence number.
+        if (usesControllerSequence)
+        {
+            expectedResponseSeqNo_ = seqNo;
+            incrementSequenceNo();
+        }
     }
 
     return { msg, success };
@@ -3805,223 +4241,274 @@ std::pair<std::vector<uint8_t>, bool> EEPClient::prepareCmd(Command cmd)
 
 void EEPClient::startReconnectTimer()
 {
-    reconnectTimer_.expires_after(std::chrono::seconds(3));
-    reconnectTimer_.async_wait(boost::asio::bind_executor(strand_,
-        [this](const boost::system::error_code& ec) {
-            if (ec)
-            {
-                Logger::getInstance()->FnLog("Reconnect timer error: " + ec.message(), logFileName_, "EEP");
+    if (stopping_.load())
+    {
+        return;
+    }
 
-                if (ec != boost::asio::error::operation_aborted)
-                {
-                    Logger::getInstance()->FnLog("Retrying reconnect timer after error...", logFileName_, "EEP");
-                    startReconnectTimer();  // Retry on error
-                }
+    reconnectTimer_.expires_after(std::chrono::seconds(3));
+    reconnectTimer_.async_wait(
+        [this](const boost::system::error_code& ec)
+        {
+            if (ec == boost::asio::error::operation_aborted || stopping_.load())
+            {
                 return;
             }
 
-            Logger::getInstance()->FnLog("Reconnect timer expired. Triggering CONNECT event.", logFileName_, "EEP");
+            if (ec)
+            {
+                Logger::getInstance()->FnLog("EEP: [RECONNECT] Timer error | Error=" + ec.message(), logFileName_, "EEP");
+                return;
+            }
+
+            Logger::getInstance()->FnLog("EEP: [RECONNECT] Timer expired | Action=Connect", logFileName_, "EEP");
             processEvent(EVENT::CONNECT);
-        }));
+        });
 }
 
 void EEPClient::startConnectTimer()
 {
+    if (stopping_.load())
+    {
+        return;
+    }
+
     connectTimer_.expires_after(std::chrono::seconds(5));
-    connectTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&EEPClient::handleConnectTimerTimeout, this, std::placeholders::_1)));
+    connectTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleConnectTimerTimeout(error);
+        });
 }
 
 void EEPClient::handleConnectTimerTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
+    {
+        return;
+    }
 
-    if (error == boost::asio::error::operation_aborted)
+    if (!error)
     {
-        Logger::getInstance()->FnLog("Connect Timer cancelled.", logFileName_, "EEP");
-        processEvent(EVENT::CONNECT_SUCCESS);
-    }
-    else if (!error)
-    {
-        Logger::getInstance()->FnLog("Connect Timer timeout.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [CONNECT] Timeout | Server=" + serverIP_ +
+                " | Port=" + std::to_string(serverPort_),
+            logFileName_,
+            "EEP");
         processEvent(EVENT::CONNECT_FAIL);
+        return;
     }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Connect Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-        processEvent(EVENT::CONNECT_FAIL);
-    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [CONNECT] Timer error | Error=" + error.message(),
+        logFileName_,
+        "EEP");
+    processEvent(EVENT::CONNECT_FAIL);
 }
 
 void EEPClient::startSendTimer()
 {
+    if (stopping_.load())
+    {
+        return;
+    }
+
     sendTimer_.expires_after(std::chrono::seconds(2));
-    sendTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&EEPClient::handleSendTimerTimeout, this, std::placeholders::_1)));
+    sendTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleSendTimerTimeout(error);
+        });
 }
 
 void EEPClient::handleSendTimerTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
+    {
+        return;
+    }
 
-    if (error == boost::asio::error::operation_aborted)
+    if (!error)
     {
-        Logger::getInstance()->FnLog("Send Timer cancelled.", logFileName_, "EEP");
-        processEvent(EVENT::WRITE_COMPLETED);
-    }
-    else if (!error)
-    {
-        Logger::getInstance()->FnLog("Send Timer timeout.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [TX] Timeout | Cmd=" + getCommandString(currentCmd_.type),
+            logFileName_,
+            "EEP");
         processEvent(EVENT::WRITE_TIMEOUT);
+        return;
     }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Send Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-        processEvent(EVENT::WRITE_TIMEOUT);
-    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [TX] Timer error | Cmd=" + getCommandString(currentCmd_.type) +
+            " | Error=" + error.message(),
+        logFileName_,
+        "EEP");
+    processEvent(EVENT::WRITE_TIMEOUT);
 }
 
 void EEPClient::startResponseTimer()
 {
+    if (stopping_.load())
+    {
+        return;
+    }
+
     responseTimer_.expires_after(std::chrono::seconds(6));
-    responseTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&EEPClient::handleResponseTimeout, this, std::placeholders::_1)));
+    responseTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleResponseTimeout(error);
+        });
 }
 
 void EEPClient::handleResponseTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
+    {
+        return;
+    }
 
-    if (error == boost::asio::error::operation_aborted)
+    if (!error)
     {
-        Logger::getInstance()->FnLog("Response Timer cancelled.", logFileName_, "EEP");
-        processEvent(EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED);
-    }
-    else if (!error)
-    {
-        Logger::getInstance()->FnLog("Response Timer timeout.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [RSP] Timeout | Cmd=" + getCommandString(currentCmdRequested_.type),
+            logFileName_,
+            "EEP");
         processEvent(EVENT::RESPONSE_TIMEOUT);
+        return;
     }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Response Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-        processEvent(EVENT::RESPONSE_TIMEOUT);
-    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [RSP] Timer error | Cmd=" + getCommandString(currentCmdRequested_.type) +
+            " | Error=" + error.message(),
+        logFileName_,
+        "EEP");
+    processEvent(EVENT::RESPONSE_TIMEOUT);
 }
 
 void EEPClient::startAckTimer()
 {
+    if (stopping_.load())
+    {
+        return;
+    }
+
     ackTimer_.expires_after(std::chrono::seconds(1));
-    ackTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&EEPClient::handleAckTimeout, this, std::placeholders::_1)));
+    ackTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleAckTimeout(error);
+        });
 }
 
 void EEPClient::handleAckTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
+    {
+        return;
+    }
 
-    if (error == boost::asio::error::operation_aborted)
+    if (!error)
     {
-        Logger::getInstance()->FnLog("Ack Timer cancelled.", logFileName_, "EEP");
-        processEvent(EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED);
-    }
-    else if (!error)
-    {
-        Logger::getInstance()->FnLog("Ack Timer timeout.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [ACK] Timeout | Cmd=" + getCommandString(currentCmdRequested_.type),
+            logFileName_,
+            "EEP");
         processEvent(EVENT::ACK_TIMEOUT);
+        return;
     }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Ack Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-        processEvent(EVENT::ACK_TIMEOUT);
-    }
+
+    Logger::getInstance()->FnLog(
+        "EEP: [ACK] Timer error | Cmd=" + getCommandString(currentCmdRequested_.type) +
+            " | Error=" + error.message(),
+        logFileName_,
+        "EEP");
+    processEvent(EVENT::ACK_TIMEOUT);
 }
 
 void EEPClient::startWatchdogTimer()
 {
-    boost::system::error_code ec;
-    watchdogTimer_.cancel(ec); // cancel any previous timer
-    if (ec)
+    if (stopping_.load())
     {
-        Logger::getInstance()->FnLog("Failed to cancel watchdog timer: " + ec.message(), logFileName_, "EEP");
+        return;
     }
 
+    boost::system::error_code ec;
+    watchdogTimer_.cancel(ec);
+
     FnSendWatchdogReq();
+
     watchdogTimer_.expires_after(std::chrono::seconds(10));
-    watchdogTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&EEPClient::handleWatchdogTimeout, this, std::placeholders::_1)));
+    watchdogTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleWatchdogTimeout(error);
+        });
 }
 
 void EEPClient::handleWatchdogTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
-    if (error == boost::asio::error::operation_aborted)
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
     {
-        Logger::getInstance()->FnLog("Watchdog Timer was canceled before expiration.", logFileName_, "EEP");
         return;
     }
-    else if (error)
+
+    if (error)
     {
-        std::ostringstream oss;
-        oss << "Watchdog Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [WATCHDOG] Timer error | Error=" + error.message(),
+            logFileName_,
+            "EEP");
+        return;
     }
 
-    Logger::getInstance()->FnLog("Start watchdog Timer.", logFileName_, "EEP");
     startWatchdogTimer();
 }
 
 void EEPClient::startHealthStatusTimer()
 {
-    boost::system::error_code ec;
-    healthStatusTimer_.cancel(ec);
-    if (ec)
+    if (stopping_.load())
     {
-        Logger::getInstance()->FnLog("Failed to cancel health status timer: " + ec.message(), logFileName_, "EEP");
+        return;
     }
 
+    boost::system::error_code ec;
+    healthStatusTimer_.cancel(ec);
+
     FnSendHealthStatusReq();
+
     healthStatusTimer_.expires_after(std::chrono::seconds(60));
-    healthStatusTimer_.async_wait(boost::asio::bind_executor(strand_, 
-        std::bind(&EEPClient::handleHealthStatusTimeout, this, std::placeholders::_1)));
+    healthStatusTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleHealthStatusTimeout(error);
+        });
 }
 
 void EEPClient::handleHealthStatusTimeout(const boost::system::error_code& error)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
-    if (error == boost::asio::error::operation_aborted)
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
     {
-        Logger::getInstance()->FnLog("Health Status Timer was canceled before expiration.", logFileName_, "EEP");
         return;
     }
-    else if (error)
+
+    if (error)
     {
-        std::ostringstream oss;
-        oss << "Health Status Timer error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
+        Logger::getInstance()->FnLog(
+            "EEP: [HEALTH] Timer error | Error=" + error.message(),
+            logFileName_,
+            "EEP");
+        return;
     }
 
-    Logger::getInstance()->FnLog("Start Health Status Timer.", logFileName_, "EEP");
     startHealthStatusTimer();
 }
 
 void EEPClient::handleIdleState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
     if (event == EVENT::CONNECT)
     {
-        Logger::getInstance()->FnLog("Connect EEP via TCP.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [CONNECT] Attempt | Server=" + serverIP_ + " | Port=" + std::to_string(serverPort_), logFileName_, "EEP");
         eepClientConnect();
         startConnectTimer();
     }
@@ -4029,11 +4516,9 @@ void EEPClient::handleIdleState(EVENT event)
 
 void EEPClient::handleConnectingState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
     if (event == EVENT::CONNECT_SUCCESS)
     {
-        Logger::getInstance()->FnLog("Successfully connected EEP via TCP.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [CONNECT] Ready | Action=Start protocol timers", logFileName_, "EEP");
         notifyConnectionState(true);
         FnSendStartReq();
         startHealthStatusTimer();
@@ -4042,7 +4527,7 @@ void EEPClient::handleConnectingState(EVENT event)
     }
     else if (event == EVENT::CONNECT_FAIL)
     {
-        Logger::getInstance()->FnLog("Failed to connect EEP via TCP.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [CONNECT] Unavailable | Action=Schedule reconnect", logFileName_, "EEP");
         notifyConnectionState(false);
         startReconnectTimer();
     }
@@ -4050,19 +4535,17 @@ void EEPClient::handleConnectingState(EVENT event)
 
 void EEPClient::handleConnectedState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
     if (event == EVENT::CHECK_COMMAND)
     {
         // If connection loss, then raise event
         if (!client_->isConnected())
         {
-            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [CONNECT] Lost | Action=Reconnect", logFileName_, "EEP");
             processEvent(EVENT::RECONNECT_REQUEST);
             return;
         }
 
-        Logger::getInstance()->FnLog("Check the command queue.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [QUEUE] Check | Size=" + std::to_string(commandQueue_.size()), logFileName_, "EEP");
         checkCommandQueue();
     }
     else if (event == EVENT::WRITE_COMMAND)
@@ -4070,111 +4553,129 @@ void EEPClient::handleConnectedState(EVENT event)
         // If connection loss, then raise event
         if (!client_->isConnected())
         {
-            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [CONNECT] Lost | Action=Reconnect", logFileName_, "EEP");
             processEvent(EVENT::RECONNECT_REQUEST);
             return;
         }
 
-        Logger::getInstance()->FnLog("Pop from command queue and write.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [QUEUE] Dispatch | Size=" + std::to_string(commandQueue_.size()), logFileName_, "EEP");
         popFromCommandQueueAndEnqueueWrite();
         startSendTimer();
     }
     else if (event == EVENT::RECONNECT_REQUEST)
     {
-        Logger::getInstance()->FnLog("Reconnect request.", logFileName_, "EEP");
-        clearCommandQueue();
-        eepClientClose();
-        startReconnectTimer();
+        beginReconnect(false);
     }
 }
 
 void EEPClient::handleWritingRequestState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
     if (event == EVENT::WRITE_COMPLETED)
     {
         if (getCurrentCmd().type == CommandType::ACK || getCurrentCmd().type == CommandType::NAK)
         {
-            Logger::getInstance()->FnLog("Send the ACK/NAK successfully.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [TX] Control response sent | Cmd=" + getCommandString(currentCmd_.type), logFileName_, "EEP");
             processEvent(EVENT::UNSOLICITED_REQUEST_DONE);
         }
         else
         {
-            Logger::getInstance()->FnLog("Send the request data successfully. Start the Ack Timer.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [TX] Request sent | Cmd=" + getCommandString(currentCmdRequested_.type) + " | Action=Wait ACK", logFileName_, "EEP");
             startAckTimer();
         }
     }
     else if (event == EVENT::WRITE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Send the request data failed due to write timer timeout.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [TX] Failed | Cmd=" + getCommandString(currentCmdRequested_.type) + " | Reason=Write timeout", logFileName_, "EEP");
         if (!client_->isConnected())
         {
-            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [CONNECT] Lost | Action=Reconnect", logFileName_, "EEP");
             processEvent(EVENT::RECONNECT_REQUEST);
         }
         handleCommandErrorOrTimeout(getCurrentCmdRequested(), MSG_STATUS::SEND_FAILED);
     }
     else if (event == EVENT::RECONNECT_REQUEST)
     {
-        Logger::getInstance()->FnLog("Reconnect request.", logFileName_, "EEP");
-        clearCommandQueue();
-        eepClientClose();
-        startReconnectTimer();
+        beginReconnect(true);
     }
 }
 
 void EEPClient::handleWaitingForResponseState(EVENT event)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
     if (event == EVENT::ACK_TIMER_CANCELLED_ACK_RECEIVED)
     {
-        Logger::getInstance()->FnLog("Cancelled ACK timer, received the ACK successfully.", logFileName_, "EEP");
-
-        // Check whether to start the response timer based on the command requested
-        if (doesCmdRequireNotification(getCurrentCmdRequested()))
-        {
-            Logger::getInstance()->FnLog("Cmd requires notification as response, start response timer.", logFileName_, "EEP");
-            startResponseTimer();
-        }
-        else
-        {
-            processEvent(EVENT::ACK_AS_RSP_RECEIVED);
-        }
+        // This event is emitted only for a positive ACK belonging to a
+        // command that requires a follow-up notification.
+        startResponseTimer();
     }
     else if (event == EVENT::ACK_AS_RSP_RECEIVED)
     {
-        Logger::getInstance()->FnLog("Received the ACK as response successfully.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RSP] Request completed | Cmd=" + getCommandString(currentCmdRequested_.type) + " | Completion=ACK/NAK/direct response", logFileName_, "EEP");
     }
     else if (event == EVENT::ACK_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Received the ACK timeout.", logFileName_, "EEP");
+        expectedResponseSeqNo_.reset();
+        Logger::getInstance()->FnLog("EEP: [ACK] Timeout | Cmd=" + getCommandString(currentCmdRequested_.type), logFileName_, "EEP");
         handleCommandErrorOrTimeout(getCurrentCmdRequested(), MSG_STATUS::ACK_TIMEOUT);
     }
     else if (event == EVENT::RESPONSE_TIMER_CANCELLED_RSP_RECEIVED)
     {
-        Logger::getInstance()->FnLog("Received the response successfully.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [RSP] Follow-up completed | Cmd=" + getCommandString(currentCmdRequested_.type), logFileName_, "EEP");
     }
     else if (event == EVENT::RESPONSE_TIMEOUT)
     {
-        Logger::getInstance()->FnLog("Received the response timeout.", logFileName_, "EEP");
+        expectedResponseSeqNo_.reset();
+        Logger::getInstance()->FnLog("EEP: [RSP] Timeout | Cmd=" + getCommandString(currentCmdRequested_.type), logFileName_, "EEP");
         if (!client_->isConnected())
         {
-            Logger::getInstance()->FnLog("Server connection closed.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [CONNECT] Lost | Action=Reconnect", logFileName_, "EEP");
             processEvent(EVENT::RECONNECT_REQUEST);
         }
         handleCommandErrorOrTimeout(getCurrentCmdRequested(), MSG_STATUS::RSP_TIMEOUT);
     }
+    else if (event == EVENT::RECONNECT_REQUEST)
+    {
+        beginReconnect(true);
+    }
     else if (event == EVENT::UNSOLICITED_REQUEST_DONE)
     {
-        Logger::getInstance()->FnLog("Unsolicited response sent.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [TX] Unsolicited control response completed", logFileName_, "EEP");
     }
+}
+
+void EEPClient::beginReconnect(bool failActiveRequest)
+{
+    Logger::getInstance()->FnLog(
+        "EEP: [RECONNECT] Begin | FailActiveRequest=" +
+            std::string(failActiveRequest ? "true" : "false") +
+            " | State=" + stateToString(currentState_),
+        logFileName_,
+        "EEP");
+
+    boost::system::error_code ec;
+    connectTimer_.cancel(ec);
+    sendTimer_.cancel(ec);
+    ackTimer_.cancel(ec);
+    responseTimer_.cancel(ec);
+    watchdogTimer_.cancel(ec);
+    healthStatusTimer_.cancel(ec);
+
+    expectedResponseSeqNo_.reset();
+
+    if (failActiveRequest &&
+        currentCmdRequested_.type != CommandType::ACK &&
+        currentCmdRequested_.type != CommandType::NAK)
+    {
+        handleCommandErrorOrTimeout(currentCmdRequested_, MSG_STATUS::SEND_FAILED);
+    }
+
+    clearCommandQueue();
+    notifyConnectionState(false);
+    eepClientClose();
+    startReconnectTimer();
 }
 
 void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
     EEPEventWrapper eepEvt;
     std::string eventMsg = "";
 
@@ -4182,12 +4683,12 @@ void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
     {
         case CommandType::ACK:
         {
-            Logger::getInstance()->FnLog("Ignored send the ACK failed.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [TX] ACK failed | Action=Ignored", logFileName_, "EEP");
             break;
         }
         case CommandType::NAK:
         {
-            Logger::getInstance()->FnLog("Ignored send the NAK failed.", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [TX] NAK failed | Action=Ignored", logFileName_, "EEP");
             break;
         }
         case CommandType::START_REQ_CMD:
@@ -4231,7 +4732,7 @@ void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
         }
         default:
         {
-            Logger::getInstance()->FnLog("Unhandled CommandType in handleCommandErrorOrTimeout", logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [CMD] Failure not mapped | Cmd=" + getCommandString(cmd.type), logFileName_, "EEP");
             break;
         }
     }
@@ -4239,7 +4740,7 @@ void EEPClient::handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus)
     if (!eventMsg.empty())
     {
         EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientResponse", eventMsg);
-        Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientResponse.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [EVENT] Queued | Name=Evt_handleEEPClientResponse", logFileName_, "EEP");
     }
 }
 
@@ -4249,7 +4750,7 @@ void EEPClient::notifyConnectionState(bool connected)
     {
         lastConnectionState_ = connected;
         EventManager::getInstance()->FnEnqueueEvent("Evt_handleEEPClientConnectionState", connected);
-        Logger::getInstance()->FnLog("Raise event Evt_handleEEPClientConnectionState.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [EVENT] Queued | Name=Evt_handleEEPClientConnectionState | Connected=" + std::string(connected ? "true" : "false"), logFileName_, "EEP");
     }
 }
 
@@ -4524,7 +5025,18 @@ void EEPClient::processDSRCFeTx(const MessageHeader& header, const transactionDa
     std::string str(txRec.begin(), txRec.end());
     Logger::getInstance()->FnLog(str, logFileName_, "EEP");
     */
-    writeDSRCFeOrBeTxToCollFile(true, txRec);
+    if (filePool_)
+    {
+        const std::string cpoId = operation::getInstance()->tParas.gsCPOID;
+        const std::string carparkId = operation::getInstance()->tParas.gsCPID;
+
+        boost::asio::post(
+            *filePool_,
+            [this, record = std::move(txRec), cpoId, carparkId]() mutable
+            {
+                writeDSRCFeOrBeTxToCollFile(true, record, cpoId, carparkId);
+            });
+    }
 }
 
 void EEPClient::processDSRCBeTx(const MessageHeader& header, const transactionData& txData)
@@ -4701,32 +5213,41 @@ void EEPClient::processDSRCBeTx(const MessageHeader& header, const transactionDa
     std::string str(BeTxRec.begin(), BeTxRec.end());
     Logger::getInstance()->FnLog(str, logFileName_, "EEP");
     */
-    writeDSRCFeOrBeTxToCollFile(false, BeTxRec);
+    if (filePool_)
+    {
+        const std::string cpoId = operation::getInstance()->tParas.gsCPOID;
+        const std::string carparkId = operation::getInstance()->tParas.gsCPID;
+
+        boost::asio::post(
+            *filePool_,
+            [this, record = std::move(BeTxRec), cpoId, carparkId]() mutable
+            {
+                writeDSRCFeOrBeTxToCollFile(false, record, cpoId, carparkId);
+            });
+    }
 }
 
-void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data)
+void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data, const std::string& cpoId, const std::string& carparkId)
 {
-    std::string dataStr(data.begin(), data.end());
+    const std::string recordHex = bytesToHexString(data);
 
     try
     {
-        Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
-
         std::string settleFile = "";
         std::string settleFileName = "";
 
         if (!boost::filesystem::exists(LOCAL_EEP_SETTLEMENT_FOLDER_PATH))
         {
             std::ostringstream oss;
-            oss << "EEP Settle folder: " << LOCAL_EEP_SETTLEMENT_FOLDER_PATH << " Not Found, Create it.";
+            oss << "EEP: [FILE] Directory missing | Path=" << LOCAL_EEP_SETTLEMENT_FOLDER_PATH << " | Action=Create";
             Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
 
             if (!(boost::filesystem::create_directories(LOCAL_EEP_SETTLEMENT_FOLDER_PATH)))
             {
                 std::ostringstream oss;
-                oss << "Failed to create directory: " << LOCAL_EEP_SETTLEMENT_FOLDER_PATH;
+                oss << "EEP: [FILE] Create directory failed | Path=" << LOCAL_EEP_SETTLEMENT_FOLDER_PATH;
                 Logger::getInstance()->FnLog(oss.str(), logFileName_, "EEP");
-                Logger::getInstance()->FnLog("Settlement Data: " + std::string(data.begin(), data.end()), logFileName_, "EEP");
+                Logger::getInstance()->FnLog("EEP: [FILE] Record | Hex=" + recordHex, logFileName_, "EEP");
                 return;
             }
         }
@@ -4739,16 +5260,16 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
 
         if (isFrontendTx)
         {
-            ossFilename << "EEP_" << toMax16(operation::getInstance()->tParas.gsCPOID)
-                        << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
+            ossFilename << "EEP_" << toMax16(cpoId)
+                        << "_" << std::setw(5) << std::setfill('0') << carparkId
                         << "_FE_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmdd()
                         << "_" << std::setw(2) << std::setfill('0') << std::dec << iStationID_
                         << Common::getInstance()->FnGetDateTimeFormat_hh() << ".dsr";
         }
         else
         {
-            ossFilename << "EEP_" << toMax16(operation::getInstance()->tParas.gsCPOID)
-                        << "_" << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID
+            ossFilename << "EEP_" << toMax16(cpoId)
+                        << "_" << std::setw(5) << std::setfill('0') << carparkId
                         << "_BE_"
                         << std::setw(2) << std::setfill('0') << std::dec << iStationID_
                         << "_" << Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() << ".dsr";   
@@ -4757,7 +5278,7 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
         settleFile = LOCAL_EEP_SETTLEMENT_FOLDER_PATH + "/" + ossFilename.str();
 
         // Write data to local
-        Logger::getInstance()->FnLog("Write EEP settlement to local.", logFileName_, "EEP");
+        Logger::getInstance()->FnLog("EEP: [FILE] Write | Type=" + std::string(isFrontendTx ? "FE" : "BE") + " | Path=" + settleFile + " | Bytes=" + std::to_string(data.size()), logFileName_, "EEP");
 
         std::ofstream ofs;
         if (!boost::filesystem::exists(settleFile))
@@ -4774,7 +5295,7 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
             header.push_back('H');
             // EEP Car Park ID
             std::ostringstream tempCarParkIDoss;
-            tempCarParkIDoss << std::setw(5) << std::setfill('0') << operation::getInstance()->tParas.gsCPID;
+            tempCarParkIDoss << std::setw(5) << std::setfill('0') << carparkId;
             std::string tempCarParkID = tempCarParkIDoss.str();
             header.insert(header.end(), tempCarParkID.begin(), tempCarParkID.end());
             // Date and Time
@@ -4845,8 +5366,8 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
 
         if (!ofs.is_open())
         {
-            Logger::getInstance()->FnLog("Error opening file for writing settlement to" + settleFile, logFileName_, "EEP");
-            Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [FILE] Open failed | Path=" + settleFile, logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [FILE] Record | Hex=" + recordHex, logFileName_, "EEP");
             return;
         }
 
@@ -4854,175 +5375,196 @@ void EEPClient::writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector
 
         if (!ofs)
         {
-            Logger::getInstance()->FnLog("Write failed for " + settleFile, logFileName_, "EEP");
-            Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [FILE] Write failed | Path=" + settleFile + " | Bytes=" + std::to_string(data.size()), logFileName_, "EEP");
+            Logger::getInstance()->FnLog("EEP: [FILE] Record | Hex=" + recordHex, logFileName_, "EEP");
         }
         ofs.close();
 
         if (!isFrontendTx)
         {
-            boost::asio::post(filePool_, [this, settleFile]() {
-                    copyAndRemoveBEFile(settleFile);
-            });
+            copyAndRemoveBEFile(settleFile);
         }
 
     }
     catch (const std::exception& e)
     {
-        Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: " + e.what());
-        Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
+        Logger::getInstance()->FnLogExceptionError("EEP: [FILE] Write exception | Error=" + std::string(e.what()));
+        Logger::getInstance()->FnLog("EEP: [FILE] Write exception | Error=" + std::string(e.what()) + " | RecordHex=" + recordHex, logFileName_, "EEP");
     }
     catch (...)
     {
-        Logger::getInstance()->FnLogExceptionError(std::string(__func__) + ", Exception: Unknown Exception");
-        Logger::getInstance()->FnLog("Settlement Data: " + dataStr, logFileName_, "EEP");
+        Logger::getInstance()->FnLogExceptionError("EEP: [FILE] Write exception | Error=Unknown");
+        Logger::getInstance()->FnLog("EEP: [FILE] Write exception | Error=Unknown | RecordHex=" + recordHex, logFileName_, "EEP");
     }
 }
 
 void EEPClient::copyAndRemoveBEFile(const std::string& settlementfilepath)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "EEP");
+    const std::string mountPoint = "/mnt/dsrcsettlementfiles";
+    const std::string sharedFolderPath =
+        "//" + IniParser::getInstance()->FnGetCentralDBServer() +
+        "/Carpark/EEPSettle";
 
-    // Create the mount poin directory if doesn't exist
-    std::string mountPoint = "/mnt/dsrcsettlementfiles";
-    std::string sharedFolderPath = "//" + IniParser::getInstance()->FnGetCentralDBServer() + "/Carpark/EEPSettle";
+    const std::string username = IniParser::getInstance()->FnGetCentralUsername();
 
-    std::string username = IniParser::getInstance()->FnGetCentralUsername();
-    std::string password = IniParser::getInstance()->FnGetCentralPassword();
-
-    try
-    {
-        if (!std::filesystem::exists(mountPoint))
-        {
-            std::error_code ec;
-            if (!std::filesystem::create_directories(mountPoint, ec))
-            {
-                Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), logFileName_, "EEP");
-            }
-            else
-            {
-                Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), logFileName_, "EEP");
-            }
-        }
-        else
-        {
-            Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), logFileName_, "EEP");
-        }
-
-        // Mount the shared folder
-        std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
-                                    " -o username=" + username + ",password=" + password;
-        std::cout << "Mount cmd: " << mountCommand << std::endl;
-        int mountStatus = std::system(mountCommand.c_str());
-        if (mountStatus != 0)
-        {
-            Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), logFileName_, "EEP");
-        }
-        else
-        {
-            Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), logFileName_, "EEP");
-
-            // File copy/remove lambda
-            auto copyAndRemove = [&](const std::filesystem::path& src, const std::string& subdir) {
-                std::filesystem::path destFilePath = std::filesystem::path(mountPoint) / subdir / "Raw" / src.filename();
-
-                // Ensure the parent directories exist
-                std::error_code ec;
-                std::filesystem::create_directories(destFilePath.parent_path(), ec);
-
-                if (ec)
-                {
-                    Logger::getInstance()->FnLog("Failed to create directory: " + destFilePath.parent_path().string() +
-                                                " - " + ec.message(), logFileName_, "EEP");
-                }
-                else
-                {
-                    std::filesystem::copy(src, destFilePath, std::filesystem::copy_options::overwrite_existing, ec);
-
-                    if (!ec)
-                    {
-                        Logger::getInstance()->FnLog("Copied file: " + src.string(), logFileName_, "EEP");
-                        std::filesystem::remove(src, ec);
-                        if (!ec)
-                            Logger::getInstance()->FnLog("Removed file: " + src.string(), logFileName_, "EEP");
-                    }
-                    else
-                    {
-                        Logger::getInstance()->FnLog("Failed to copy file: " + src.string(), logFileName_, "EEP");
-                    }
-                }
-            };
-
-            copyAndRemove(settlementfilepath, "DSRCBE");
-        }
-    }
-    catch (const std::filesystem::filesystem_error& e)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-    }
-    catch (const std::exception& e)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-    }
-    catch (...)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
-    }
+    const std::string password = IniParser::getInstance()->FnGetCentralPassword();
 
     try
     {
-        // Unmount the shared folder
-        std::string unmountCommand = "sudo umount " + mountPoint;
-        int unmountStatus = std::system(unmountCommand.c_str());
-        if (unmountStatus != 0)
+        // MountManager is a synchronous RAII utility. This function is invoked
+        // from filePool_, so mount/retry/filesystem work does not block EEP_IO.
+        MountManager mountManager(
+            sharedFolderPath,
+            mountPoint,
+            username,
+            password,
+            logFileName_,
+            "EEP");
+
+        if (!mountManager.isMounted())
         {
-            Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), logFileName_, "EEP");
+            Logger::getInstance()->FnLog(
+                "EEP: [FILE] BE settlement transfer failed"
+                " | Reason=Mount unavailable"
+                " | Share=" + sharedFolderPath +
+                " | MountPoint=" + mountPoint,
+                logFileName_,
+                "EEP");
+            return;
         }
-        else
+
+        const std::filesystem::path sourceFile(settlementfilepath);
+
+        std::error_code ec;
+        if (!std::filesystem::exists(sourceFile, ec) ||
+            ec ||
+            !std::filesystem::is_regular_file(sourceFile, ec) ||
+            ec)
         {
-            Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), logFileName_, "EEP");
+            Logger::getInstance()->FnLog(
+                "EEP: [FILE] BE settlement transfer failed"
+                " | Reason=Source file unavailable"
+                " | Path=" + sourceFile.string() +
+                (ec ? " | Error=" + ec.message() : ""),
+                logFileName_,
+                "EEP");
+            return;
         }
+
+        const std::filesystem::path destinationFile =
+            std::filesystem::path(mountPoint) /
+            "DSRCBE" /
+            "Raw" /
+            sourceFile.filename();
+
+        std::filesystem::create_directories(destinationFile.parent_path(), ec);
+
+        if (ec)
+        {
+            Logger::getInstance()->FnLog(
+                "EEP: [FILE] Destination directory create failed"
+                " | Path=" + destinationFile.parent_path().string() +
+                " | Error=" + ec.message(),
+                logFileName_,
+                "EEP");
+            return;
+        }
+
+        ec.clear();
+        std::filesystem::copy(
+            sourceFile,
+            destinationFile,
+            std::filesystem::copy_options::overwrite_existing,
+            ec);
+
+        if (ec)
+        {
+            Logger::getInstance()->FnLog(
+                "EEP: [FILE] BE settlement copy failed"
+                " | Source=" + sourceFile.string() +
+                " | Destination=" + destinationFile.string() +
+                " | Error=" + ec.message(),
+                logFileName_,
+                "EEP");
+            return;
+        }
+
+        Logger::getInstance()->FnLog(
+            "EEP: [FILE] BE settlement copied"
+            " | Source=" + sourceFile.string() +
+            " | Destination=" + destinationFile.string(),
+            logFileName_,
+            "EEP");
+
+        ec.clear();
+        const bool removed = std::filesystem::remove(sourceFile, ec);
+
+        if (ec)
+        {
+            Logger::getInstance()->FnLog(
+                "EEP: [FILE] Local BE settlement remove failed"
+                " | Path=" + sourceFile.string() +
+                " | Error=" + ec.message(),
+                logFileName_,
+                "EEP");
+            return;
+        }
+
+        Logger::getInstance()->FnLog(
+            "EEP: [FILE] Local BE settlement removed"
+            " | Path=" + sourceFile.string() +
+            " | Removed=" + std::string(removed ? "true" : "false"),
+            logFileName_,
+            "EEP");
+
+        // mountManager goes out of scope here. Its destructor releases the
+        // mount lease and only unmounts when the final process lease is gone.
     }
     catch (const std::filesystem::filesystem_error& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Unmount Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        const std::string message =
+            std::string("EEP: [FILE] BE settlement transfer exception"
+                        " | Type=Filesystem"
+                        " | Error=") +
+            e.what();
+
+        Logger::getInstance()->FnLogExceptionError(message);
+        Logger::getInstance()->FnLog(message, logFileName_, "EEP");
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Unmount Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        const std::string message =
+            std::string("EEP: [FILE] BE settlement transfer exception"
+                        " | Error=") +
+            e.what();
+
+        Logger::getInstance()->FnLogExceptionError(message);
+        Logger::getInstance()->FnLog(message, logFileName_, "EEP");
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Unmount Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        Logger::getInstance()->FnLog(ss.str(), logFileName_, "EEP");
+        const std::string message =
+            "EEP: [FILE] BE settlement transfer exception"
+            " | Error=Unknown";
+
+        Logger::getInstance()->FnLogExceptionError(message);
+        Logger::getInstance()->FnLog(message, logFileName_, "EEP");
     }
 }
 
 std::string EEPClient::FnGetStatusData()
 {
-    std::lock_guard<std::mutex> lock(statusDataMutex_);
-    std::ostringstream stream;
+    std::vector<std::uint8_t> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(statusDataMutex_);
+        snapshot = status_data_;
+    }
 
+    std::ostringstream stream;
     stream << std::hex << std::setfill('0');
 
-    for (uint8_t byte : status_data_) {
+    for (std::uint8_t byte : snapshot)
+    {
         stream << std::setw(2)
                << static_cast<unsigned int>(byte);
     }

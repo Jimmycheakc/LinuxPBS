@@ -1,16 +1,19 @@
 #pragma once
 
-#include <iostream>
-#include <cstdlib>
-#include <ctime>
-#include "boost/asio.hpp"
-#include <boost/algorithm/string.hpp>
-#include "log.h"
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <deque>
+#include <string>
+#include <string_view>
 
-using namespace boost::asio;
-using ip::udp;
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/strand.hpp>
 
-typedef enum : unsigned int
+enum UdpRxCommand : unsigned int
 {
     CmdStopStationSoftware  = 11,
     CmdStatusEnquiry        = 13,
@@ -38,9 +41,9 @@ typedef enum : unsigned int
     CmdFeeTest              = 301,
     CmdSetDioOutput         = 303,
     CmdEEPStatus            = 800
-} udp_rx_command;
+};
 
-typedef enum : unsigned int
+enum MonitorUdpRxCommand : unsigned int
 {
     CmdMonitorEnquiry           = 300,
     CmdMonitorFeeTest           = 301,
@@ -51,149 +54,126 @@ typedef enum : unsigned int
     CmdMonitorStatus            = 312,
     CmdMonitorStationVersion    = 313,
     CmdMonitorGetStationCurrLog = 314
-} monitorudp_rx_command;
-
-class udpclient 
-{
-public:
-    void processdata(const char*data, std::size_t length);
-    void processmonitordata(const char*data, std::size_t length);
-    void udpinit(const std::string ServerIP, unsigned short RemotePort, unsigned short LocalPort);
-    bool FnGetMonitorStatus();
-
-    udpclient(io_context& ioContext, const std::string& serverAddress, unsigned short serverPort, unsigned short LocalPort, bool broadcast = false)
-        : strand_(boost::asio::make_strand(ioContext)),
-          monitorStatus_(false),
-          isBroadcast_(broadcast),
-          socket_(strand_, udp::endpoint(udp::v4(), LocalPort)), serverEndpoint_(ip::address::from_string(serverAddress), serverPort)
-    {
-        if (isBroadcast_)
-        {
-            // Enable the socket to send broadcast messages
-            boost::system::error_code ec;
-            socket_.set_option(boost::asio::socket_base::broadcast(true), ec);
-            if (ec)
-            {
-                std::stringstream ss;
-                ss << "Error setting broadcast option: " << ec.message();
-                Logger::getInstance()->FnLog(ss.str(), "", "UDP");
-            }
-        }
-
-        startreceive();
-    }
-
-    void send(const std::string& message)
-    {
-        startsend(message);
-    }
-
- private:
-    bool monitorStatus_;
-    bool isBroadcast_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
-    udp::socket socket_;
-    udp::endpoint serverEndpoint_;
-    udp::endpoint senderEndpoint_;
-    enum { max_length = 1024 };
-    char data_[max_length];
-    void startreceive();
-    void startsend(const std::string& message)
-    {     
-        socket_.async_send_to(buffer(message), serverEndpoint_, boost::asio::bind_executor(strand_, [this](const boost::system::error_code& error, std::size_t /*bytes_sent*/)
-        {
-            if (!error)
-            {
-              //  std::cout << "Message sent successfully." << std::endl;
-            }
-            else
-            {
-                std::stringstream dbss;
-                dbss << "Error for sending message: " << error.message() ;
-                Logger::getInstance()->FnLog(dbss.str(), "", "UDP");
-            }
-        }));
-    }
 };
 
 
+// Passive asynchronous UDP transport/dispatcher.
+//
+// Concurrency is owned by the supplied io_context. This class does not create
+// an io_context, thread, or work guard. It owns a strand because the
+// supplied io_context may be run by multiple threads.
+//
+// Lifecycle requirement:
+//   1. start()
+//   2. use send()/receive processing
+//   3. close()
+//   4. allow the owning io_context to drain
+//   5. destroy udpclient
+class udpclient 
+{
+public:
+    udpclient(
+        boost::asio::io_context& ioContext,
+        const std::string& serverAddress,
+        unsigned short serverPort,
+        unsigned short localPort,
+        bool broadcast = false);
+
+    ~udpclient();
+
+    udpclient(const udpclient&) = delete;
+    udpclient& operator=(const udpclient&) = delete;
+    udpclient(udpclient&&) = delete;
+    udpclient& operator=(udpclient&&) = delete;
+
+    void start();
+    void close();
+
+    void send(std::string message);
+
+    bool FnGetMonitorStatus() const;
+
+ private:
+    using Strand = boost::asio::strand<boost::asio::io_context::executor_type>;
+
+    static constexpr std::size_t kMaxDatagramSize = 1024;
+
+    void startOnStrand();
+    void closeOnStrand();
+
+    void startReceiveOnStrand();
+    void handleReceiveOnStrand(const boost::system::error_code& error, std::size_t bytesReceived);
+
+    void enqueueSendOnStrand(std::string message);
+    void startSendOnStrand();
+    void handleSendOnStrand(const boost::system::error_code& error, std::size_t bytesSent);
+
+    void processData(std::string_view packet);
+    void processMonitorData(std::string_view packet);
+
+    void logTransportError(const std::string& message) const;
+
+    Strand strand_;
+    boost::asio::ip::udp::socket socket_;
+    boost::asio::ip::udp::endpoint serverEndpoint_;
+    boost::asio::ip::udp::endpoint senderEndpoint_;
+
+    const unsigned short localPort_;
+    const bool isBroadcast_;
+
+    std::array<char, kMaxDatagramSize> receiveBuffer_{};
+    std::deque<std::string> sendQueue_;
+
+    bool started_{false};
+    bool stopping_{false};
+    bool sendInProgress_{false};
+
+    std::atomic<bool> acceptingWork_{false};
+    std::atomic<bool> monitorStatus_{false};
+};
+
+
+// Passive periodic UDP heartbeat sender.
+// Uses the owner's io_context and owns its own strand so socket/timer state
+// remains serialized even when multiple threads call io_context::run().
+// It owns no io_context, thread, or work guard.
 class HeartbeatUdpServer
 {
 public:
-    HeartbeatUdpServer(boost::asio::io_context& io_context, const std::string& serverAddress, int serverPort)
-        : strand_(boost::asio::make_strand(io_context)),
-          socket_(strand_, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(serverAddress), 0)),
-          remoteEndpoint_(boost::asio::ip::make_address(serverAddress), serverPort),
-          timer_(strand_)
-    {
+    HeartbeatUdpServer(
+        boost::asio::io_context& ioContext,
+        const std::string& serverAddress,
+        unsigned short serverPort);
 
-    }
+    ~HeartbeatUdpServer();
 
-    void start()
-    {
-        sendHeartbeat();
-    }
+    HeartbeatUdpServer(const HeartbeatUdpServer&) = delete;
+    HeartbeatUdpServer& operator=(const HeartbeatUdpServer&) = delete;
+    HeartbeatUdpServer(HeartbeatUdpServer&&) = delete;
+    HeartbeatUdpServer& operator=(HeartbeatUdpServer&&) = delete;
+
+    void start();
+    void stop();
 
 private:
-    void sendHeartbeat()
-    {
-        std::string message = "Heartbeat";
-        socket_.async_send_to(boost::asio::buffer(message), remoteEndpoint_,
-            boost::asio::bind_executor(strand_, [&](const boost::system::error_code& error, std::size_t /*bytes_transferred*/)
-            {
-                if (!error)
-                {
-                    //std::cout << "Heartbeat sent." << std::endl;
-                }
-                else
-                {
-                    std::stringstream ss;
-                    ss << "Error sending heartbeat: " << error.message();
-                    Logger::getInstance()->FnLog(ss.str(), "", "UDP");
-                }
-            }));
-        
-        // Schedule the next heartbeat
-        timer_.expires_after(std::chrono::minutes(1));
-        timer_.async_wait(boost::asio::bind_executor(strand_, [this](const boost::system::error_code& error)
-        {
-            if (!error)
-            {
-                sendHeartbeat();
-            }
-            else
-            {
-                handleTimerError(error);
-            }
-        }));
-    }
+    using Strand = boost::asio::strand<boost::asio::io_context::executor_type>;
 
-    void handleTimerError(const boost::system::error_code& error)
-    {
-        std::stringstream ss;
-        ss << "Heartbeat Timer error: " << error.message();
-        Logger::getInstance()->FnLog(ss.str(), "", "UDP");
+    static constexpr auto kHeartbeatInterval = std::chrono::minutes{1};
+    static constexpr char kHeartbeatMessage[] = "Heartbeat";
 
-        try
-        {
-            sendHeartbeat();
-        }
-        catch (const std::exception& e)
-        {
-            std::stringstream ss;
-            ss << __func__ << ", Heartbeat Timer Exception: " << e.what();
-            Logger::getInstance()->FnLogExceptionError(ss.str());
-        }
-        catch (...)
-        {
-            std::stringstream ss;
-            ss << __func__ << ", Heartbeat Timer Exception: Unknown Exception";
-            Logger::getInstance()->FnLogExceptionError(ss.str());
-        }
-    }
+    void startOnStrand();
+    void stopOnStrand();
 
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    void sendHeartbeatOnStrand();
+    void scheduleNextHeartbeatOnStrand();
+
+    void logError(const std::string& message) const;
+
+    Strand strand_;
     boost::asio::ip::udp::socket socket_;
     boost::asio::ip::udp::endpoint remoteEndpoint_;
     boost::asio::steady_timer timer_;
+
+    bool running_{false};
+    bool stopping_{false};
 };

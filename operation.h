@@ -13,6 +13,8 @@
 #include "upt.h"
 #include "eep_client.h"
 
+#include <boost/asio/io_context.hpp>
+
 typedef enum : unsigned int
 {
     FreeParking        = 0,
@@ -65,14 +67,14 @@ public:
     std::vector<struct tTR_struc> tTR;
 
 
-    void OperationInit(io_context& ioContext);
+    void OperationInit(boost::asio::io_context& ioContext);
     bool FnIsOperationInitialized() const;
     void LoopACome();
     void LoopAGone();
     void LoopCCome();
     void LoopCGone();
     void VehicleCome(string sNo);
-    void Initdevice(io_context& ioContext);
+    void Initdevice(boost::asio::io_context& ioContext);
     void ShowLEDMsg(string LEDMsg, string LCDMsg);
     void PBSEntry(string sIU);
     void PBSExit(string sIU,DeviceType iDevicetype,string sCardNo = "", int sCardType = 0,float sCardBal = 0);
@@ -168,6 +170,8 @@ public:
 
     void Clearme();
     void RetryLCSCLastCommand();
+
+    void FnClose();
 
      /**
      * Singleton opertation should not be cloneable.

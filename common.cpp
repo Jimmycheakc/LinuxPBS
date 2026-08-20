@@ -1,39 +1,35 @@
 #include <boost/date_time/gregorian/gregorian.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
+#include <algorithm>
 #include <bitset>
 #include <chrono>
 #include <ctime>
 #include <cctype>
+#include <cstring>
 #include <sstream>
 #include <iomanip>
 #include <string>
 #include "common.h"
 #include "log.h"
-#include "version.h"
-
-Common* Common::common_;
-std::mutex Common::mutex_;
-
-Common::Common()
-{
-
-}
 
 Common* Common::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (common_ == nullptr)
-    {
-        common_ = new Common();
-    }
-    return common_;
+    // Meyers Singleton. C++11 and later guarantee thread-safe initialization
+    // of function-local static objects. No heap allocation, no manual delete,
+    // and therefore no singleton memory leak.
+    static Common instance;
+    return &instance;
 }
 
 void Common::FnLogExecutableInfo(const std::string& str)
 {
     std::ostringstream info;
-    info << "start " << Common::getInstance()->FnGetFileName(str) << " , version: " << SW_VERSION << " build:" << __DATE__ << " " << __TIME__;
-    //info << "start " << Common::getInstance()->FnGetFileName(str) << " , version: " << SW_VERSION << " build:" << __DATE__ << " " << buildTimeUTC8();
+    info << "start "
+         << FnGetFileName(str)
+         << " | Version="
+         << SW_VERSION
+         << " | Build="
+         << BUILD_TIMESTAMP;
     Logger::getInstance()->FnLog(info.str());
 }
 

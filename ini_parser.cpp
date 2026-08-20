@@ -1,333 +1,380 @@
-#include <iostream>
-#include <string>
-#include <boost/filesystem.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/ini_parser.hpp>
 #include "ini_parser.h"
+
+#include <filesystem>
+#include <iostream>
+#include <mutex>
+#include <sstream>
+#include <utility>
+
+#include <boost/property_tree/ini_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
+
 #include "log.h"
-
-IniParser* IniParser::iniParser_;
-std::mutex IniParser::mutex_;
-
-IniParser::IniParser()
-{
-
-}
 
 IniParser* IniParser::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (iniParser_ == nullptr)
-    {
-        iniParser_ = new IniParser();
-    }
-    return iniParser_;
+    static IniParser instance;
+    return &instance;
 }
 
 void IniParser::FnReadIniFile()
 {
-
-    // Create local INI folder
     try
     {
-        if (!(boost::filesystem::exists(INI_FILE_PATH)))
-        {
-            if (!(boost::filesystem::create_directories(INI_FILE_PATH)))
-            {
-                std::stringstream ss;
-                ss << __func__ << ", Failed to create directory: " << INI_FILE_PATH;
-                Logger::getInstance()->FnLogExceptionError(ss.str());
-            }
-        }
+        // This module is passive: no private thread/io_context is required.
+        // Parse everything into a temporary snapshot first. Only publish the
+        // new configuration after the entire INI file has been read successfully.
+        std::filesystem::create_directories(INI_FILE_PATH);
 
-        if (!boost::filesystem::exists(INI_FILE))
+        if (!std::filesystem::exists(INI_FILE))
         {
-            Logger::getInstance()->FnLogExceptionError("INI file not found: " + INI_FILE);
-            return; // or throw if you prefer
+            std::stringstream ss;
+            ss << "[INI] File not found | File=" << INI_FILE;
+            Logger::getInstance()->FnLogExceptionError(ss.str());
+            return;
         }
 
         boost::property_tree::ptree pt;
         boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
 
-        // Temp: Revisit and implement storing to private variable function
-        StationID_                      = pt.get<std::string>("setting.StationID", "");
-        LogFolder_                      = pt.get<std::string>("setting.LogFolder", "");
-        LocalDB_                        = pt.get<std::string>("setting.LocalDB", "");
-        CentralDBName_                  = pt.get<std::string>("setting.CentralDBName", "");
-        CentralDBServer_                = pt.get<std::string>("setting.CentralDBServer", "");
-        CentralUsername_                = pt.get<std::string>("setting.CentralUsername", "");
-        CentralPassword_                = pt.get<std::string>("setting.CentralPassword", "");
-        LocalUDPPort_                   = pt.get<std::string>("setting.LocalUDPPort", "");
-        RemoteUDPPort_                  = pt.get<std::string>("setting.RemoteUDPPort", "");
-        SeasonOnly_                     = pt.get<std::string>("setting.SeasonOnly", "");
-        NotAllowHourly_                 = pt.get<std::string>("setting.NotAllowHourly", "");
-        LPRIP4Front_                    = pt.get<std::string>("setting.LPRIP4Front", "1.1.1.1");
-        LPRIP4Rear_                     = pt.get<std::string>("setting.LPRIP4Rear", "1.1.1.1");
-        LPRPort_                        = pt.get<std::string>("setting.LPRPort", "");
-        WaitLPRNoTime_                  = pt.get<std::string>("setting.WaitLPRNoTime", "");
-        LPRErrorTime_                   = pt.get<std::string>("setting.LPRErrorTime", "");
-        LPRErrorCount_                  = pt.get<std::string>("setting.LPRErrorCount", "");
-        ShowTime_                       = (std::stoi(pt.get<std::string>("setting.ShowTime", "")) == 1) ? true : false;
-        BlockIUPrefix_                  = pt.get<std::string>("setting.BlockIUPrefix", "");
+        Settings newSettings;
 
-        EEPClientIp_                    = pt.get<std::string>("EEP.EEPClientIp", "");
-        EEPClientPort_                  = pt.get<int>("EEP.EEPClientPort");
+        // [setting]
+        newSettings.stationID        = pt.get<std::string>("setting.StationID", "");
+        newSettings.logFolder        = pt.get<std::string>("setting.LogFolder", "");
+        newSettings.localDB          = pt.get<std::string>("setting.LocalDB", "");
+        newSettings.centralDBName    = pt.get<std::string>("setting.CentralDBName", "");
+        newSettings.centralDBServer  = pt.get<std::string>("setting.CentralDBServer", "");
+        newSettings.centralUsername  = pt.get<std::string>("setting.CentralUsername", "");
+        newSettings.centralPassword  = pt.get<std::string>("setting.CentralPassword", "");
+        newSettings.localUDPPort     = pt.get<std::string>("setting.LocalUDPPort", "");
+        newSettings.remoteUDPPort    = pt.get<std::string>("setting.RemoteUDPPort", "");
+        newSettings.seasonOnly       = pt.get<std::string>("setting.SeasonOnly", "");
+        newSettings.notAllowHourly   = pt.get<std::string>("setting.NotAllowHourly", "");
+        newSettings.lprIP4Front      = pt.get<std::string>("setting.LPRIP4Front", "1.1.1.1");
+        newSettings.lprIP4Rear       = pt.get<std::string>("setting.LPRIP4Rear", "1.1.1.1");
+        newSettings.lprPort          = pt.get<std::string>("setting.LPRPort", "");
+        newSettings.waitLPRNoTime    = pt.get<std::string>("setting.WaitLPRNoTime", "");
+        newSettings.lprErrorTime     = pt.get<std::string>("setting.LPRErrorTime", "");
+        newSettings.lprErrorCount    = pt.get<std::string>("setting.LPRErrorCount", "");
 
-        // Confirm [DI]
-        LoopA_                          = pt.get<int>("DI.LoopA");
-        LoopC_                          = pt.get<int>("DI.LoopC");
-        LoopB_                          = pt.get<int>("DI.LoopB");
-        Intercom_                       = pt.get<int>("DI.Intercom");
-        StationDooropen_                = pt.get<int>("DI.StationDooropen");
-        BarrierDooropen_                = pt.get<int>("DI.BarrierDooropen");
-        BarrierStatus_                  = pt.get<int>("DI.BarrierStatus");
-        ManualOpenBarrier_              = pt.get<int>("DI.ManualOpenBarrier");
-        Lorrysensor_                    = pt.get<int>("DI.Lorrysensor");
-        Armbroken_                      = pt.get<int>("DI.Armbroken");
-        PrintReceipt_                   = pt.get<int>("DI.PrintReceipt");
+        // Preserve the old behaviour: ShowTime is required to contain a valid
+        // integer and only the value 1 means true.
+        newSettings.showTime         = (pt.get<int>("setting.ShowTime") == 1);
+        newSettings.blockIUPrefix    = pt.get<std::string>("setting.BlockIUPrefix", "");
 
-        // Confirm [DO]
-        Openbarrier_                    = pt.get<int>("DO.Openbarrier");
-        LCDbacklight_                   = pt.get<int>("DO.LCDbacklight");
-        closebarrier_                   = pt.get<int>("DO.closebarrier");
+        // [EEP] - required fields, matching the original behaviour.
+        newSettings.eepClientIp      = pt.get<std::string>("EEP.EEPClientIp", "");
+        newSettings.eepClientPort    = pt.get<int>("EEP.EEPClientPort");
+
+        // [DI] - required fields, matching the original behaviour.
+        newSettings.loopA            = pt.get<int>("DI.LoopA");
+        newSettings.loopC            = pt.get<int>("DI.LoopC");
+        newSettings.loopB            = pt.get<int>("DI.LoopB");
+        newSettings.intercom         = pt.get<int>("DI.Intercom");
+        newSettings.stationDoorOpen  = pt.get<int>("DI.StationDooropen");
+        newSettings.barrierDoorOpen  = pt.get<int>("DI.BarrierDooropen");
+        newSettings.barrierStatus    = pt.get<int>("DI.BarrierStatus");
+        newSettings.manualOpenBarrier = pt.get<int>("DI.ManualOpenBarrier");
+        newSettings.lorrySensor      = pt.get<int>("DI.Lorrysensor");
+        newSettings.armBroken        = pt.get<int>("DI.Armbroken");
+        newSettings.printReceipt     = pt.get<int>("DI.PrintReceipt");
+
+        // [DO] - required fields, matching the original behaviour.
+        newSettings.openBarrier      = pt.get<int>("DO.Openbarrier");
+        newSettings.lcdBacklight     = pt.get<int>("DO.LCDbacklight");
+        newSettings.closeBarrier     = pt.get<int>("DO.closebarrier");
+
+        // Publish one complete configuration snapshot. Getters can never see
+        // a half-loaded configuration if parsing fails midway.
+        {
+            std::unique_lock lock(settingsMutex_);
+            settings_ = std::move(newSettings);
+        }
+
+        std::stringstream ss;
+        ss << "[INI] Loaded | File=" << INI_FILE;
+        Logger::getInstance()->FnLog(ss.str());
     }
-    catch (const boost::filesystem::filesystem_error& e)
+    catch (const std::filesystem::filesystem_error& e)
     {
         std::stringstream ss;
-        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        ss << "[INI] Filesystem error | File=" << INI_FILE << " | Exception=" << e.what();
         Logger::getInstance()->FnLogExceptionError(ss.str());
     }
-    catch (const std::exception &e)
+    catch (const boost::property_tree::ini_parser_error& e)
     {
         std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
+        ss << "[INI] Parse error | File=" << INI_FILE << " | Exception=" << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << "[INI] Read failed | File=" << INI_FILE << " | Exception=" << e.what();
         Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
         std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
+        ss << "[INI] Read failed | File=" << INI_FILE << " | Exception=Unknown exception";
         Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
-void IniParser::FnPrintIniFile()
+void IniParser::FnPrintIniFile() const
 {
     try
     {
         boost::property_tree::ptree pt;
         boost::property_tree::ini_parser::read_ini(INI_FILE, pt);
 
-        for (const auto&section : pt)
+        for (const auto& section : pt)
         {
-            const auto& section_name = section.first;
-            const auto& section_properties = section.second;
+            const auto& sectionName = section.first;
+            const auto& sectionProperties = section.second;
 
-            std::cout << "Section: " << section_name << std::endl;
+            std::cout << "Section: " << sectionName << '\n';
 
-            for (const auto& key : section_properties)
+            for (const auto& key : sectionProperties)
             {
-                const auto& key_name = key.first;
-                const auto& key_value = key.second.get_value<std::string>();
+                const auto& keyName = key.first;
+                const auto keyValue = key.second.get_value<std::string>();
 
-                std::cout << " Key: " << key_name << ", Value: "<< key_value << std::endl;
+                // Do not print credentials to the console/log output.
+                const bool sensitive = (keyName == "CentralPassword");
+
+                std::cout << " Key: " << keyName
+                          << ", Value: " << (sensitive ? "******" : keyValue)
+                          << '\n';
             }
         }
     }
     catch (const boost::property_tree::ini_parser_error& e)
     {
         std::stringstream ss;
-        ss << __func__ << ", Boost Asio Exception: " << e.what();
+        ss << "[INI] Print parse error | File=" << INI_FILE << " | Exception=" << e.what();
         Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (const std::exception& e)
     {
         std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
+        ss << "[INI] Print failed | File=" << INI_FILE << " | Exception=" << e.what();
         Logger::getInstance()->FnLogExceptionError(ss.str());
     }
     catch (...)
     {
         std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
+        ss << "[INI] Print failed | File=" << INI_FILE << " | Exception=Unknown exception";
         Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
 std::string IniParser::FnGetStationID() const
 {
-    return StationID_;
+    return getSetting(&Settings::stationID);
 }
+
 
 std::string IniParser::FnGetLogFolder() const
 {
-    return LogFolder_;
+    return getSetting(&Settings::logFolder);
 }
+
 
 std::string IniParser::FnGetLocalDB() const
 {
-    return LocalDB_;
+    return getSetting(&Settings::localDB);
 }
+
 
 std::string IniParser::FnGetCentralDBName() const
 {
-    return CentralDBName_;
+    return getSetting(&Settings::centralDBName);
 }
+
 
 std::string IniParser::FnGetCentralDBServer() const
 {
-    return CentralDBServer_;
+    return getSetting(&Settings::centralDBServer);
 }
+
 
 std::string IniParser::FnGetCentralUsername() const
 {
-    return CentralUsername_;
+    return getSetting(&Settings::centralUsername);
 }
+
 
 std::string IniParser::FnGetCentralPassword() const
 {
-    return CentralPassword_;
+    return getSetting(&Settings::centralPassword);
 }
+
 
 std::string IniParser::FnGetLocalUDPPort() const
 {
-    return LocalUDPPort_;
+    return getSetting(&Settings::localUDPPort);
 }
+
 
 std::string IniParser::FnGetRemoteUDPPort() const
 {
-    return RemoteUDPPort_;
+    return getSetting(&Settings::remoteUDPPort);
 }
+
 
 std::string IniParser::FnGetSeasonOnly() const
 {
-    return SeasonOnly_;
+    return getSetting(&Settings::seasonOnly);
 }
+
 
 std::string IniParser::FnGetNotAllowHourly() const
 {
-    return NotAllowHourly_;
+    return getSetting(&Settings::notAllowHourly);
 }
+
 
 std::string IniParser::FnGetLPRIP4Front() const
 {
-    return LPRIP4Front_;
+    return getSetting(&Settings::lprIP4Front);
 }
+
 
 std::string IniParser::FnGetLPRIP4Rear() const
 {
-    return LPRIP4Rear_;
+    return getSetting(&Settings::lprIP4Rear);
 }
+
 
 std::string IniParser::FnGetLPRPort() const
 {
-    return LPRPort_;
+    return getSetting(&Settings::lprPort);
 }
+
 
 std::string IniParser::FnGetWaitLPRNoTime() const
 {
-    return WaitLPRNoTime_;
+    return getSetting(&Settings::waitLPRNoTime);
 }
+
 
 std::string IniParser::FnGetLPRErrorTime() const
 {
-    return LPRErrorTime_;
+    return getSetting(&Settings::lprErrorTime);
 }
+
 
 std::string IniParser::FnGetLPRErrorCount() const
 {
-    return LPRErrorCount_;
+    return getSetting(&Settings::lprErrorCount);
 }
+
 
 bool IniParser::FnGetShowTime() const
 {
-    return ShowTime_;
+    return getSetting(&Settings::showTime);
 }
+
 
 std::string IniParser::FnGetBlockIUPrefix() const
 {
-    return BlockIUPrefix_;
+    return getSetting(&Settings::blockIUPrefix);
 }
 
-// [EEP]
+
 std::string IniParser::FnGetEEPClientIp() const
 {
-    return EEPClientIp_;
+    return getSetting(&Settings::eepClientIp);
 }
+
 
 int IniParser::FnGetEEPClientPort() const
 {
-    return EEPClientPort_;
+    return getSetting(&Settings::eepClientPort);
 }
 
-// Confirm [DI]
+
 int IniParser::FnGetLoopA() const
 {
-    return LoopA_;
+    return getSetting(&Settings::loopA);
 }
+
 
 int IniParser::FnGetLoopC() const
 {
-    return LoopC_;
+    return getSetting(&Settings::loopC);
 }
+
 
 int IniParser::FnGetLoopB() const
 {
-    return LoopB_;
+    return getSetting(&Settings::loopB);
 }
+
 
 int IniParser::FnGetIntercom() const
 {
-    return Intercom_;
+    return getSetting(&Settings::intercom);
 }
+
 
 int IniParser::FnGetStationDooropen() const
 {
-    return StationDooropen_;
+    return getSetting(&Settings::stationDoorOpen);
 }
+
 
 int IniParser::FnGetBarrierDooropen() const
 {
-    return BarrierDooropen_;
+    return getSetting(&Settings::barrierDoorOpen);
 }
+
 
 int IniParser::FnGetBarrierStatus() const
 {
-    return BarrierStatus_;
+    return getSetting(&Settings::barrierStatus);
 }
+
 
 int IniParser::FnGetManualOpenBarrier() const
 {
-    return ManualOpenBarrier_;
+    return getSetting(&Settings::manualOpenBarrier);
 }
+
 
 int IniParser::FnGetLorrysensor() const
 {
-    return Lorrysensor_;
+    return getSetting(&Settings::lorrySensor);
 }
+
 
 int IniParser::FnGetArmbroken() const
 {
-    return Armbroken_;
+    return getSetting(&Settings::armBroken);
 }
+
 
 int IniParser::FnGetPrintReceipt() const
 {
-    return PrintReceipt_;
+    return getSetting(&Settings::printReceipt);
 }
 
-// Confirm [DO]
+
 int IniParser::FnGetOpenbarrier() const
 {
-    return Openbarrier_;
+    return getSetting(&Settings::openBarrier);
 }
+
 
 int IniParser::FnGetLCDbacklight() const
 {
-    return LCDbacklight_;
+    return getSetting(&Settings::lcdBacklight);
 }
+
 
 int IniParser::FnGetclosebarrier() const
 {
-    return closebarrier_;
+    return getSetting(&Settings::closeBarrier);
 }

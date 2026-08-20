@@ -54,7 +54,7 @@ operation* operation::getInstance()
     return operation_;
 }
 
-void operation::OperationInit(io_context& ioContext)
+void operation::OperationInit(boost::asio::io_context& ioContext)
 {
     Setdefaultparameter();
     operationStrand_ = std::make_unique<boost::asio::io_context::strand>(ioContext);
@@ -72,6 +72,7 @@ void operation::OperationInit(io_context& ioContext)
             unsigned short remoteUDPPort_ = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetRemoteUDPPort()));
             unsigned short localUDPPort_ = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetLocalUDPPort()));
             m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, remoteUDPPort_, localUDPPort_, true);
+            m_udp->start();
         }
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
@@ -91,6 +92,7 @@ void operation::OperationInit(io_context& ioContext)
         try
         {
             m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
+            m_Monitorudp->start();
         }
         catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
         {
@@ -446,7 +448,7 @@ void operation::LoopACome()
     }
     */
     // For miniPC testing
-    if (IniParser::getInstance()->FnGetLPRIP4Front() != "1.1.1.1" && IniParser::getInstance()->FnGetLPRIP4Rear() != "1.1.1.1") 
+    //if (IniParser::getInstance()->FnGetLPRIP4Front() != "1.1.1.1" && IniParser::getInstance()->FnGetLPRIP4Rear() != "1.1.1.1") 
     {
         if (IniParser::getInstance()->FnGetLPRIP4Front() != "1.1.1.1") useFrontCamera = true;
         transID = tParas.gscarparkcode + "-" + std::to_string (gtStation.iSID) + "-" + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss();
@@ -774,11 +776,11 @@ std::string operation::getSerialPort(const std::string& key)
     }
 }
 
-void operation::Initdevice(io_context& ioContext)
+void operation::Initdevice(boost::asio::io_context& ioContext)
 {
     if (tParas.giCommPortAntenna > 0)
     {
-        Antenna::getInstance()->FnAntennaInit(ioContext, 19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
+        Antenna::getInstance()->FnAntennaInit(19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
     }
 
     if (tParas.giCommPortLCSC > 0)
@@ -6869,4 +6871,10 @@ void operation::UpdateExit()
     // db::getInstance()->UpdateLocalEntry(tExit1.sIUNo);
     //----
     return;
+}
+
+void operation::FnClose()
+{
+    m_udp->close();
+    m_Monitorudp->close();
 }

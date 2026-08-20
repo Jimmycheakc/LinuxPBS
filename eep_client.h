@@ -1,16 +1,29 @@
 #pragma once
 
-#include <boost/asio/thread_pool.hpp>
-#include <iostream>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <queue>
+#include <sstream>
 #include <string>
 #include <thread>
-#include <queue>
-#include <vector>
 #include <unordered_map>
-#include "tcp_client.h"
+#include <utility>
+#include <vector>
+
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/thread_pool.hpp>
 #include <boost/json.hpp>
+
+#include "tcp_client.h"
 
 
 class EEPClient
@@ -86,7 +99,6 @@ public:
         CONNECTED,
         WRITING_REQUEST,
         WAITING_FOR_RESPONSE,
-        RECONNECT,
         STATE_COUNT
     };
 
@@ -1996,29 +2008,28 @@ public:
     void FnSendCDDownloadReq();
     void FnSendRestartInquiryResponseReq(uint8_t response);
     void FnEEPClientClose();
-    //------ added on 15/07/2026
-    int EEPData_In;
+    // Cross-thread status snapshot kept public for backward compatibility.
+    std::atomic<int> EEPData_In{0};
 
     // Getter function - Return status
     std::string FnGetStatusData();
 
-    /**
-     * Singleton EEPClient should not be cloneable
-     */
-    EEPClient(EEPClient& eep) = delete;
-
-    /**
-     * Singleton EEPClient should not be assignable
-     */
-    void operator=(const EEPClient&) = delete;
+    EEPClient(const EEPClient&) = delete;
+    EEPClient& operator=(const EEPClient&) = delete;
+    EEPClient(EEPClient&&) = delete;
+    EEPClient& operator=(EEPClient&&) = delete;
 
 private:
-    static EEPClient* eepClient_;
-    static std::mutex mutex_;
-    boost::asio::thread_pool filePool_;  // background worker threads
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+    
+    // One module-owned io_context, executed by exactly one dedicated thread.
     boost::asio::io_context ioContext_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    std::optional<WorkGuard> workGuard_;
+
+    // Blocking settlement copy/mount work must never run on the EEP I/O thread.
+    // This pool is recreated per module start. Migrate it to the application's
+    // shared blocking executor when that project-wide migration is done.
+    std::unique_ptr<boost::asio::thread_pool> filePool_;
     boost::asio::steady_timer reconnectTimer_;
     boost::asio::steady_timer connectTimer_;
     boost::asio::steady_timer sendTimer_;
@@ -2029,31 +2040,46 @@ private:
     std::unique_ptr<AppTcpClient> client_;
     std::string logFileName_;
     std::thread ioContextThread_;
+    mutable std::mutex lifecycleMutex_;
+
+    std::atomic<bool> moduleRunning_{false};
+    std::atomic<bool> acceptingWork_{false};
+    std::atomic<bool> stopping_{false};
+
     static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
-    STATE currentState_;
-    std::mutex cmdQueueMutex_;
-    static std::mutex currentCmdMutex_;
-    static std::mutex currentCmdRequestedMutex_;
+    STATE currentState_{STATE::IDLE};
+
     std::priority_queue<Command, std::vector<Command>, CompareCommand> commandQueue_;
-    uint64_t commandSequence_;
-    Command currentCmd;
-    static uint16_t sequenceNo_;
-    static std::mutex sequenceNoMutex_;
-    int iStationID_;
+    std::uint64_t commandSequence_{0};
+    Command currentCmd_{};
+    Command currentCmdRequested_{};
+    std::uint16_t sequenceNo_{0};
+    std::optional<std::uint16_t> expectedResponseSeqNo_{};
+
+    int iStationID_{0};
     std::string serverIP_;
-    unsigned short serverPort_;
-    int eepSourceId_;
-    int eepDestinationId_;
-    int eepCarparkID_;
-    static uint16_t deductCmdSerialNo_;
-    static uint16_t lastDeductCmdSerialNo_;
-    static std::mutex deductCmdSerialNoMutex_;
-    int watchdogMissedRspCount_;
-    bool lastConnectionState_;
+    unsigned short serverPort_{0};
+    int eepSourceId_{0};
+    int eepDestinationId_{0};
+    int eepCarparkID_{0};
+
+    // Allocated by public request APIs, so this counter is genuinely
+    // cross-thread. The command itself retains the serial number used.
+    std::atomic<std::uint16_t> deductCmdSerialNo_{0};
+
+    int watchdogMissedRspCount_{0};
+    bool lastConnectionState_{false};
+
+    // Cross-thread read snapshot for FnGetStatusData().
     mutable std::mutex statusDataMutex_;
     std::vector<uint8_t> status_data_;
+
     EEPClient();
-    void startIoContextThread();
+    ~EEPClient();
+
+    bool startIoContextThread();
+    void shutdownOnIoThread();
+    void resetRuntimeState();
     void handleConnect(bool success, const std::string& message);
     void handleSend(bool success, const std::string& message);
     void handleClose(bool success, const std::string& message);
@@ -2067,18 +2093,18 @@ private:
     void processEvent(EVENT event);
     void checkCommandQueue();
     void enqueueCommand(CommandType type, int priority, std::shared_ptr<CommandDataBase> data);
+    void postCommandFailure(CommandType type, MSG_STATUS status);
     void popFromCommandQueueAndEnqueueWrite();
     void clearCommandQueue();
     std::string getCommandString(CommandType cmd);
     void setCurrentCmd(Command cmd);
-    Command getCurrentCmd();
+    Command getCurrentCmd() const;
     void setCurrentCmdRequested(Command cmd);
-    Command getCurrentCmdRequested();
+    Command getCurrentCmdRequested() const;
     void incrementSequenceNo();
-    uint16_t getSequenceNo();
-    void incrementDeductCmdSerialNo();
-    uint16_t getLastDeductCmdSerialNo();
-    uint16_t getDeductCmdSerialNo();
+    std::uint16_t getSequenceNo() const;
+    std::uint16_t allocateDeductCmdSerialNo();
+    std::uint16_t getDeductSerialFromCurrentRequest() const;
     void appendMessageHeader(std::vector<uint8_t>& msg, uint8_t messageCode, uint16_t seqNo, uint16_t length);
     uint32_t calculateChecksumNoPadding(const std::vector<uint8_t>& data);
     std::pair<std::vector<uint8_t>, bool> prepareCmd(Command cmd);
@@ -2100,6 +2126,7 @@ private:
     void handleConnectedState(EVENT event);
     void handleWritingRequestState(EVENT event);
     void handleWaitingForResponseState(EVENT event);
+    void beginReconnect(bool failActiveRequest);
     void handleCommandErrorOrTimeout(Command cmd, MSG_STATUS msgStatus);
     bool isValidCheckSum(const std::vector<uint8_t>& data);
     bool parseMessage(const std::vector<uint8_t>& data, MessageHeader& header, std::vector<uint8_t>& body);
@@ -2123,6 +2150,6 @@ private:
     // DSRC transaction record write to file
     void processDSRCFeTx(const MessageHeader& header, const transactionData& txData);
     void processDSRCBeTx(const MessageHeader& header, const transactionData& txData);
-    void writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data);
+    void writeDSRCFeOrBeTxToCollFile(bool isFrontendTx, const std::vector<uint8_t>& data, const std::string& cpoId, const std::string& carparkId);
     void copyAndRemoveBEFile(const std::string& settlementfilepath);
 };

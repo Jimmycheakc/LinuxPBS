@@ -15,130 +15,121 @@
 #include "eep_client.h"
 #include <boost/json.hpp>
 
-EventHandler* EventHandler::eventHandler_ = nullptr;
-std::mutex EventHandler::mutex_;
-
-std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap = 
+const std::map<std::string, EventHandler::EventFunction> EventHandler::eventMap_ = 
 {
     // Antenna Event
-    {   "Evt_AntennaFail"                       ,std::bind(&EventHandler::handleAntennaFail                ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_AntennaPower"                      ,std::bind(&EventHandler::handleAntennaPower               ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_AntennaIUCome"                     ,std::bind(&EventHandler::handleAntennaIUCome              ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_AntennaFail"                       ,&EventHandler::handleAntennaFail },
+    {   "Evt_AntennaPower"                      ,&EventHandler::handleAntennaPower },
+    {   "Evt_AntennaIUCome"                     ,&EventHandler::handleAntennaIUCome },
 
     // LCSC Event
-    {   "Evt_LcscReaderStatus"                  ,std::bind(&EventHandler::handleLcscReaderStatus           ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_LcscReaderLogin"                   ,std::bind(&EventHandler::handleLcscReaderLogin            ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderLogout"            ,std::bind(&EventHandler::handleLcscReaderLogout           ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardID"         ,std::bind(&EventHandler::handleLcscReaderGetCardID        ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardBalance"    ,std::bind(&EventHandler::handleLcscReaderGetCardBalance   ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardDeduct"     ,std::bind(&EventHandler::handleLcscReaderGetCardDeduct    ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardRecord"     ,std::bind(&EventHandler::handleLcscReaderGetCardRecord    ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetCardFlush"      ,std::bind(&EventHandler::handleLcscReaderGetCardFlush     ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderGetTime"           ,std::bind(&EventHandler::handleLcscReaderGetTime          ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderSetTime"           ,std::bind(&EventHandler::handleLcscReaderSetTime          ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadCFGFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCFGFile    ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadCILFile"     ,std::bind(&EventHandler::handleLcscReaderUploadCILFile    ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleLcscReaderUploadBLFile"      ,std::bind(&EventHandler::handleLcscReaderUploadBLFile     ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_LcscReaderStatus"                  ,&EventHandler::handleLcscReaderStatus },
+    {   "Evt_LcscReaderLogin"                   ,&EventHandler::handleLcscReaderLogin },
+    {   "Evt_handleLcscReaderLogout"            ,&EventHandler::handleLcscReaderLogout },
+    {   "Evt_handleLcscReaderGetCardID"         ,&EventHandler::handleLcscReaderGetCardID },
+    {   "Evt_handleLcscReaderGetCardBalance"    ,&EventHandler::handleLcscReaderGetCardBalance },
+    {   "Evt_handleLcscReaderGetCardDeduct"     ,&EventHandler::handleLcscReaderGetCardDeduct },
+    {   "Evt_handleLcscReaderGetCardRecord"     ,&EventHandler::handleLcscReaderGetCardRecord },
+    {   "Evt_handleLcscReaderGetCardFlush"      ,&EventHandler::handleLcscReaderGetCardFlush },
+    {   "Evt_handleLcscReaderGetTime"           ,&EventHandler::handleLcscReaderGetTime },
+    {   "Evt_handleLcscReaderSetTime"           ,&EventHandler::handleLcscReaderSetTime },
+    {   "Evt_handleLcscReaderUploadCFGFile"     ,&EventHandler::handleLcscReaderUploadCFGFile },
+    {   "Evt_handleLcscReaderUploadCILFile"     ,&EventHandler::handleLcscReaderUploadCILFile },
+    {   "Evt_handleLcscReaderUploadBLFile"      ,&EventHandler::handleLcscReaderUploadBLFile },
 
     // DIO Event
-    {   "Evt_handleDIOEvent"                    ,std::bind(&EventHandler::handleDIOEvent                   ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleDIOEvent"                    ,&EventHandler::handleDIOEvent },
 
     // KSM Reader Event
-    {   "Evt_handleKSMReaderInit"               ,std::bind(&EventHandler::handleKSMReaderInit              ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderGetStatus"          ,std::bind(&EventHandler::handleKSMReaderGetStatus         ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderEjectToFront"       ,std::bind(&EventHandler::handleKSMReaderEjectToFront      ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardAllowed"        ,std::bind(&EventHandler::handleKSMReaderCardAllowed       ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardProhibited"     ,std::bind(&EventHandler::handleKSMReaderCardProhibited    ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardOnIc"           ,std::bind(&EventHandler::handleKSMReaderCardOnIc          ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderIcPowerOn"          ,std::bind(&EventHandler::handleKSMReaderIcPowerOn         ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderWarmReset"          ,std::bind(&EventHandler::handleKSMReaderWarmReset         ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderSelectFile1"        ,std::bind(&EventHandler::handleKSMReaderSelectFile1       ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderSelectFile2"        ,std::bind(&EventHandler::handleKSMReaderSelectFile2       ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderReadCardInfo"       ,std::bind(&EventHandler::handleKSMReaderReadCardInfo      ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderReadCardBalance"    ,std::bind(&EventHandler::handleKSMReaderReadCardBalance   ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderIcPowerOff"         ,std::bind(&EventHandler::handleKSMReaderIcPowerOff        ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardIn"             ,std::bind(&EventHandler::handleKSMReaderCardIn            ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardOut"            ,std::bind(&EventHandler::handleKSMReaderCardOut           ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardTakeAway"       ,std::bind(&EventHandler::handleKSMReaderCardTakeAway      ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleKSMReaderCardInfo"           ,std::bind(&EventHandler::handleKSMReaderCardInfo          ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleKSMReaderInit"               ,&EventHandler::handleKSMReaderInit },
+    {   "Evt_handleKSMReaderGetStatus"          ,&EventHandler::handleKSMReaderGetStatus },
+    {   "Evt_handleKSMReaderEjectToFront"       ,&EventHandler::handleKSMReaderEjectToFront },
+    {   "Evt_handleKSMReaderCardAllowed"        ,&EventHandler::handleKSMReaderCardAllowed },
+    {   "Evt_handleKSMReaderCardProhibited"     ,&EventHandler::handleKSMReaderCardProhibited },
+    {   "Evt_handleKSMReaderCardOnIc"           ,&EventHandler::handleKSMReaderCardOnIc },
+    {   "Evt_handleKSMReaderIcPowerOn"          ,&EventHandler::handleKSMReaderIcPowerOn },
+    {   "Evt_handleKSMReaderWarmReset"          ,&EventHandler::handleKSMReaderWarmReset },
+    {   "Evt_handleKSMReaderSelectFile1"        ,&EventHandler::handleKSMReaderSelectFile1 },
+    {   "Evt_handleKSMReaderSelectFile2"        ,&EventHandler::handleKSMReaderSelectFile2 },
+    {   "Evt_handleKSMReaderReadCardInfo"       ,&EventHandler::handleKSMReaderReadCardInfo },
+    {   "Evt_handleKSMReaderReadCardBalance"    ,&EventHandler::handleKSMReaderReadCardBalance },
+    {   "Evt_handleKSMReaderIcPowerOff"         ,&EventHandler::handleKSMReaderIcPowerOff },
+    {   "Evt_handleKSMReaderCardIn"             ,&EventHandler::handleKSMReaderCardIn },
+    {   "Evt_handleKSMReaderCardOut"            ,&EventHandler::handleKSMReaderCardOut },
+    {   "Evt_handleKSMReaderCardTakeAway"       ,&EventHandler::handleKSMReaderCardTakeAway },
+    {   "Evt_handleKSMReaderCardInfo"           ,&EventHandler::handleKSMReaderCardInfo },
 
     // LPR Event
-    {   "Evt_handleLPRReceive"                  ,std::bind(&EventHandler::handleLPRReceive                 ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleLPRReceive"                  ,&EventHandler::handleLPRReceive },
 
     // Upos Terminal Event
-    {   "Evt_handleUPTCardDetect"               ,std::bind(&EventHandler::handleUPTCardDetect              ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTPaymentAuto"              ,std::bind(&EventHandler::handleUPTPaymentAuto             ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTDeviceSettlement"         ,std::bind(&EventHandler::handleUPTDeviceSettlement        ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTRetrieveLastSettlement"   ,std::bind(&EventHandler::handleUPTRetrieveLastSettlement  ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTDeviceLogon"              ,std::bind(&EventHandler::handleUPTDeviceLogon             ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTDeviceStatus"             ,std::bind(&EventHandler::handleUPTDeviceStatus            ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTDeviceTimeSync"           ,std::bind(&EventHandler::handleUPTDeviceTimeSync          ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTDeviceTMS"                ,std::bind(&EventHandler::handleUPTDeviceTMS               ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTDeviceReset"              ,std::bind(&EventHandler::handleUPTDeviceReset             ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleUPTCommandCancel"            ,std::bind(&EventHandler::handleUPTCommandCancel           ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleUPTCardDetect"               ,&EventHandler::handleUPTCardDetect },
+    {   "Evt_handleUPTPaymentAuto"              ,&EventHandler::handleUPTPaymentAuto },
+    {   "Evt_handleUPTDeviceSettlement"         ,&EventHandler::handleUPTDeviceSettlement },
+    {   "Evt_handleUPTRetrieveLastSettlement"   ,&EventHandler::handleUPTRetrieveLastSettlement },
+    {   "Evt_handleUPTDeviceLogon"              ,&EventHandler::handleUPTDeviceLogon },
+    {   "Evt_handleUPTDeviceStatus"             ,&EventHandler::handleUPTDeviceStatus },
+    {   "Evt_handleUPTDeviceTimeSync"           ,&EventHandler::handleUPTDeviceTimeSync },
+    {   "Evt_handleUPTDeviceTMS"                ,&EventHandler::handleUPTDeviceTMS },
+    {   "Evt_handleUPTDeviceReset"              ,&EventHandler::handleUPTDeviceReset },
+    {   "Evt_handleUPTCommandCancel"            ,&EventHandler::handleUPTCommandCancel },
 
     // Printer Event
-    {   "Evt_handlePrinterStatus"               ,std::bind(&EventHandler::handlePrinterStatus              ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handlePrinterStatus"               ,&EventHandler::handlePrinterStatus },
 
     // Barcode Scanner Event
-    {   "Evt_handleBarcodeReceived"             ,std::bind(&EventHandler::handleBarcodeReceived            ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleBarcodeReceived"             ,&EventHandler::handleBarcodeReceived },
 
     // EEP Client Event
-    {   "Evt_handleEEPClientResponse"           ,std::bind(&EventHandler::handleEEPClientResponse          ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleEEPClientConnectionState"    ,std::bind(&EventHandler::handleEEPClientConnectionState   ,eventHandler_, std::placeholders::_1) },
+    {   "Evt_handleEEPClientResponse"           ,&EventHandler::handleEEPClientResponse },
+    {   "Evt_handleEEPClientConnectionState"    ,&EventHandler::handleEEPClientConnectionState },
 
     //CHU Client Event
-    {   "Evt_handleCHUReceived"                 ,std::bind(&EventHandler::handleCHUReceived                ,eventHandler_, std::placeholders::_1) },
-    {   "Evt_handleCHUClientConnectionState"    ,std::bind(&EventHandler::handleCHUClientConnectionState   ,eventHandler_, std::placeholders::_1) }
+    {   "Evt_handleCHUReceived"                 ,&EventHandler::handleCHUReceived },
+    {   "Evt_handleCHUClientConnectionState"    ,&EventHandler::handleCHUClientConnectionState }
 
 };
 
-EventHandler::EventHandler()
-{
-}
-
 EventHandler* EventHandler::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (eventHandler_ == nullptr)
-    {
-        eventHandler_ = new EventHandler();
-    }
-    return eventHandler_;
+    static EventHandler instance;
+    return &instance;
 }
 
-void EventHandler::FnHandleEvents(const std::string& eventName, const BaseEvent* event)
+void EventHandler::FnHandleEvents(uint64_t eventId, const std::string& eventName, const BaseEvent* event)
 {
-    auto it = eventMap.find(eventName);
+    const auto it = eventMap_.find(eventName);
 
-    if (it != eventMap.end())
-    {
-        EventFunction& handler = it->second;
-
-        bool ret = false;
-        try
-        {
-            ret = handler(event);
-        }
-        catch (const std::exception& e)
-        {
-            std::stringstream ss;
-            ss << __func__ << ", Exception: " << e.what();
-            Logger::getInstance()->FnLogExceptionError(ss.str());
-        }
-        catch (...)
-        {
-            std::stringstream ss;
-            ss << __func__ << ", Exception: Unknown Exception";
-            Logger::getInstance()->FnLogExceptionError(ss.str());
-        }
-    }
-    else
+    if (it == eventMap_.end())
     {
         std::stringstream ss;
-        ss << __func__ << " Event not found : " << eventName;
+        ss << "[UNKNOWN] #" << eventId << " " << eventName;
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+        return;
+    }
+
+    try
+    {
+        const EventFunction handler = it->second;
+        const bool success = (this->*handler)(event);
+
+        std::stringstream ss;
+
+        ss << "[DONE] #" << eventId << " " << eventName << " | " << (success ? "OK" : "FAILED");
+        Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
+    }
+    catch (const std::exception& e)
+    {
+        std::stringstream ss;
+        ss << "[ERROR] #" << eventId << " " << eventName << " | " << e.what();
+        Logger::getInstance()->FnLogExceptionError(ss.str());
+    }
+    catch (...)
+    {
+        std::stringstream ss;
+        ss << "[ERROR] #" << eventId << " " << eventName << " | Unknown exception";
+        Logger::getInstance()->FnLogExceptionError(ss.str());
     }
 }
 
@@ -153,7 +144,7 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
         int value = intEvent->data;
         
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == 2 && operation::getInstance()->tProcess.gbLoopApresent.load()) 
@@ -182,7 +173,7 @@ bool EventHandler::handleAntennaFail(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -202,7 +193,7 @@ bool EventHandler::handleAntennaPower(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->HandlePBSError(AntennaPowerOnOff,int(boolEvent->data));
@@ -210,7 +201,7 @@ bool EventHandler::handleAntennaPower(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -230,7 +221,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
         std::string value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - operation::getInstance()->tProcess.getLastIUEntryTime());
@@ -257,7 +248,7 @@ bool EventHandler::handleAntennaIUCome(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -277,14 +268,14 @@ bool EventHandler::handleLcscReaderStatus(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -304,13 +295,13 @@ bool EventHandler::handleLcscReaderLogin(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -330,13 +321,13 @@ bool EventHandler::handleLcscReaderLogout(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -356,14 +347,14 @@ bool EventHandler::handleLcscReaderGetCardID(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -383,14 +374,14 @@ bool EventHandler::handleLcscReaderGetCardBalance(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         operation::getInstance()->ProcessLCSC(value);
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -410,7 +401,7 @@ bool EventHandler::handleLcscReaderGetCardDeduct(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         
         operation::getInstance()->ProcessLCSC(value);
@@ -418,7 +409,7 @@ bool EventHandler::handleLcscReaderGetCardDeduct(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -438,7 +429,7 @@ bool EventHandler::handleLcscReaderGetCardRecord(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->ProcessLCSC(value);
@@ -446,7 +437,7 @@ bool EventHandler::handleLcscReaderGetCardRecord(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -466,13 +457,13 @@ bool EventHandler::handleLcscReaderGetCardFlush(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -492,13 +483,13 @@ bool EventHandler::handleLcscReaderGetTime(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -518,13 +509,13 @@ bool EventHandler::handleLcscReaderSetTime(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -544,13 +535,13 @@ bool EventHandler::handleLcscReaderUploadCFGFile(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -570,13 +561,13 @@ bool EventHandler::handleLcscReaderUploadCILFile(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -596,19 +587,99 @@ bool EventHandler::handleLcscReaderUploadBLFile(const BaseEvent* event)
         std::string value = strEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
     }
 
     return ret;
+}
+
+std::string_view EventHandler::dioEventToString(DIO::DIO_EVENT event)
+{
+    switch (event)
+    {
+        case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
+            return "LOOP_A_ON";
+
+        case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
+            return "LOOP_A_OFF";
+
+        case DIO::DIO_EVENT::LOOP_B_ON_EVENT:
+            return "LOOP_B_ON";
+
+        case DIO::DIO_EVENT::LOOP_B_OFF_EVENT:
+            return "LOOP_B_OFF";
+
+        case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
+            return "LOOP_C_ON";
+
+        case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
+            return "LOOP_C_OFF";
+
+        case DIO::DIO_EVENT::INTERCOM_ON_EVENT:
+            return "INTERCOM_ON";
+
+        case DIO::DIO_EVENT::INTERCOM_OFF_EVENT:
+            return "INTERCOM_OFF";
+
+        case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
+            return "STATION_DOOR_OPEN";
+
+        case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:
+            return "STATION_DOOR_CLOSE";
+
+        case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
+            return "BARRIER_DOOR_OPEN";
+
+        case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:
+            return "BARRIER_DOOR_CLOSE";
+
+        case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
+            return "BARRIER_STATUS_ON";
+
+        case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:
+            return "BARRIER_STATUS_OFF";
+
+        case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT:
+            return "MANUAL_OPEN_BARRIER_ON";
+
+        case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT:
+            return "MANUAL_OPEN_BARRIER_OFF";
+
+        case DIO::DIO_EVENT::LORRY_SENSOR_ON_EVENT:
+            return "LORRY_SENSOR_ON";
+
+        case DIO::DIO_EVENT::LORRY_SENSOR_OFF_EVENT:
+            return "LORRY_SENSOR_OFF";
+
+        case DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT:
+            return "ARM_BROKEN_ON";
+
+        case DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT:
+            return "ARM_BROKEN_OFF";
+
+        case DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT:
+            return "PRINT_RECEIPT_ON";
+
+        case DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT:
+            return "PRINT_RECEIPT_OFF";
+
+        case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_ON_EVENT:
+            return "BARRIER_OPEN_TOO_LONG_ON";
+
+        case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_OFF_EVENT:
+            return "BARRIER_OPEN_TOO_LONG_OFF";
+    }
+
+    return "UNKNOWN";
 }
 
 bool EventHandler::handleDIOEvent(const BaseEvent* event)
@@ -782,13 +853,13 @@ bool EventHandler::handleDIOEvent(const BaseEvent* event)
             }
         }
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << static_cast<int>(dioEvent);
+        ss << "[HANDLER] --> " << __func__ << " | " << dioEventToString(dioEvent) << "(" << static_cast<int>(dioEvent) << ")";
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
     }
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -808,7 +879,7 @@ bool EventHandler::handleKSMReaderInit(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -825,7 +896,7 @@ bool EventHandler::handleKSMReaderInit(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -845,7 +916,7 @@ bool EventHandler::handleKSMReaderGetStatus(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -861,7 +932,7 @@ bool EventHandler::handleKSMReaderGetStatus(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -881,7 +952,7 @@ bool EventHandler::handleKSMReaderEjectToFront(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -897,7 +968,7 @@ bool EventHandler::handleKSMReaderEjectToFront(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -917,7 +988,7 @@ bool EventHandler::handleKSMReaderCardAllowed(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -933,7 +1004,7 @@ bool EventHandler::handleKSMReaderCardAllowed(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -953,7 +1024,7 @@ bool EventHandler::handleKSMReaderCardProhibited(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -969,7 +1040,7 @@ bool EventHandler::handleKSMReaderCardProhibited(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -989,7 +1060,7 @@ bool EventHandler::handleKSMReaderCardOnIc(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1006,7 +1077,7 @@ bool EventHandler::handleKSMReaderCardOnIc(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1026,7 +1097,7 @@ bool EventHandler::handleKSMReaderIcPowerOn(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1043,7 +1114,7 @@ bool EventHandler::handleKSMReaderIcPowerOn(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1063,7 +1134,7 @@ bool EventHandler::handleKSMReaderWarmReset(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1080,7 +1151,7 @@ bool EventHandler::handleKSMReaderWarmReset(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1100,7 +1171,7 @@ bool EventHandler::handleKSMReaderSelectFile1(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1117,7 +1188,7 @@ bool EventHandler::handleKSMReaderSelectFile1(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1137,7 +1208,7 @@ bool EventHandler::handleKSMReaderSelectFile2(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1154,7 +1225,7 @@ bool EventHandler::handleKSMReaderSelectFile2(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1174,7 +1245,7 @@ bool EventHandler::handleKSMReaderReadCardInfo(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1191,7 +1262,7 @@ bool EventHandler::handleKSMReaderReadCardInfo(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1211,7 +1282,7 @@ bool EventHandler::handleKSMReaderReadCardBalance(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1228,7 +1299,7 @@ bool EventHandler::handleKSMReaderReadCardBalance(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1248,7 +1319,7 @@ bool EventHandler::handleKSMReaderIcPowerOff(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         if (value == false)
@@ -1265,7 +1336,7 @@ bool EventHandler::handleKSMReaderIcPowerOff(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1285,7 +1356,7 @@ bool EventHandler::handleKSMReaderCardIn(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->KSM_CardIn();
@@ -1293,7 +1364,7 @@ bool EventHandler::handleKSMReaderCardIn(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1313,7 +1384,7 @@ bool EventHandler::handleKSMReaderCardOut(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->writelog("card out", "OPR");
@@ -1322,7 +1393,7 @@ bool EventHandler::handleKSMReaderCardOut(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1342,7 +1413,7 @@ bool EventHandler::handleKSMReaderCardTakeAway(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->KSM_CardTakeAway();
@@ -1350,7 +1421,7 @@ bool EventHandler::handleKSMReaderCardTakeAway(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1373,7 +1444,7 @@ bool EventHandler::handleKSMReaderCardInfo(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         //---------
@@ -1391,7 +1462,7 @@ bool EventHandler::handleKSMReaderCardInfo(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1411,7 +1482,7 @@ bool EventHandler::handleLPRReceive(const BaseEvent* event)
         struct Lpr::LPREventData eventData = Lpr::getInstance()->deserializeEventData(strEvent->data);
         
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << "camType : " << static_cast<int>(eventData.camType);
+        ss << "[HANDLER] --> " << __func__ << " | " << "camType : " << static_cast<int>(eventData.camType);
         ss << ", LPN : " << eventData.LPN;
         ss << ", TransID : " << eventData.TransID;
         ss << ", imagePath : " << eventData.imagePath;
@@ -1426,7 +1497,7 @@ bool EventHandler::handleLPRReceive(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1444,7 +1515,7 @@ bool EventHandler::handleUPTCardDetect(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " << strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::CARD_DETECT_REQUEST, strEvent->data);
@@ -1452,7 +1523,7 @@ bool EventHandler::handleUPTCardDetect(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1470,7 +1541,7 @@ bool EventHandler::handleUPTPaymentAuto(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::PAYMENT_MODE_AUTO_REQUEST, strEvent->data);
@@ -1478,7 +1549,7 @@ bool EventHandler::handleUPTPaymentAuto(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1496,7 +1567,7 @@ bool EventHandler::handleUPTDeviceSettlement(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_SETTLEMENT_REQUEST, strEvent->data);
@@ -1504,7 +1575,7 @@ bool EventHandler::handleUPTDeviceSettlement(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1522,7 +1593,7 @@ bool EventHandler::handleUPTRetrieveLastSettlement(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_RETRIEVE_LAST_SETTLEMENT_REQUEST, strEvent->data);
@@ -1530,7 +1601,7 @@ bool EventHandler::handleUPTRetrieveLastSettlement(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1548,7 +1619,7 @@ bool EventHandler::handleUPTDeviceLogon(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_LOGON_REQUEST, strEvent->data);
@@ -1556,7 +1627,7 @@ bool EventHandler::handleUPTDeviceLogon(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1574,7 +1645,7 @@ bool EventHandler::handleUPTDeviceStatus(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_STATUS_REQUEST, strEvent->data);
@@ -1582,7 +1653,7 @@ bool EventHandler::handleUPTDeviceStatus(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1600,7 +1671,7 @@ bool EventHandler::handleUPTDeviceTimeSync(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_TIME_SYNC_REQUEST, strEvent->data);
@@ -1608,7 +1679,7 @@ bool EventHandler::handleUPTDeviceTimeSync(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1626,7 +1697,7 @@ bool EventHandler::handleUPTDeviceTMS(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_TMS_REQUEST, strEvent->data);
@@ -1634,7 +1705,7 @@ bool EventHandler::handleUPTDeviceTMS(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1652,7 +1723,7 @@ bool EventHandler::handleUPTDeviceReset(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::DEVICE_RESET_REQUEST, strEvent->data);
@@ -1660,7 +1731,7 @@ bool EventHandler::handleUPTDeviceReset(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1678,7 +1749,7 @@ bool EventHandler::handleUPTCommandCancel(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         operation::getInstance()->processUPT(Upt::UPT_CMD::CANCEL_COMMAND_REQUEST, strEvent->data);
@@ -1686,7 +1757,7 @@ bool EventHandler::handleUPTCommandCancel(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1704,7 +1775,7 @@ bool EventHandler::handlePrinterStatus(const BaseEvent* event)
     if (intEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << intEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  intEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
 
         switch (intEvent->data)
@@ -1734,7 +1805,7 @@ bool EventHandler::handlePrinterStatus(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1752,7 +1823,7 @@ bool EventHandler::handleBarcodeReceived(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         // process barcode data
         operation::getInstance()->ProcessBarcodeData(strEvent->data);
@@ -1761,7 +1832,7 @@ bool EventHandler::handleBarcodeReceived(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1779,7 +1850,7 @@ bool EventHandler::handleEEPClientResponse(const BaseEvent* event)
     if (strEvent != nullptr)
     {
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << strEvent->data;
+        ss << "[HANDLER] --> " << __func__ << " | " <<  strEvent->data;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         
         // process EEP Client data
@@ -1788,7 +1859,7 @@ bool EventHandler::handleEEPClientResponse(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;
@@ -1808,7 +1879,7 @@ bool EventHandler::handleEEPClientConnectionState(const BaseEvent* event)
         bool value = boolEvent->data;
 
         std::stringstream ss;
-        ss << __func__ << " Successfully, Event Data : " << value;
+        ss << "[HANDLER] --> " << __func__ << " | " << value;
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         // process EEP Client Connection State
         //---- added on 13/03/2026
@@ -1831,7 +1902,7 @@ bool EventHandler::handleEEPClientConnectionState(const BaseEvent* event)
     else
     {
         std::stringstream ss;
-        ss << __func__ << " Event Data casting failed.";
+        ss << "[HANDLER] --> " << __func__ << " | Invalid event data type";
         Logger::getInstance()->FnLog(ss.str());
         Logger::getInstance()->FnLog(ss.str(), eventLogFileName, "EVT");
         ret = false;

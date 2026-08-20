@@ -1,19 +1,21 @@
 #pragma once
 
-#include <memory>
-#include <mutex>
+#include <shared_mutex>
 #include <string>
 
 class IniParser
 {
 
 public:
-    const std::string INI_FILE_PATH = "/home/root/carpark/Ini";
-    const std::string INI_FILE = "/home/root/carpark/Ini/LinuxPBS.ini";
+    // Keep these names public for compatibility with existing code.
+    inline static const std::string INI_FILE_PATH = "/home/root/carpark/Ini";
+    inline static const std::string INI_FILE = "/home/root/carpark/Ini/LinuxPBS.ini";
 
     static IniParser* getInstance();
+
     void FnReadIniFile();
-    void FnPrintIniFile();
+    void FnPrintIniFile() const;
+
     std::string FnGetStationID() const;
     std::string FnGetLogFolder() const;
     std::string FnGetLocalDB() const;
@@ -56,60 +58,68 @@ public:
     int FnGetLCDbacklight() const;
     int FnGetclosebarrier() const;
 
-    /**
-     * Singleton IniParser should not be cloneable.
-     */
-    IniParser(IniParser &iniparser) = delete;
-
-    /**
-     * Singleton IniParser should not be assignable.
-     */
-    void operator=(const IniParser &) = delete;
-
 private:
-    static IniParser* iniParser_;
-    static std::mutex mutex_;
-    IniParser();
+    struct Settings
+    {
+        // [setting]
+        std::string stationID;
+        std::string logFolder;
+        std::string localDB;
+        std::string centralDBName;
+        std::string centralDBServer;
+        std::string centralUsername;
+        std::string centralPassword;
+        std::string localUDPPort;
+        std::string remoteUDPPort;
+        std::string seasonOnly;
+        std::string notAllowHourly;
+        std::string lprIP4Front{"1.1.1.1"};
+        std::string lprIP4Rear{"1.1.1.1"};
+        std::string lprPort;
+        std::string waitLPRNoTime;
+        std::string lprErrorTime;
+        std::string lprErrorCount;
+        bool showTime{false};
+        std::string blockIUPrefix;
 
-    std::string StationID_;
-    std::string LogFolder_;
-    std::string LocalDB_;
-    std::string CentralDBName_;
-    std::string CentralDBServer_;
-    std::string CentralUsername_;
-    std::string CentralPassword_;
-    std::string LocalUDPPort_;
-    std::string RemoteUDPPort_;
-    std::string SeasonOnly_;
-    std::string NotAllowHourly_;
-    std::string LPRIP4Front_;
-    std::string LPRIP4Rear_;
-    std::string LPRPort_;
-    std::string WaitLPRNoTime_;
-    std::string LPRErrorTime_;
-    std::string LPRErrorCount_;
-    bool ShowTime_;
-    std::string BlockIUPrefix_;
+        // [EEP]
+        std::string eepClientIp;
+        int eepClientPort{0};
 
-    // [EEP]
-    std::string EEPClientIp_;
-    int EEPClientPort_;
+        // [DI]
+        int loopA{0};
+        int loopC{0};
+        int loopB{0};
+        int intercom{0};
+        int stationDoorOpen{0};
+        int barrierDoorOpen{0};
+        int barrierStatus{0};
+        int manualOpenBarrier{0};
+        int lorrySensor{0};
+        int armBroken{0};
+        int printReceipt{0};
 
-    // Confirm [DI]
-    int LoopA_;
-    int LoopC_;
-    int LoopB_;
-    int Intercom_;
-    int StationDooropen_;
-    int BarrierDooropen_;
-    int BarrierStatus_;
-    int ManualOpenBarrier_;
-    int Lorrysensor_;
-    int Armbroken_;
-    int PrintReceipt_;
+        // [DO]
+        int openBarrier{0};
+        int lcdBacklight{0};
+        int closeBarrier{0};
+    };
 
-    // Confirm [DO]
-    int Openbarrier_;
-    int LCDbacklight_;
-    int closebarrier_;
+    IniParser() = default;
+    ~IniParser() = default;
+
+    IniParser(const IniParser&) = delete;
+    IniParser& operator=(const IniParser&) = delete;
+    IniParser(IniParser&&) = delete;
+    IniParser& operator=(IniParser&&) = delete;
+
+    template <typename T>
+    T getSetting(T Settings::* member) const
+    {
+        std::shared_lock lock(settingsMutex_);
+        return settings_.*member;
+    }
+
+    mutable std::shared_mutex settingsMutex_;
+    Settings settings_;
 };

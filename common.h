@@ -1,13 +1,17 @@
 #pragma once
 
 #include <boost/endian/conversion.hpp>
+
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <ctime>
 #include <iomanip>
-#include <iostream>
-#include <memory>
-#include <string>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 #include <vector>
-#include <mutex>
 
 #define DATE_TIME_FORMAT_SPACE  32
 
@@ -117,20 +121,15 @@ public:
     std::string FnDecimalIntToHexString(uint64_t value, std::size_t byteSize);
     bool FnUint32ToByteString(uint32_t value, std::string& output, std::size_t outputSize, bool littleEndian = false);
 
-    /**
-     * Singleton Common should not be cloneable.
-     */
-    Common(Common &common) = delete;
-
-    /**
-     * Singleton Common should not be assignable.
-     */
-    void operator=(const Common&) = delete;
+    // Singleton: no copy and no move.
+    Common(const Common&) = delete;
+    Common& operator=(const Common&) = delete;
+    Common(Common&&) = delete;
+    Common& operator=(Common&&) = delete;
 
 private:
-    static Common* common_;
-    static std::mutex mutex_;
-    Common();
+    Common() = default;
+    ~Common() = default;
 };
 
 

@@ -1,812 +1,1401 @@
-#include <boost/asio.hpp>
-#include <iostream>
-#include <sstream>
-#include <vector>
-#include "common.h"
-#include "event_manager.h"
 #include "printer.h"
+
+#include "event_manager.h"
 #include "log.h"
 
-Printer* Printer::printer_ = nullptr;
-std::mutex Printer::mutex_;
+#include <algorithm>
+#include <future>
+#include <iomanip>
+#include <sstream>
+#include <utility>
+
+#if defined(__linux__)
+#include <pthread.h>
+#endif
 
 Printer::Printer()
-    : ioContext_(),
-    strand_(boost::asio::make_strand(ioContext_)),
-    workGuard_(boost::asio::make_work_guard(ioContext_)),
-    logFileName_("printer"),
-    defaultFont_(2),
-    defaultAlign_(static_cast<int>(CBM_ALIGN::CBM_LEFT)),
-    lineSpace_(6),
-    leftMargin_(0),
-    printMode_(0),
-    printerType_(PRINTER_TYPE::CBM1000),
-    siteID_(0),
-    cmdLeftMargin_(""),
-    cmdCut_(""),
-    isPrinterError_(false),
-    selfTestInterval_(0),
-    selfTestTimer_(ioContext_),
-    monitorStatusTimer_(ioContext_)
+    : serialPort_(ioContext_),
+      selfTestTimer_(ioContext_),
+      monitorStatusTimer_(ioContext_)
 {
-    // Initialize fronts
-    FC_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
-    FC_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x08'});
-    FC_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x10'});
-    FC_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
-    FC_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x30'});
-    FC_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x18'});
-    FC_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x28'});
-    FC_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x38'});
-    FC_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
-    FC_[10]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x09'});
-    FC_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x11'});
-    FC_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
-    FC_[13] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x31'});
-    FC_[14] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x19'});
-    FC_[15] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x29'});
-    FC_[16] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x39'});
+    cbmFonts_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
+    cbmFonts_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x08'});
+    cbmFonts_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x10'});
+    cbmFonts_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
+    cbmFonts_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x30'});
+    cbmFonts_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x18'});
+    cbmFonts_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x28'});
+    cbmFonts_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x38'});
+    cbmFonts_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
+    cbmFonts_[10] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x09'});
+    cbmFonts_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x11'});
+    cbmFonts_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
+    cbmFonts_[13] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x31'});
+    cbmFonts_[14] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x19'});
+    cbmFonts_[15] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x29'});
+    cbmFonts_[16] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x39'});
 
-    // Initialize FTP fronts
-    FF_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
-    FF_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
-    FF_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x02'});
-    FF_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x03'});
-    FF_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x12'});
-    FF_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x13'});
-    FF_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
-    FF_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
-    FF_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x22'});
-    FF_[10]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x23'});
-    FF_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x32'});
-    FF_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x33'});
+    ftpFonts_[1]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x00'});
+    ftpFonts_[2]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x01'});
+    ftpFonts_[3]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x02'});
+    ftpFonts_[4]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x03'});
+    ftpFonts_[5]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x12'});
+    ftpFonts_[6]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x13'});
+    ftpFonts_[7]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x20'});
+    ftpFonts_[8]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x21'});
+    ftpFonts_[9]  = std::string({ASCII::ESC, ASCII::EXCLAM, '\x22'});
+    ftpFonts_[10] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x23'});
+    ftpFonts_[11] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x32'});
+    ftpFonts_[12] = std::string({ASCII::ESC, ASCII::EXCLAM, '\x33'});
 
-    // Initialize align
-    Align_[0] = "";
-    Align_[1] = std::string({ASCII::ESC, ASCII::a, '\x00'});
-    Align_[2] = std::string({ASCII::ESC, ASCII::a, '\x01'});
-    Align_[3] = std::string({ASCII::ESC, ASCII::a, '\x02'});
+    alignCommands_[0] = "";
+    alignCommands_[1] = std::string({ASCII::ESC, ASCII::a, '\x00'});
+    alignCommands_[2] = std::string({ASCII::ESC, ASCII::a, '\x01'});
+    alignCommands_[3] = std::string({ASCII::ESC, ASCII::a, '\x02'});
+}
+
+Printer::~Printer()
+{
+    acceptingWork_.store(false);
+    stopping_.store(true);
+
+    try
+    {
+        if (ioThread_.joinable())
+        {
+            if (running_.load())
+            {
+                boost::asio::post(
+                    ioContext_,
+                    [this]()
+                    {
+                        shutdownOnIoThread();
+                    });
+            }
+
+            workGuard_.reset();
+
+            if (std::this_thread::get_id() != ioThread_.get_id())
+            {
+                ioThread_.join();
+            }
+            else
+            {
+                // Emergency fallback only. Normal shutdown must call
+                // FnPrinterClose() from outside the Printer I/O thread.
+                ioContext_.stop();
+            }
+        }
+    }
+    catch (...)
+    {
+        ioContext_.stop();
+    }
 }
 
 Printer* Printer::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (printer_ == nullptr)
-    {
-        printer_ = new Printer();
-    }
-
-    return printer_;
+    static Printer instance;
+    return &instance;
 }
 
 bool Printer::FnPrinterInit(unsigned int baudRate, const std::string& comPortName)
 {
-    int ret = false;
-    pSerialPort_ = std::make_unique<boost::asio::serial_port>(ioContext_, comPortName);
+    Logger::getInstance()->FnCreateLogFile(logFileName_);
 
-    try
-    {
-        pSerialPort_->set_option(boost::asio::serial_port_base::baud_rate(baudRate));
-        pSerialPort_->set_option(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none));
-        pSerialPort_->set_option(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none));
-        pSerialPort_->set_option(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one));
-        pSerialPort_->set_option(boost::asio::serial_port_base::character_size(8));
+    std::unique_lock<std::mutex> lock(lifecycleMutex_);
 
-        Logger::getInstance()->FnCreateLogFile(logFileName_);
-
-        std::ostringstream oss;
-        if (pSerialPort_->is_open())
-        {
-            oss << "Printer device initialization completed.";
-            startIoContextThread();
-            startRead();
-            setPrinterSetting(printerType_, defaultAlign_, defaultFont_, siteID_, leftMargin_, selfTestInterval_);
-            if (printerType_ != PRINTER_TYPE::FTP)
-            {
-                startSelfTestTimer(selfTestInterval_);
-            }
-            startMonitorStatusTimer();
-            ret = true;
-        }
-        else
-        {
-            oss << "Printer device initialization failed.";
-        }
-        Logger::getInstance()->FnLog(oss.str());
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
-    }
-    catch (const boost::system::system_error& e)
+    if (initialized_.load())
     {
-        std::stringstream ss;
-        ss << __func__ << ", Boost Asio Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-    }
-    catch (const std::exception& e)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-    }
-    catch (...)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        log("[INIT] Already initialized");
+        return true;
     }
 
-    if (ret)
+    if (ioThread_.joinable() && !running_.load())
     {
-        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::IDLE));
+        ioThread_.join();
     }
-    else
+
+    if (ioThread_.joinable())
+    {
+        log("[INIT] Failed | I/O thread is already running");
+        return false;
+    }
+
+    log("[INIT] Starting | Port=" + comPortName + " | Baud=" + std::to_string(baudRate));
+
+    acceptingWork_.store(false);
+    stopping_.store(false);
+    initialized_.store(false);
+
+    if (!startIoThreadLocked())
     {
         EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::ERROR));
+
+        return false;
     }
 
-    return ret;
+    auto initPromise = std::make_shared<std::promise<bool>>();
+    std::future<bool> initFuture = initPromise->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [this,
+         baudRate,
+         comPortName,
+         initPromise]()
+        {
+            bool success = false;
+
+            try
+            {
+                success = initOnIoThread(baudRate, comPortName);
+            }
+            catch (const std::exception& exception)
+            {
+                logException(__func__, exception);
+                success = false;
+            }
+            catch (...)
+            {
+                Logger::getInstance()->FnLogExceptionError("Printer::FnPrinterInit task | Unknown exception");
+                success = false;
+            }
+
+            initPromise->set_value(success);
+        });
+
+    const bool success = initFuture.get();
+
+    if (!success)
+    {
+        acceptingWork_.store(false);
+        stopping_.store(true);
+
+        boost::asio::post(
+            ioContext_,
+            [this]()
+            {
+                shutdownOnIoThread();
+            });
+
+        workGuard_.reset();
+
+        if (ioThread_.joinable())
+        {
+            ioThread_.join();
+        }
+
+        running_.store(false);
+        initialized_.store(false);
+        stopping_.store(false);
+
+        log("[INIT] Failed");
+
+        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::ERROR));
+
+        return false;
+    }
+
+    initialized_.store(true);
+    acceptingWork_.store(true);
+
+    log(std::string("[INIT] Completed | Type=") + printerTypeName(printerType_.load()));
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::IDLE));
+
+    return true;
 }
 
 void Printer::FnPrinterClose()
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
+    std::unique_lock<std::mutex> lock(lifecycleMutex_);
+
+    if (!ioThread_.joinable())
+    {
+        acceptingWork_.store(false);
+        initialized_.store(false);
+        running_.store(false);
+        return;
+    }
+
+    log("[SHUTDOWN] Starting");
+
+    acceptingWork_.store(false);
+    stopping_.store(true);
+
+    if (std::this_thread::get_id() == ioThread_.get_id())
+    {
+        shutdownOnIoThread();
+        workGuard_.reset();
+
+        log( "[SHUTDOWN] Requested from I/O thread | thread will exit after pending work drains");
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this]()
+        {
+            shutdownOnIoThread();
+        });
 
     workGuard_.reset();
-    ioContext_.stop();
-    if (ioContextThread_.joinable())
-    {
-        ioContextThread_.join();
-    }
+
+    ioThread_.join();
+
+    running_.store(false);
+    initialized_.store(false);
+    stopping_.store(false);
+
+    log("[SHUTDOWN] Completed");
 }
 
 void Printer::FnSetPrintMode(int mode)
 {
-    printMode_ = mode;
+    printMode_.store(mode);
 }
 
-int Printer::FnGetPrintMode()
+int Printer::FnGetPrintMode() const
 {
-    return printMode_;
+    return printMode_.load();
 }
 
 void Printer::FnSetDefaultAlign(Printer::CBM_ALIGN align)
 {
-    defaultAlign_ = static_cast<int>(align);
-}
+    const int value = static_cast<int>(align);
 
-Printer::CBM_ALIGN Printer::FnGetDefaultAlign()
-{
-    return static_cast<CBM_ALIGN>(defaultAlign_);
-}
-
-void Printer::FnSetDefaultFont(int font)
-{
-    defaultFont_ = font;
-}
-
-int Printer::FnGetDefaultFont()
-{
-    return defaultFont_;
-}
-
-void Printer::FnSetLeftMargin(int leftMargin)
-{
-    leftMargin_ = leftMargin;
-
-    if (leftMargin_ > 10)
-    {
-        leftMargin_ = leftMargin_ / 10;
-    }
-
-    switch (printerType_)
-    {
-        case PRINTER_TYPE::CBM:
-        {
-            int n1, n2;
-            n1 = leftMargin_ % 256;
-            n2 = leftMargin_ / 256;
-            
-            std::stringstream cmdLeftMarginSS_;
-            cmdLeftMarginSS_ << ASCII::ESC << '$' << static_cast<char>(n1) << static_cast<char>(n2);
-            cmdLeftMargin_ = "";
-            cmdLeftMargin_.clear();
-            cmdLeftMargin_ = cmdLeftMarginSS_.str();
-            break;
-        }
-        case PRINTER_TYPE::FTP:
-        {
-            std::stringstream cmdLeftMarginSS_;
-            cmdLeftMarginSS_ << ASCII::ESC << 'D' << static_cast<char>(leftMargin_) << "to" << static_cast<char>(1) << static_cast<char>(0) << ASCII::TAB;
-            cmdLeftMargin_ = "";
-            cmdLeftMargin_.clear();
-            cmdLeftMargin_ = cmdLeftMarginSS_.str();
-            break;
-        }
-        case PRINTER_TYPE::CBM1000:
-        {
-            std::stringstream cmdLeftMarginSS_;
-            cmdLeftMarginSS_ << ASCII::ESC << 'D' << static_cast<char>(leftMargin_) << static_cast<char>(1) << static_cast<char>(0) << ASCII::TAB;
-            cmdLeftMargin_ = "";
-            cmdLeftMargin_.clear();
-            cmdLeftMargin_ = cmdLeftMarginSS_.str();
-            break;
-        }
-    }
-}
-
-void Printer::FnSetLineSpace(int space)
-{
-    lineSpace_ = space;
-}
-
-int Printer::FnGetLineSpace()
-{
-    return lineSpace_;
-}
-
-int Printer::FnGetLeftMargin()
-{
-    return leftMargin_;
-}
-
-void Printer::FnSetSelfTestInterval(int interval)
-{
-    selfTestInterval_ = interval;
-}
-
-int Printer::FnGetSelfTestInterval()
-{
-    return selfTestInterval_;
-}
-
-void Printer::FnSetSiteID(int id)
-{
-    siteID_ = id;
-}
-
-int Printer::FnGetSiteID()
-{
-    return siteID_;
-}
-
-void Printer::FnSetPrinterType(Printer::PRINTER_TYPE type)
-{
-    printerType_ = type;
-}
-
-Printer::PRINTER_TYPE Printer::FnGetPrinterType()
-{
-    return printerType_;
-}
-
-void Printer::startIoContextThread()
-{
-    Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
-
-    if (!ioContextThread_.joinable())
-    {
-        ioContextThread_ = std::thread([this]() { ioContext_.run(); });
-    }
-}
-
-// Serial read and write
-void Printer::startRead()
-{
-    boost::asio::post(strand_, [this]() {
-        pSerialPort_->async_read_some(
-            boost::asio::buffer(readBuffer_, readBuffer_.size()),
-            boost::asio::bind_executor(strand_,
-                                        std::bind(&Printer::readEnd, this,
-                                        std::placeholders::_1,
-                                        std::placeholders::_2)));
-    });
-}
-
-void Printer::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
-{
-    if (!error)
-    {
-        std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + bytesTransferred);
-        handleCmdResponse(data);
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Serial Read error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
-    }
-
-    startRead();
-}
-
-void Printer::enqueueWrite(const std::vector<uint8_t>& data)
-{
-    if (pSerialPort_ && pSerialPort_->is_open())
-    {
-        boost::asio::post(strand_, [this, data]() {
-            bool write_in_progress_ = !writeQueue_.empty();
-            writeQueue_.push(data);
-            if (!write_in_progress_)
-            {
-                startWrite();
-            }
-        });
-    }
-    else
-    {
-        Logger::getInstance()->FnLog("Serial port is not initialized or not open.", logFileName_, "PRINTER");
-    }
-}
-
-void Printer::startWrite()
-{
-    if (writeQueue_.empty())
+    if (value < static_cast<int>(CBM_ALIGN::CBM_LEFT) ||
+        value > static_cast<int>(CBM_ALIGN::CBM_RIGHT))
     {
         return;
     }
 
-    const auto& data = writeQueue_.front();
-    std::ostringstream oss;
-    oss << "Data sent : " << Common::getInstance()->FnGetDisplayVectorCharToHexString(data);
-    Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
-    boost::asio::async_write(*pSerialPort_,
-                            boost::asio::buffer(data),
-                            boost::asio::bind_executor(strand_,
-                                                        std::bind(&Printer::writeEnd, this,
-                                                                    std::placeholders::_1,
-                                                                    std::placeholders::_2)));
+    defaultAlign_.store(value);
 }
 
-void Printer::writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
+Printer::CBM_ALIGN Printer::FnGetDefaultAlign() const
 {
-    if (!error)
-    {
-        writeQueue_.pop();
-
-        // Check if there's more data to write
-        if (!writeQueue_.empty())
-        {
-            startWrite();
-        }
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Serial Write error: " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
-    }
+    return static_cast<CBM_ALIGN>(defaultAlign_.load());
 }
 
-void Printer::handleCmdResponse(const std::vector<uint8_t>& rsp)
+void Printer::FnSetDefaultFont(int font)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
+    defaultFont_.store(font);
+}
 
-    std::stringstream ss;
-    ss << __func__ << " Response: ";
-    for (uint8_t byte : rsp)
+int Printer::FnGetDefaultFont() const
+{
+    return defaultFont_.load();
+}
+
+void Printer::FnSetLeftMargin(int leftMargin)
+{
+    int normalizedMargin = std::max(0, leftMargin);
+
+    if (normalizedMargin > 10)
     {
-        ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
+        normalizedMargin /= 10;
     }
-    Logger::getInstance()->FnLog(ss.str(), logFileName_, "PRINTER");
 
-    if (rsp.size() > 0)
+    leftMargin_.store(normalizedMargin);
+
+    if (!acceptingWork_.load())
     {
-        if (printerType_ != PRINTER_TYPE::FTP)
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this]()
         {
-            selfTestTimer_.cancel();
-            if (static_cast<char>(rsp[0]) == ASCII::NUL)
+            if (!stopping_.load())
             {
-                if (isPrinterError_ == true)
-                {
-                    EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::IDLE));
-                    isPrinterError_ = false;
-                }
+                configurePrinterCommandsOnIoThread(false);
             }
-            else
-            {
-                if ((rsp[0] & (1 << 5)) != 0)
-                {
-                    if (isPrinterError_ == false)
-                    {
-                        isPrinterError_ = true;
-                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::NO_PAPER));
-                    }
-                }
-                else if (((rsp[0] & (1 << 4)) != 0) && ((rsp[0] & (1 << 1)) != 0))
-                {
-                    if (isPrinterError_ == true)
-                    {
-                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::IDLE));
-                        isPrinterError_ = false;
-                    }
-                }
-            }
-        }
-        else
-        {
-            if ((rsp.size() % 4) == 0)
-            {
-                for (int i = 0; i < rsp.size() / 4; i++)
-                {
-                    std::vector<uint8_t> cmd(rsp.begin() + i * 4, rsp.begin() + (i + 1) * 4);
-
-                    if (cmd[0] == 8)
-                    {
-                        isPrinterError_ = true;
-                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::ERROR));
-                    }
-                    else if (cmd[2] == 1)
-                    {
-                        isPrinterError_ = true;
-                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::NO_PAPER));
-                    }
-                    else if (cmd[1] > 1)
-                    {
-                        isPrinterError_ = true;
-                        EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::ERROR));
-                    }
-                    else
-                    {
-                        if (isPrinterError_ == true)
-                        {
-                            std::stringstream outputSS1_, outputSS2_, outputSS3_;
-                            outputSS1_ << ASCII::FS << '9' << static_cast<char>(111);
-                            outputSS2_ << ASCII::GS << 'a' << static_cast<char>(22);
-                            outputSS3_ << ASCII::ESC << 'A' << static_cast<char>(lineSpace_);
-                            EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::IDLE));
-                            isPrinterError_ = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
+        });
 }
 
-void Printer::startMonitorStatusTimer()
+int Printer::FnGetLeftMargin() const
 {
-    monitorStatusTimer_.expires_after(std::chrono::seconds(10));
-    monitorStatusTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&Printer::handleMonitorStatusTimeout, this, std::placeholders::_1)));
+    return leftMargin_.load();
 }
 
-void Printer::handleMonitorStatusTimeout(const boost::system::error_code& error)
-{   
-    if (!error)
-    {
-        if (isPrinterError_ == true)
-        {
-            if (printerType_ != PRINTER_TYPE::FTP)
-            {
-                Logger::getInstance()->FnLog(std::string(__func__) + " ,Send inquire status.", logFileName_, "PRINTER");
-                inqStatus();    // Send inquire status if there's an error
-            }
-        }
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Monitor Status Timer error : " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
-    }
-
-    // Restart the timer to check status again after 10 seconds
-    startMonitorStatusTimer();
-}
-
-void Printer::startSelfTestTimer(int milliseconds)
+void Printer::FnSetLineSpace(int space)
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
-
-    inqStatus();
-
-    selfTestTimer_.expires_after(std::chrono::milliseconds(milliseconds));
-    selfTestTimer_.async_wait(boost::asio::bind_executor(strand_,
-        std::bind(&Printer::handleSelfTestTimerTimeout, this, std::placeholders::_1)));
+    lineSpace_.store(space);
 }
 
-void Printer::handleSelfTestTimerTimeout(const boost::system::error_code& error)
+int Printer::FnGetLineSpace() const
 {
-    Logger::getInstance()->FnLog(__func__, logFileName_, "PRINTER");
-
-    if (!error)
-    {
-        Logger::getInstance()->FnLog("Self Test Timer Timeout.", logFileName_, "PRINTER");
-
-        if (isPrinterError_ == false)
-        {
-            isPrinterError_ = true;
-            EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(PRINTER_STATUS::ERROR));
-        }
-    }
-    else if (error == boost::asio::error::operation_aborted)
-    {
-        Logger::getInstance()->FnLog("Self Test Timer Cancelled.", logFileName_, "PRINTER");
-    }
-    else
-    {
-        std::ostringstream oss;
-        oss << "Self Test Timer error : " << error.message();
-        Logger::getInstance()->FnLog(oss.str(), logFileName_, "PRINTER");
-    }
+    return lineSpace_.load();
 }
 
-void Printer::inqStatus()
+void Printer::FnSetSelfTestInterval(int interval)
 {
-    std::stringstream outputSS_;
-    // This is a command to request the printer status (but not applicable for CBM1000)
-    //outputSS_ << ASCII::ESC << 'v';
-    outputSS_ << ASCII::DLE << ASCII::EOT << ASCII::STX;
-    enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
+    selfTestInterval_.store(std::max(0, interval));
 }
 
-void Printer::setPrinterSetting(Printer::PRINTER_TYPE type, int align, int font, int siteID, int leftMargin, int milliseconds)
+int Printer::FnGetSelfTestInterval() const
 {
-    printerType_ = type;
-    defaultAlign_ = align;
-    defaultFont_ = font;
-    siteID_ = siteID;
-    selfTestInterval_ = milliseconds;
-    
-    if (leftMargin > 10)
-    {
-        leftMargin_ = leftMargin / 10;
-    }
+    return selfTestInterval_.load();
+}
 
-    switch (printerType_)
+void Printer::FnSetSiteID(int id)
+{
+    siteID_.store(id);
+}
+
+int Printer::FnGetSiteID() const
+{
+    return siteID_.load();
+}
+
+void Printer::FnSetPrinterType(Printer::PRINTER_TYPE type)
+{
+    switch (type)
     {
         case PRINTER_TYPE::CBM:
-        {
-            int n1, n2;
-            n1 = leftMargin_ % 256;
-            n2 = leftMargin_ / 256;
-            
-            std::stringstream cmdLeftMarginSS_, cmdCutSS_;
-            cmdLeftMarginSS_ << ASCII::ESC << '$' << static_cast<char>(n1) << static_cast<char>(n2);
-            cmdLeftMargin_ = "";
-            cmdLeftMargin_.clear();
-            cmdLeftMargin_ = cmdLeftMarginSS_.str();
-            cmdCutSS_ << ASCII::ESC << 'i';
-            cmdCut_ = cmdCutSS_.str();
-            for (int i = 0; i < 17; i++)
-            {
-                Font_[i] = FC_[i];
-            }
-            break;
-        }
         case PRINTER_TYPE::FTP:
-        {
-            std::stringstream cmdLeftMarginSS_, cmdCutSS_;
-            cmdLeftMarginSS_ << ASCII::ESC << 'D' << static_cast<char>(leftMargin_) << "to" << static_cast<char>(1) << static_cast<char>(0) << ASCII::TAB;
-            cmdLeftMargin_ = "";
-            cmdLeftMargin_.clear();
-            cmdLeftMargin_ = cmdLeftMarginSS_.str();
-            cmdCutSS_ << ASCII::GS << std::string("V") << static_cast<char>(0);
-            cmdCut_ = cmdCutSS_.str();
-            for (int i = 0; i < 13; i++)
-            {
-                Font_[i] = FF_[i];
-            }
-
-            std::stringstream detectionSS_, statusTransmissionSS_, spaceSS_;
-            // Enable detection
-            detectionSS_ << ASCII::FS << '9' << static_cast<char>(111);
-            // Enable status transmission
-            statusTransmissionSS_ << ASCII::GS << 'a' << static_cast<char>(14);
-            // Set line space
-            spaceSS_ << ASCII::ESC << 'A' << static_cast<char>(lineSpace_);
-
-            enqueueWrite(Common::getInstance()->FnConvertStringToVector(detectionSS_.str()));
-            enqueueWrite(Common::getInstance()->FnConvertStringToVector(statusTransmissionSS_.str()));
-            enqueueWrite(Common::getInstance()->FnConvertStringToVector(spaceSS_.str()));
-            break;
-        }
         case PRINTER_TYPE::CBM1000:
-        {
-            std::stringstream cmdLeftMarginSS_;
-
-            if (cmdLeftMargin_.empty())
-            {
-                cmdLeftMarginSS_ << ASCII::ESC << 'D' << static_cast<char>(leftMargin_) << static_cast<char>(1) << static_cast<char>(0) << ASCII::TAB;
-                cmdLeftMargin_ = "";
-                cmdLeftMargin_.clear();
-                cmdLeftMargin_ = cmdLeftMarginSS_.str();
-            }
-            std::stringstream cmdCutSS_;
-            cmdCutSS_ << ASCII::GS << 'V' << static_cast<char>(1);
-            cmdCut_ = cmdCutSS_.str();
-            for (int i = 0; i < 17; i++)
-            {
-                Font_[i] = FC_[i];
-            }
             break;
-        }
+
+        default:
+            return;
     }
+
+    printerType_.store(type);
+
+    if (!acceptingWork_.load())
+    {
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this]()
+        {
+            if (!stopping_.load())
+            {
+                configurePrinterCommandsOnIoThread(false);
+            }
+        });
+}
+
+Printer::PRINTER_TYPE Printer::FnGetPrinterType() const
+{
+    return printerType_.load();
 }
 
 void Printer::FnPrintLine(const std::string& text, int font, int align, bool underline, int font2)
 {
-    std::string UL, UL0;
+    if (!acceptingWork_.load())
+    {
+        log("[PRINT] Ignored | Printer is not initialized");
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this, text, font, align, underline, font2]()
+        {
+            if (stopping_.load() || !initialized_.load())
+            {
+                return;
+            }
+
+            printLineOnIoThread(text, font, align, underline, font2);
+        });
+}
+
+void Printer::FnFullCut(int bottom)
+{
+    if (!acceptingWork_.load())
+    {
+        log("[CUT] Ignored | Printer is not initialized");
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this, bottom]()
+        {
+            if (stopping_.load() || !initialized_.load())
+            {
+                return;
+            }
+
+            fullCutOnIoThread(bottom);
+        });
+}
+
+void Printer::FnGetAllFonts()
+{
+    if (!acceptingWork_.load())
+    {
+        log("[PRINT] GetAllFonts ignored | Printer is not initialized");
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this]()
+        {
+            if (stopping_.load() || !initialized_.load())
+            {
+                return;
+            }
+
+            getAllFontsOnIoThread();
+        });
+}
+
+void Printer::FnPrintBarCode(const std::string& text, int height, int width, int fontSetting)
+{
+    if (!acceptingWork_.load())
+    {
+        log("[BARCODE] Ignored | Printer is not initialized");
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this, text, height, width, fontSetting]()
+        {
+            if (stopping_.load() || !initialized_.load())
+            {
+                return;
+            }
+
+            printBarcodeOnIoThread(text, height, width, fontSetting);
+        });
+}
+
+void Printer::FnFeedLine(int line)
+{
+    if (!acceptingWork_.load())
+    {
+        log("[FEED] Ignored | Printer is not initialized");
+        return;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this, line]()
+        {
+            if (stopping_.load() || !initialized_.load())
+            {
+                return;
+            }
+
+            feedLineOnIoThread(line);
+        });
+}
+
+bool Printer::startIoThreadLocked()
+{
+    try
+    {
+        ioContext_.restart();
+        workGuard_.emplace(boost::asio::make_work_guard(ioContext_));
+
+        running_.store(true);
+
+        ioThread_ = std::thread(
+            [this]()
+            {
+#if defined(__linux__)
+                ::pthread_setname_np(::pthread_self(), "PRINTER_IO");
+#endif
+                log("[THREAD] io_context started");
+
+                try
+                {
+                    ioContext_.run();
+                }
+                catch (const std::exception& exception)
+                {
+                    logException("io_context::run", exception);
+                }
+                catch (...)
+                {
+                    Logger::getInstance()->FnLogExceptionError("Printer::io_context::run | Unknown exception");
+                }
+
+                running_.store(false);
+                log("[THREAD] io_context stopped");
+            });
+
+        return true;
+    }
+    catch (const std::exception& exception)
+    {
+        running_.store(false);
+        workGuard_.reset();
+        logException(__func__, exception);
+        return false;
+    }
+}
+
+bool Printer::initOnIoThread(unsigned int baudRate, const std::string& comPortName)
+{
+    boost::system::error_code error;
+
+    if (serialPort_.is_open())
+    {
+        serialPort_.cancel(error);
+        error.clear();
+        serialPort_.close(error);
+        error.clear();
+    }
+
+    serialPort_.open(comPortName, error);
+
+    if (error)
+    {
+        log(
+            "[INIT] Serial open failed | Port=" +
+            comPortName +
+            " | Error=" +
+            error.message());
+        return false;
+    }
+
+    const auto setOption =
+        [this, &error](const auto& option) -> bool
+        {
+            error.clear();
+            serialPort_.set_option(option, error);
+            return !error;
+        };
+
+    if (!setOption(boost::asio::serial_port_base::baud_rate(baudRate)) ||
+        !setOption(boost::asio::serial_port_base::flow_control(boost::asio::serial_port_base::flow_control::none)) ||
+        !setOption(boost::asio::serial_port_base::parity(boost::asio::serial_port_base::parity::none)) ||
+        !setOption(boost::asio::serial_port_base::stop_bits(boost::asio::serial_port_base::stop_bits::one)) ||
+        !setOption(boost::asio::serial_port_base::character_size(8)))
+    {
+        log("[INIT] Serial configuration failed | Error=" + error.message());
+
+        serialPort_.close(error);
+        return false;
+    }
+
+    writeQueue_.clear();
+    writeInProgress_ = false;
+    currentStatus_ = PRINTER_STATUS::IDLE;
+    lastAlign_ = defaultAlign_.load();
+
+    configurePrinterCommandsOnIoThread(true);
+    startReadOnIoThread();
+
+    if (printerType_.load() != PRINTER_TYPE::FTP)
+    {
+        startSelfTestTimerOnIoThread(selfTestInterval_.load());
+    }
+
+    startMonitorStatusTimerOnIoThread();
+
+    return true;
+}
+
+void Printer::shutdownOnIoThread()
+{
+    boost::system::error_code ignored;
+
+    selfTestTimer_.cancel(ignored);
+    monitorStatusTimer_.cancel(ignored);
+
+    if (serialPort_.is_open())
+    {
+        serialPort_.cancel(ignored);
+        serialPort_.close(ignored);
+    }
+
+    writeQueue_.clear();
+    writeInProgress_ = false;
+
+    initialized_.store(false);
+    acceptingWork_.store(false);
+}
+
+void Printer::configurePrinterCommandsOnIoThread(bool sendFtpSetup)
+{
+    cmdLeftMargin_.clear();
+    cmdCut_.clear();
+    activeFonts_.fill({});
+
+    const int leftMargin = leftMargin_.load();
+    const PRINTER_TYPE type = printerType_.load();
+
+    switch (type)
+    {
+        case PRINTER_TYPE::CBM:
+        {
+            const int n1 = leftMargin % 256;
+            const int n2 = leftMargin / 256;
+
+            std::ostringstream margin;
+            margin
+                << ASCII::ESC
+                << '$'
+                << static_cast<char>(n1)
+                << static_cast<char>(n2);
+
+            cmdLeftMargin_ = margin.str();
+            cmdCut_ = std::string({ASCII::ESC, 'i'});
+            activeFonts_ = cbmFonts_;
+            break;
+        }
+
+        case PRINTER_TYPE::FTP:
+        {
+            std::ostringstream margin;
+
+            // Preserved from the legacy protocol implementation.
+            // Verify with the FTP printer protocol whether the literal "to"
+            // is intentional before changing it.
+            margin
+                << ASCII::ESC
+                << 'D'
+                << static_cast<char>(leftMargin)
+                << "to"
+                << static_cast<char>(1)
+                << static_cast<char>(0)
+                << ASCII::TAB;
+
+            cmdLeftMargin_ = margin.str();
+
+            std::ostringstream cut;
+            cut
+                << ASCII::GS
+                << 'V'
+                << static_cast<char>(0);
+            cmdCut_ = cut.str();
+
+            for (std::size_t index = 0; index < ftpFonts_.size(); ++index)
+            {
+                activeFonts_[index] = ftpFonts_[index];
+            }
+
+            if (sendFtpSetup)
+            {
+                std::ostringstream detection;
+                detection
+                    << ASCII::FS
+                    << '9'
+                    << static_cast<char>(111);
+
+                std::ostringstream statusTransmission;
+                statusTransmission
+                    << ASCII::GS
+                    << 'a'
+                    << static_cast<char>(14);
+
+                std::ostringstream lineSpace;
+                lineSpace
+                    << ASCII::ESC
+                    << 'A'
+                    << static_cast<char>(lineSpace_.load());
+
+                enqueueWriteOnIoThread(toBytes(detection.str()));
+                enqueueWriteOnIoThread(toBytes(statusTransmission.str()));
+                enqueueWriteOnIoThread(toBytes(lineSpace.str()));
+            }
+
+            break;
+        }
+
+        case PRINTER_TYPE::CBM1000:
+        {
+            std::ostringstream margin;
+            margin
+                << ASCII::ESC
+                << 'D'
+                << static_cast<char>(leftMargin)
+                << static_cast<char>(1)
+                << static_cast<char>(0)
+                << ASCII::TAB;
+
+            cmdLeftMargin_ = margin.str();
+
+            std::ostringstream cut;
+            cut
+                << ASCII::GS
+                << 'V'
+                << static_cast<char>(1);
+            cmdCut_ = cut.str();
+
+            activeFonts_ = cbmFonts_;
+            break;
+        }
+    }
+}
+
+void Printer::startReadOnIoThread()
+{
+    if (stopping_.load() || !serialPort_.is_open())
+    {
+        return;
+    }
+
+    serialPort_.async_read_some(
+        boost::asio::buffer(readBuffer_),
+        [this](
+            const boost::system::error_code& error,
+            std::size_t bytesTransferred)
+        {
+            handleReadOnIoThread(error, bytesTransferred);
+        });
+}
+
+void Printer::handleReadOnIoThread(const boost::system::error_code& error, std::size_t bytesTransferred)
+{
+    if (error)
+    {
+        if (error == boost::asio::error::operation_aborted ||
+            stopping_.load())
+        {
+            return;
+        }
+
+        log("[RX] Failed | Error=" + error.message());
+
+        publishStatusOnIoThread(PRINTER_STATUS::ERROR);
+
+        return;
+    }
+
+    std::vector<std::uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + static_cast<std::ptrdiff_t>(bytesTransferred));
+
+    log("[RX] Bytes=" + std::to_string(bytesTransferred) + " | Data=" + toHex(data));
+
+    handleCmdResponseOnIoThread(data);
+
+    startReadOnIoThread();
+}
+
+void Printer::enqueueWriteOnIoThread(std::vector<std::uint8_t> data)
+{
+    if (stopping_.load() || !serialPort_.is_open())
+    {
+        return;
+    }
+
+    if (data.empty())
+    {
+        return;
+    }
+
+    writeQueue_.push_back(std::move(data));
+
+    if (!writeInProgress_)
+    {
+        startWriteOnIoThread();
+    }
+}
+
+void Printer::startWriteOnIoThread()
+{
+    if (stopping_.load() ||
+        writeInProgress_ ||
+        writeQueue_.empty() ||
+        !serialPort_.is_open())
+    {
+        return;
+    }
+
+    writeInProgress_ = true;
+
+    const auto& data = writeQueue_.front();
+
+    log("[TX] Bytes=" + std::to_string(data.size()) + " | Data=" + toHex(data));
+
+    boost::asio::async_write(
+        serialPort_,
+        boost::asio::buffer(data),
+        [this](
+            const boost::system::error_code& error,
+            std::size_t bytesTransferred)
+        {
+            handleWriteOnIoThread(error, bytesTransferred);
+        });
+}
+
+void Printer::handleWriteOnIoThread(const boost::system::error_code& error, std::size_t bytesTransferred)
+{
+    if (error)
+    {
+        if (error == boost::asio::error::operation_aborted ||
+            stopping_.load())
+        {
+            return;
+        }
+
+        log("[TX] Failed | Error=" + error.message());
+
+        publishStatusOnIoThread(PRINTER_STATUS::ERROR);
+    }
+    else
+    {
+        log("[TX] Completed | Bytes=" + std::to_string(bytesTransferred));
+    }
+
+    if (!writeQueue_.empty())
+    {
+        writeQueue_.pop_front();
+    }
+
+    writeInProgress_ = false;
+
+    if (!writeQueue_.empty() &&
+        !stopping_.load())
+    {
+        startWriteOnIoThread();
+    }
+}
+
+void Printer::handleCmdResponseOnIoThread(const std::vector<std::uint8_t>& response)
+{
+    if (response.empty())
+    {
+        return;
+    }
+
+    if (printerType_.load() != PRINTER_TYPE::FTP)
+    {
+        boost::system::error_code ignored;
+        selfTestTimer_.cancel(ignored);
+
+        const std::uint8_t status = response.front();
+
+        if (static_cast<char>(status) == ASCII::NUL)
+        {
+            if (currentStatus_ != PRINTER_STATUS::IDLE)
+            {
+                publishStatusOnIoThread(PRINTER_STATUS::IDLE);
+            }
+
+            return;
+        }
+
+        if ((status & (1U << 5U)) != 0U)
+        {
+            publishStatusOnIoThread(PRINTER_STATUS::NO_PAPER);
+        }
+        else if (((status & (1U << 4U)) != 0U) &&
+                 ((status & (1U << 1U)) != 0U))
+        {
+            publishStatusOnIoThread(PRINTER_STATUS::IDLE);
+        }
+
+        return;
+    }
+
+    if ((response.size() % 4U) != 0U)
+    {
+        log("[STATUS] Invalid FTP response length | Bytes=" + std::to_string(response.size()));
+        return;
+    }
+
+    for (std::size_t offset = 0; offset < response.size(); offset += 4U)
+    {
+        const std::uint8_t byte0 = response[offset];
+        const std::uint8_t byte1 = response[offset + 1U];
+        const std::uint8_t byte2 = response[offset + 2U];
+
+        if (byte0 == 8U)
+        {
+            publishStatusOnIoThread(PRINTER_STATUS::ERROR);
+        }
+        else if (byte2 == 1U)
+        {
+            publishStatusOnIoThread(PRINTER_STATUS::NO_PAPER);
+        }
+        else if (byte1 > 1U)
+        {
+            publishStatusOnIoThread(PRINTER_STATUS::ERROR);
+        }
+        else
+        {
+            publishStatusOnIoThread(PRINTER_STATUS::IDLE);
+        }
+    }
+}
+
+void Printer::startMonitorStatusTimerOnIoThread()
+{
+    if (stopping_.load())
+    {
+        return;
+    }
+
+    monitorStatusTimer_.expires_after(kMonitorStatusInterval);
+
+    monitorStatusTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleMonitorStatusTimeoutOnIoThread(error);
+        });
+}
+
+void Printer::handleMonitorStatusTimeoutOnIoThread(const boost::system::error_code& error)
+{
+    if (error == boost::asio::error::operation_aborted ||
+        stopping_.load())
+    {
+        return;
+    }
+
+    if (error)
+    {
+        log("[MONITOR] Timer failed | Error=" + error.message());
+    }
+    else if (currentStatus_ != PRINTER_STATUS::IDLE && printerType_.load() != PRINTER_TYPE::FTP)
+    {
+        log("[MONITOR] Requesting printer status | Current=" + std::string(statusName(currentStatus_)));
+
+        inquireStatusOnIoThread();
+    }
+
+    startMonitorStatusTimerOnIoThread();
+}
+
+void Printer::startSelfTestTimerOnIoThread(int milliseconds)
+{
+    if (stopping_.load() || printerType_.load() == PRINTER_TYPE::FTP)
+    {
+        return;
+    }
+
+    boost::system::error_code ignored;
+    selfTestTimer_.cancel(ignored);
+
+    inquireStatusOnIoThread();
+
+    selfTestTimer_.expires_after(std::chrono::milliseconds(std::max(0, milliseconds)));
+
+    selfTestTimer_.async_wait(
+        [this](const boost::system::error_code& error)
+        {
+            handleSelfTestTimeoutOnIoThread(error);
+        });
+}
+
+void Printer::handleSelfTestTimeoutOnIoThread(const boost::system::error_code& error)
+{
+    if (error == boost::asio::error::operation_aborted || stopping_.load())
+    {
+        return;
+    }
+
+    if (error)
+    {
+        log("[SELFTEST] Timer failed | Error=" + error.message());
+        return;
+    }
+
+    if (currentStatus_ == PRINTER_STATUS::IDLE)
+    {
+        log("[SELFTEST] Status response timeout");
+        publishStatusOnIoThread(PRINTER_STATUS::ERROR);
+    }
+}
+
+void Printer::inquireStatusOnIoThread()
+{
+    std::ostringstream command;
+    command
+        << ASCII::DLE
+        << ASCII::EOT
+        << ASCII::STX;
+
+    enqueueWriteOnIoThread(toBytes(command.str()));
+}
+
+void Printer::publishStatusOnIoThread(PRINTER_STATUS status, bool force)
+{
+    if (!force && currentStatus_ == status)
+    {
+        return;
+    }
+
+    currentStatus_ = status;
+
+    log("[STATUS] " + std::string(statusName(status)));
+
+    EventManager::getInstance()->FnEnqueueEvent("Evt_handlePrinterStatus", static_cast<int>(status));
+}
+
+void Printer::printLineOnIoThread(const std::string& text, int font, int align, bool underline, int font2)
+{
+    const PRINTER_TYPE type = printerType_.load();
 
     if (font2 > 0)
     {
-        std::size_t pos = text.find(':');
-        if (pos != std::string::npos)
+        const std::size_t separator = text.find(':');
+
+        if (separator != std::string::npos)
         {
-            UL = text.substr(0, pos + 1) + "";
-            UL0 = text.substr(pos + 1);
-            std::stringstream outputSS_;
-            outputSS_ << cmdLeftMargin_ << Font_[font2] << UL << Font_[font] << UL0 << ASCII::LF;
-            enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
+            if (font2 >= static_cast<int>(activeFonts_.size()) ||
+                activeFonts_[static_cast<std::size_t>(font2)].empty())
+            {
+                log("[PRINT] Invalid secondary font | Font=" + std::to_string(font2));
+                return;
+            }
+
+            if (font == 0)
+            {
+                font = defaultFont_.load();
+            }
+
+            if (font < 0 ||
+                font >= static_cast<int>(activeFonts_.size()) ||
+                activeFonts_[static_cast<std::size_t>(font)].empty())
+            {
+                log("[PRINT] Invalid font | Font=" + std::to_string(font));
+                return;
+            }
+
+            const std::string left = text.substr(0, separator + 1U);
+            const std::string right = text.substr(separator + 1U);
+
+            std::ostringstream output;
+            output
+                << cmdLeftMargin_
+                << activeFonts_[static_cast<std::size_t>(font2)]
+                << left
+                << activeFonts_[static_cast<std::size_t>(font)]
+                << right
+                << ASCII::LF;
+
+            enqueueWriteOnIoThread(toBytes(output.str()));
             return;
         }
     }
 
-    if ((font == 99) && (printerType_ != PRINTER_TYPE::FTP))
+    if (font == 99 && type != PRINTER_TYPE::FTP)
     {
-        std::stringstream outputSS_;
-        outputSS_ << ASCII::ESC << '@';
-        enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
+        enqueueWriteOnIoThread(toBytes(std::string({ASCII::ESC, '@'})));
         return;
     }
 
     if (font == 0)
     {
-        font = defaultFont_;
+        font = defaultFont_.load();
     }
 
-    if (printerType_ != PRINTER_TYPE::FTP)
+    std::string underlineOn;
+    std::string underlineOff;
+
+    if (type != PRINTER_TYPE::FTP)
     {
         if (align == 0)
         {
-            align = defaultAlign_;
+            align = defaultAlign_.load();
         }
 
-        if (underline == true)
+        if (align < static_cast<int>(CBM_ALIGN::CBM_LEFT) ||
+            align > static_cast<int>(CBM_ALIGN::CBM_RIGHT))
         {
-            std::stringstream ULSS_, UL0SS_;
-            ULSS_ << ASCII::ESC << '-' << static_cast<char>(1);
-            UL = ULSS_.str();
-            UL0SS_ << ASCII::ESC << '-' << static_cast<char>(0);
-            UL0 = UL0SS_.str();
+            log("[PRINT] Invalid alignment | Align=" + std::to_string(align));
+            return;
         }
-        else
+
+        if (underline)
         {
-            UL = "";
-            UL0 = "";
+            underlineOn = std::string({ASCII::ESC, '-', '\x01'});
+            underlineOff = std::string({ASCII::ESC, '-', '\x00'});
         }
     }
     else
     {
         align = 0;
-        UL = "";
-        UL0 = "";
 
         if (font > 12)
         {
-            font = font - 12;
+            font -= 12;
         }
     }
 
-    std::stringstream outputSS_;
-    outputSS_ << cmdLeftMargin_ << Align_[align] << Font_[font] << UL << text << UL0 << ASCII::LF;
-    enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
+    if (font < 0 ||
+        font >= static_cast<int>(activeFonts_.size()) ||
+        activeFonts_[static_cast<std::size_t>(font)].empty())
+    {
+        log("[PRINT] Invalid font | Font=" + std::to_string(font));
+        return;
+    }
+
+    std::ostringstream output;
+    output
+        << cmdLeftMargin_
+        << alignCommands_[static_cast<std::size_t>(align)]
+        << activeFonts_[static_cast<std::size_t>(font)]
+        << underlineOn
+        << text
+        << underlineOff
+        << ASCII::LF;
+
+    enqueueWriteOnIoThread(toBytes(output.str()));
 
     lastAlign_ = align;
 }
 
-void Printer::FnFullCut(int bottom)
+void Printer::fullCutOnIoThread(int bottom)
 {
-    if (bottom < 4)
-    {
-        bottom = 5;
-    }
+    bottom = std::clamp(bottom < 4 ? 5 : bottom, 0, 255);
 
-    std::stringstream outputSS_;
-    if (printMode_ != 1)
+    std::ostringstream output;
+
+    if (printMode_.load() != 1)
     {
-        outputSS_ << ASCII::ESC << 'd' << static_cast<char>(bottom) << cmdCut_;
+        output
+            << ASCII::ESC
+            << 'd'
+            << static_cast<char>(bottom)
+            << cmdCut_;
     }
     else
     {
-        outputSS_ << ASCII::GS << static_cast<char>(0x0C);
+        output
+            << ASCII::GS
+            << static_cast<char>(0x0C);
     }
-    enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
 
-    if (pSerialPort_ && printerType_ != PRINTER_TYPE::FTP)
+    enqueueWriteOnIoThread(toBytes(output.str()));
+
+    if (printerType_.load() != PRINTER_TYPE::FTP)
     {
-        startSelfTestTimer(selfTestInterval_);
+        startSelfTestTimerOnIoThread(selfTestInterval_.load());
     }
 }
 
-void Printer::FnGetAllFonts()
+void Printer::getAllFontsOnIoThread()
 {
-    std::stringstream outputSS_;
-    for (int i = 1; i < (sizeof(Font_)/sizeof(Font_[0])); i++)
+    for (std::size_t index = 1; index < activeFonts_.size(); ++index)
     {
-        outputSS_.str("");
-        outputSS_.clear();
-        outputSS_ << Font_[i] << i << ", abcdefghijklmnopqrstuvwxyz" << ASCII::LF;
-        enqueueWrite(Common::getInstance()->FnConvertStringToVector(outputSS_.str()));
+        if (activeFonts_[index].empty())
+        {
+            continue;
+        }
+
+        std::ostringstream output;
+        output
+            << activeFonts_[index]
+            << index
+            << ", abcdefghijklmnopqrstuvwxyz"
+            << ASCII::LF;
+
+        enqueueWriteOnIoThread(toBytes(output.str()));
     }
-    FnFullCut();
+
+    fullCutOnIoThread(0);
 }
 
-void Printer::FnPrintBarCode(const std::string& text, int height, int width, int fontSetting)
+void Printer::printBarcodeOnIoThread(const std::string& text, int height, int width, int fontSetting)
 {
-    std::stringstream cmdW_SS_, cmdH_SS_, cmdP_SS_; // Position
-    std::stringstream cmdB_SS_; // Barcode command
-    std::stringstream cmdA_SS_; // Alignment command
-    int P, F;   // Font position and type
+    const PRINTER_TYPE type = printerType_.load();
 
-    if (printerType_ == PRINTER_TYPE::FTP)
+    if (type == PRINTER_TYPE::FTP)
     {
         return;
     }
 
-    if (height == 0)
-    {
-        height = 80;
-    }
+    height = height == 0
+        ? 80
+        : std::clamp(height, 1, 255);
 
-    if (width == 0)
-    {
-        width = 3;
-    }
+    width = width == 0
+        ? 3
+        : std::clamp(width, 1, 255);
 
-    if (printMode_ == 1)
+    if (printMode_.load() == 1)
     {
         width = 2;
     }
 
-    // Set width and height for barcode
-    cmdW_SS_ << ASCII::GS << 'w' << static_cast<char>(width);
-    cmdH_SS_ << ASCII::GS << 'h' << static_cast<char>(height);
+    if (type == PRINTER_TYPE::CBM1000 && text.size() > 255U)
+    {
+        log("[BARCODE] Text too long for CBM1000 | Length=" + std::to_string(text.size()));
+        return;
+    }
 
-    if (fontSetting == 0)
+    std::ostringstream widthCommand;
+    widthCommand
+        << ASCII::GS
+        << 'w'
+        << static_cast<char>(width);
+
+    std::ostringstream heightCommand;
+    heightCommand
+        << ASCII::GS
+        << 'h'
+        << static_cast<char>(height);
+
+    std::ostringstream positionCommand;
+
+    if (fontSetting != 0)
     {
-        cmdP_SS_ << "";
+        const int position = fontSetting / 10;
+        const int font = fontSetting % 10;
+
+        positionCommand
+            << ASCII::GS
+            << 'H'
+            << static_cast<char>(position)
+            << ASCII::GS
+            << 'f'
+            << static_cast<char>(font);
     }
-    else
-    {
-        P = fontSetting / 10;
-        F = fontSetting % 10;
-        cmdP_SS_ << ASCII::GS << 'H' << static_cast<char>(P) << ASCII::GS << 'f' << static_cast<char>(F);
-    }
+
+    std::ostringstream alignCommand;
 
     switch (static_cast<CBM_ALIGN>(lastAlign_))
     {
         case CBM_ALIGN::CBM_LEFT:
-        {
-            cmdA_SS_ << ASCII::ESC << '$' << static_cast<char>(80) << static_cast<char>(0);
+            alignCommand
+                << ASCII::ESC
+                << '$'
+                << static_cast<char>(80)
+                << static_cast<char>(0);
             break;
-        }
+
         case CBM_ALIGN::CBM_CENTER:
         case CBM_ALIGN::CBM_RIGHT:
-        {
-            cmdA_SS_ << ASCII::ESC << '$' << static_cast<char>(0) << static_cast<char>(0);
+            alignCommand
+                << ASCII::ESC
+                << '$'
+                << static_cast<char>(0)
+                << static_cast<char>(0);
             break;
-        }
+
+        default:
+            alignCommand
+                << ASCII::ESC
+                << '$'
+                << static_cast<char>(80)
+                << static_cast<char>(0);
+            break;
     }
 
-    int len = text.length();
+    std::ostringstream barcodeCommand;
 
-    if (printerType_ == PRINTER_TYPE::CBM1000)
+    if (type == PRINTER_TYPE::CBM1000)
     {
-        cmdB_SS_ << ASCII::GS << 'k' << static_cast<char>(72) << static_cast<char>(len) << text << ASCII::LF;
+        barcodeCommand
+            << ASCII::GS
+            << 'k'
+            << static_cast<char>(72)
+            << static_cast<char>(text.size())
+            << text
+            << ASCII::LF;
     }
     else
     {
-        cmdB_SS_ << ASCII::GS << 'k' << static_cast<char>(7) << 'A' << text << static_cast<char>(0) << ASCII::LF;
+        barcodeCommand
+            << ASCII::GS
+            << 'k'
+            << static_cast<char>(7)
+            << 'A'
+            << text
+            << static_cast<char>(0)
+            << ASCII::LF;
     }
 
-    std::string output = cmdA_SS_.str() + cmdH_SS_.str() + cmdW_SS_.str() + cmdP_SS_.str() + cmdB_SS_.str();
-    enqueueWrite(Common::getInstance()->FnConvertStringToVector(output));
+    const std::string output =
+        alignCommand.str() +
+        heightCommand.str() +
+        widthCommand.str() +
+        positionCommand.str() +
+        barcodeCommand.str();
+
+    enqueueWriteOnIoThread(toBytes(output));
 }
 
-void Printer::FnFeedLine(int line)
+void Printer::feedLineOnIoThread(int line)
 {
-    std::stringstream lineSS_;
-    lineSS_ << ASCII::ESC << 'J' << static_cast<char>(line);
-    enqueueWrite(Common::getInstance()->FnConvertStringToVector(lineSS_.str()));
+    line = std::clamp(line, 0, 255);
+
+    std::ostringstream command;
+    command
+        << ASCII::ESC
+        << 'J'
+        << static_cast<char>(line);
+
+    enqueueWriteOnIoThread(toBytes(command.str()));
 }
 
+void Printer::log(const std::string& message) const
+{
+    Logger::getInstance()->FnLog(message, logFileName_, "PRINTER");
+}
+
+void Printer::logException(const std::string& functionName, const std::exception& exception) const
+{
+    Logger::getInstance()->FnLogExceptionError("Printer::" + functionName + " | Exception: " + exception.what());
+}
+
+std::vector<std::uint8_t> Printer::toBytes(const std::string& value)
+{
+    std::vector<std::uint8_t> result;
+    result.reserve(value.size());
+
+    for (const unsigned char character : value)
+    {
+        result.push_back(static_cast<std::uint8_t>(character));
+    }
+
+    return result;
+}
+
+std::string Printer::toHex(const std::vector<std::uint8_t>& data)
+{
+    std::ostringstream stream;
+    stream << std::hex << std::uppercase << std::setfill('0');
+
+    for (std::size_t index = 0; index < data.size(); ++index)
+    {
+        if (index != 0)
+        {
+            stream << ' ';
+        }
+
+        stream << std::setw(2) << static_cast<unsigned int>(data[index]);
+    }
+
+    return stream.str();
+}
+
+const char* Printer::printerTypeName(PRINTER_TYPE type)
+{
+    switch (type)
+    {
+        case PRINTER_TYPE::CBM:
+            return "CBM";
+
+        case PRINTER_TYPE::FTP:
+            return "FTP";
+
+        case PRINTER_TYPE::CBM1000:
+            return "CBM1000";
+    }
+
+    return "UNKNOWN";
+}
+
+const char* Printer::statusName(PRINTER_STATUS status)
+{
+    switch (status)
+    {
+        case PRINTER_STATUS::ERROR:
+            return "ERROR";
+
+        case PRINTER_STATUS::IDLE:
+            return "IDLE";
+
+        case PRINTER_STATUS::NO_PAPER:
+            return "NO_PAPER";
+    }
+
+    return "UNKNOWN";
+}

@@ -1,10 +1,20 @@
 #pragma once
 
 #include <atomic>
-#include <condition_variable>
-#include <iostream>
-#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
 #include <vector>
+
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/posix/stream_descriptor.hpp>
+#include <boost/asio/steady_timer.hpp>
+
+
+struct input_event;
+struct libevdev;
 
 class BARCODE_READER
 {
@@ -76,34 +86,73 @@ public:
     };
 
     static BARCODE_READER* getInstance();
-    void destroyInstance();
+
     void FnBarcodeReaderInit();
     void FnBarcodeStartRead();
     void FnBarcodeStopRead();
-    int Ticket_In;
+    void FnBarcodeReaderShutdown();
 
-    /*
-     * Singleton BARCODE_READER should not be cloneable.
-     */
-    BARCODE_READER(BARCODE_READER& barcode) = delete;
+    bool FnIsBarcodeReaderRunning() const;
+    bool FnIsBarcodeReading() const;
 
-    /*
-     * Singleton BARCODE_READER should not be assignable.
-     */
-    void operator=(const BARCODE_READER&) = delete;
+    // Preserved public member for compatibility. It is now atomic because it
+    // is written by the Barcode module thread and may be read elsewhere.
+    std::atomic<int> Ticket_In{0};
+
+    BARCODE_READER(const BARCODE_READER&) = delete;
+    BARCODE_READER& operator=(const BARCODE_READER&) = delete;
+    BARCODE_READER(BARCODE_READER&&) = delete;
+    BARCODE_READER& operator=(BARCODE_READER&&) = delete;
+
+    ~BARCODE_READER();
 
 private:
-    static BARCODE_READER* barcode_;
-    static std::mutex mutex_;
-    std::string logFileName_;
-    std::atomic<bool> isBarcodeMonitoringThreadRunning_;
-    std::thread barcodeMonitoringThread_;
-    std::condition_variable cv_;
-    std::mutex cvMutex_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+
+    enum class DeviceReadResult
+    {
+        Ready,
+        Disconnected,
+        Error
+    };
+
     BARCODE_READER();
-    std::string readBarcode(const std::string& devicePath);
-    void monitoringBarcodeThreadFunction();
-    void startBarcodeMonitoring();
-    void stopBarcodeMonitoring();
-    bool isDeviceAvailable(const std::string& devicePath);
+
+    // Module lifecycle / executor ownership.
+    boost::asio::io_context ioContext_;
+    boost::asio::steady_timer reconnectTimer_;
+    boost::asio::posix::stream_descriptor inputDescriptor_;
+    std::optional<WorkGuard> workGuard_;
+    std::thread ioThread_;
+
+    // These flags are visible from external threads.
+    std::atomic<bool> moduleRunning_;
+    std::atomic<bool> stopping_;
+    std::atomic<bool> readRequested_;
+
+    // The following state is confined to the Barcode module thread.
+    bool monitoringLoopRunning_;
+    bool deviceConnected_;
+    bool deviceUnavailableLogged_;
+    bool leftShiftPressed_;
+    bool rightShiftPressed_;
+    int deviceFd_;
+    libevdev* evdev_;
+    std::string barcodeBuffer_;
+    std::string logFileName_;
+
+    boost::asio::awaitable<void> barcodeModuleInitAsync();
+    boost::asio::awaitable<void> monitoringLoopAsync();
+    boost::asio::awaitable<bool> waitForReconnectAsync();
+
+    bool openDeviceOnIoThread();
+    void closeDeviceOnIoThread();
+    void shutdownOnIoThread();
+
+    DeviceReadResult drainAvailableEvents();
+    void processInputEvent(const input_event& ev);
+    void emitCompletedBarcode();
+
+    bool isDeviceAvailable(const std::string& devicePath) const;
+    std::string keyFromScancode(unsigned int scancode) const;
 };

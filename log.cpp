@@ -1,246 +1,382 @@
+#include "log.h"
+
 #include <ctime>
-#include <sstream>
+#include <filesystem>
 #include <iomanip>
-#include <boost/filesystem.hpp>
+#include <iostream>
+#include <sstream>
+
+#if defined(__linux__)
+#include <pthread.h>
+#endif
+
 #include "common.h"
 #include "ini_parser.h"
 #include "operation.h"
-#include "log.h"
 
-Logger* Logger::logger_ = nullptr;
-std::mutex Logger::mutex_;
+#include "spdlog/async.h"
+#include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/spdlog.h"
+
+namespace
+{
+constexpr const char* EXCEPTION_LOGGER_NAME = "EXCEPTION_LOGGER";
+}
 
 Logger::Logger()
 {
+    constexpr std::size_t kQueueSize = 8192;
+    constexpr std::size_t kWorkerThreads = 1;
 
+#if defined(__linux__)
+    spdlog::init_thread_pool(
+        kQueueSize,
+        kWorkerThreads,
+        []()
+        {
+            const int result =
+                ::pthread_setname_np(
+                    ::pthread_self(),
+                    "LOG_IO");
+
+            if (result != 0)
+            {
+                std::cerr
+                    << "[LOGGER] Failed to name async thread"
+                    << " | Error="
+                    << result
+                    << std::endl;
+            }
+        });
+#else
+    spdlog::init_thread_pool(
+        kQueueSize,
+        kWorkerThreads);
+#endif
 }
 
-Logger::~Logger()
+void Logger::FnShutdown()
 {
-    spdlog::drop_all();
-    spdlog::shutdown();
+    try
+    {
+        spdlog::shutdown();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[LOGGER] Shutdown failed: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "[LOGGER] Unknown error during shutdown." << std::endl;
+    }
 }
 
 Logger* Logger::getInstance()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (logger_ == nullptr)
-    {
-        logger_ = new Logger();
-    }
-    return logger_;
+    static Logger instance;
+    return &instance;
 }
 
-void Logger::FnCreateLogFile(std::string filename)
+void Logger::ensureLogDirectory() const
+{
+    const std::filesystem::path dirPath(LOG_FILE_PATH);
+
+    if (std::filesystem::exists(dirPath))
+    {
+        return;
+    }
+
+    if (!std::filesystem::create_directories(dirPath) &&
+        !std::filesystem::exists(dirPath))
+    {
+        throw std::runtime_error("Unable to create log directory: " + dirPath.string());
+    }
+}
+
+std::string Logger::getCurrentDateYYMMDD()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm timeInfo{};
+    localtime_r(&now, &timeInfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeInfo, "%y%m%d");
+    return oss.str();
+}
+
+std::string Logger::getCurrentTimestamp()
+{
+    const std::time_t now = std::time(nullptr);
+    std::tm timeInfo{};
+    localtime_r(&now, &timeInfo);
+
+    std::ostringstream oss;
+    oss << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+std::string Logger::formatLogMessage(const std::string& message, const std::string& option)
+{
+    std::ostringstream oss;
+
+    std::string formattedOption = option;
+    formattedOption += ':';
+
+    oss << Common::getInstance()->FnGetDateTime();
+    oss << std::setw(3) << std::setfill(' ') << "";
+    oss << std::setw(8) << std::left << formattedOption;
+    oss << message;
+
+    return oss.str();
+}
+
+std::shared_ptr<spdlog::logger> Logger::getOrCreateFileLogger(const std::string& filename, const std::string& stationId, const std::string& dateStr)
+{
+    std::lock_guard<std::mutex> lock(loggerMutex_);
+
+    ensureLogDirectory();
+
+    const bool isMainLogger = filename.empty();
+
+    // Preserve the project's existing logger registry naming convention.
+    const std::string loggerName = isMainLogger ? stationId + dateStr : filename + dateStr;
+
+    const std::string activeKey =
+        isMainLogger ? "MAIN:" + stationId
+                     : "EXTRA:" + stationId + ':' + filename;
+
+    auto activeIt = activeLoggerDates_.find(activeKey);
+    if (activeIt != activeLoggerDates_.end() &&
+        activeIt->second != dateStr)
+    {
+        const std::string oldLoggerName =
+            isMainLogger ? stationId + activeIt->second
+                         : filename + activeIt->second;
+
+        spdlog::drop(oldLoggerName);
+        activeLoggerDates_.erase(activeIt);
+    }
+
+    auto logger = spdlog::get(loggerName);
+    if (!logger)
+    {
+        const std::filesystem::path filePath =
+            std::filesystem::path(LOG_FILE_PATH) /
+            (stationId + filename + dateStr + ".log");
+
+        logger = spdlog::basic_logger_mt<spdlog::async_factory>(loggerName, filePath.string());
+
+        logger->set_pattern("%v");
+        logger->set_level(spdlog::level::info);
+
+        // Preserve the existing behaviour: each INFO record is flushed.
+        // This prioritizes log durability over maximum throughput.
+        logger->flush_on(spdlog::level::info);
+    }
+
+    activeLoggerDates_[activeKey] = dateStr;
+    return logger;
+}
+
+std::shared_ptr<spdlog::logger> Logger::getOrCreateExceptionLogger(const std::string& dateStr)
+{
+    std::lock_guard<std::mutex> lock(loggerMutex_);
+
+    ensureLogDirectory();
+
+    // The old implementation kept one fixed EXCEPTION_LOGGER forever, which
+    // meant a process running across midnight continued writing to yesterday's
+    // exception file. Rotate it when the date changes.
+    if (!exceptionLoggerDate_.empty() &&
+        exceptionLoggerDate_ != dateStr)
+    {
+        spdlog::drop(EXCEPTION_LOGGER_NAME);
+    }
+
+    auto logger = spdlog::get(EXCEPTION_LOGGER_NAME);
+    if (!logger)
+    {
+        const std::filesystem::path filePath =
+            std::filesystem::path(LOG_FILE_PATH) /
+            ("exception_" + dateStr + ".log");
+
+        logger = spdlog::basic_logger_mt<spdlog::async_factory>(EXCEPTION_LOGGER_NAME, filePath.string());
+
+        logger->set_pattern("%v");
+        logger->set_level(spdlog::level::err);
+        logger->flush_on(spdlog::level::err);
+    }
+
+    exceptionLoggerDate_ = dateStr;
+    return logger;
+}
+
+void Logger::FnCreateLogFile(const std::string& filename)
 {
     try
     {
-        const boost::filesystem::path dirPath(LOG_FILE_PATH);
+        const std::string stationId = IniParser::getInstance()->FnGetStationID();
 
-        if (!(boost::filesystem::exists(dirPath)))
-        {
-            if (!(boost::filesystem::create_directories(dirPath)))
-            {
-                std::cerr << "Failed to create directory: " << dirPath << std::endl;
-            }
-        }
+        const std::string dateStr = getCurrentDateYYMMDD();
+
+        (void)getOrCreateFileLogger(filename, stationId, dateStr);
     }
-    catch (const boost::filesystem::filesystem_error& e)
+    catch (const std::filesystem::filesystem_error& e)
     {
-        std::cerr << "Boost.Filesystem Exception during creating log file: " << e.what() << std::endl;
-        return;
+        std::cerr << "[LOGGER] Filesystem error while creating log file: " << e.what() << std::endl;
     }
-    catch (const std::exception &e)
+    catch (const spdlog::spdlog_ex& e)
     {
-        std::cerr << "Exception during creating log file: " << e.what() << std::endl;
-        return;
+        std::cerr << "[LOGGER] spdlog initialization failed: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[LOGGER] Exception while creating log file: " << e.what() << std::endl;
     }
     catch (...)
     {
-        std::cerr << "Unknown Exception during creating log file." << std::endl;
-        return;
-    }
-
-    // Temp: need to get the station_ID from file
-    std::string sStationID = IniParser::getInstance()->FnGetStationID();
-
-    time_t timer = time(0);
-    struct tm timeinfo = {};
-    localtime_r(&timer, &timeinfo);
-
-    std::stringstream ssYearMonthDay;
-    ssYearMonthDay << std::put_time(&timeinfo, "%y%m%d");
-    std::string dateStr = ssYearMonthDay.str();
-
-    std::string absoluteFilePath = LOG_FILE_PATH + std::string("/") + sStationID + filename + dateStr + std::string(".log");
-    std::string logger = (filename == "") ? sStationID + dateStr : filename + dateStr;
-
-    try
-    {
-        auto asyncFile = spdlog::basic_logger_mt<spdlog::async_factory>(logger, absoluteFilePath);
-        asyncFile->set_pattern("%v");
-        asyncFile->set_level(spdlog::level::info);
-        asyncFile->flush_on(spdlog::level::info);
-    }
-    catch(const spdlog::spdlog_ex &e)
-    {
-        std::cerr << "SPDLog init failed: " << e.what() << std::endl;
-        return;
+        std::cerr << "[LOGGER] Unknown exception while creating log file." << std::endl;
     }
 }
 
-void Logger::FnLog(std::string sMsg, std::string filename, std::string sOption)
+void Logger::forwardLogToMonitor(const std::string& logMessage)
 {
-    std::stringstream sLogMsg;
+    thread_local bool forwardingToMonitor = false;
 
-    sOption += ":";
-    sLogMsg << Common::getInstance()->FnGetDateTime();
-    sLogMsg << std::setw(3) << std::setfill(' ') << "";
-    sLogMsg << std::setw(8) << std::left << sOption;
-    sLogMsg << sMsg;
+    // Prevent recursion on this thread.
+    //
+    // Example:
+    // FnLog()
+    //   -> FnSendLogMessageToMonitor()
+    //       -> FnLog()
+    //           -> do not forward again
+    if (forwardingToMonitor)
+    {
+        return;
+    }
 
-    // Check whether file exists or not, if not exists, then create a new file
-    // Temp: need to get the station_ID from file
-    std::string sStationID = IniParser::getInstance()->FnGetStationID();
-
-    time_t timer = time(0);
-    struct tm timeinfo = {};
-    localtime_r(&timer, &timeinfo);
-
-    std::stringstream ssYearMonthDay;
-    ssYearMonthDay << std::put_time(&timeinfo, "%y%m%d");
-    std::string dateStr = ssYearMonthDay.str();
-
-    // Build log file names
-    std::string loggerNameMain = sStationID + dateStr;
-    std::string loggerNameExtra = filename + dateStr;
-
-    std::string absoluteMainFilePath = LOG_FILE_PATH + "/" + loggerNameMain + ".log";
-    std::string absoluteExtraFilePath = LOG_FILE_PATH + "/" + sStationID + filename + dateStr + ".log";
-
-    // Lambda to check and drop outdated logger
-    auto checkAndDropOldLogger = [&](const std::string& baseName, const std::string& currentDate) {
-        auto it = activeLoggerDates_.find(baseName);
-        if (it != activeLoggerDates_.end() && it->second != currentDate) {
-            std::string oldLoggerName = baseName + it->second;
-            spdlog::drop(oldLoggerName);
-            activeLoggerDates_.erase(it);
+    struct ForwardingGuard
+    {
+        explicit ForwardingGuard(bool& flag)
+            : flag_(flag)
+        {
+            flag_ = true;
         }
+
+        ~ForwardingGuard()
+        {
+            flag_ = false;
+        }
+
+        bool& flag_;
     };
 
-    // Check and create extra log file if needed
-    if (!filename.empty())
+    /*
+     * Set the guard BEFORE calling anything in operation.
+     *
+     * Even FnIsOperationInitialized() could theoretically log,
+     * so recursion protection should already be active.
+     */
+    ForwardingGuard guard(forwardingToMonitor);
+
+    try
     {
-        checkAndDropOldLogger(filename, dateStr);
+        auto* operationInstance = operation::getInstance();
 
-        if (!boost::filesystem::exists(absoluteExtraFilePath))
+        if (!operationInstance->FnIsOperationInitialized())
         {
-            spdlog::drop(loggerNameExtra);
-            FnCreateLogFile(filename);
+            return;
         }
 
-        auto extraLogger = spdlog::get(loggerNameExtra);
-        if (!extraLogger)
-        {
-            FnCreateLogFile(filename);
-            extraLogger = spdlog::get(loggerNameExtra);
-        }
-
-        if (extraLogger)
-        {
-            extraLogger->info(sLogMsg.str());
-            extraLogger->flush();
-
-            // Update active date
-            activeLoggerDates_[filename] = dateStr;
-        }
+        operationInstance->FnSendLogMessageToMonitor(logMessage);
     }
-    else
+    catch (const std::exception& e)
     {
-        checkAndDropOldLogger(sStationID, dateStr);
+        /*
+         * Do NOT use Logger::FnLog() here.
+         * We are already inside the logging path.
+         */
+        std::cerr << "[LOGGER] Failed to forward log to monitor: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "[LOGGER] Unknown error while forwarding log to monitor." << std::endl;
+    }
+}
 
-        if (!boost::filesystem::exists(absoluteMainFilePath))
+void Logger::FnLog(const std::string& sMsg, const std::string& filename, const std::string& sOption)
+{
+    try
+    {
+        const std::string logMessage = formatLogMessage(sMsg, sOption);
+
+        const std::string stationId = IniParser::getInstance()->FnGetStationID();
+
+        const std::string dateStr = getCurrentDateYYMMDD();
+
+        auto logger = getOrCreateFileLogger(filename, stationId, dateStr);
+
+        if (!logger)
         {
-            spdlog::drop(loggerNameMain);
-            FnCreateLogFile();
+            std::cerr << "[LOGGER] Failed to obtain logger instance." << std::endl;
+            return;
         }
 
-        auto mainLogger = spdlog::get(loggerNameMain);
-        if (!mainLogger)
+        logger->info(logMessage);
+
+        /*
+         * Only the main PBS log is forwarded
+         * to the monitor.
+         */
+        if (filename.empty())
         {
-            FnCreateLogFile();
-            mainLogger = spdlog::get(loggerNameMain);
-        }
-
-        if (mainLogger)
-        {
-            mainLogger->info(sLogMsg.str());
-            mainLogger->flush();
-
-            // Update active date
-            activeLoggerDates_[sStationID] = dateStr;
-
-            if (operation::getInstance()->FnIsOperationInitialized())
-            {
-                operation::getInstance()->FnSendLogMessageToMonitor(sLogMsg.str());
-            }
-        }
+            forwardLogToMonitor(logMessage);
 
 #ifdef CONSOLE_LOG_ENABLE
-        {
-            std::cout << sLogMsg.str() << std::endl;
-        }
+            std::cout << logMessage << std::endl;
 #endif
+        }
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        std::cerr << "[LOGGER] Filesystem error while writing log: " << e.what() << std::endl;
+    }
+    catch (const spdlog::spdlog_ex& e)
+    {
+        std::cerr << "[LOGGER] spdlog error while writing log: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[LOGGER] Exception while writing log: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "[LOGGER] Unknown exception while writing log." << std::endl;
     }
 }
 
 void Logger::FnCreateExceptionLogFile()
 {
-    // Check if the logger has already been initialized
-    if (spdlog::get("EXCEPTION_LOGGER") != nullptr)
-    {
-        // If the logger is already initialized, no need to recreate it
-        return;
-    }
-
     try
     {
-        boost::filesystem::path dirPath(LOG_FILE_PATH);
-        if (!boost::filesystem::exists(dirPath))
-        {
-            if (!boost::filesystem::create_directories(dirPath))
-            {
-                std::cerr << "Failed to create exception log directory: " << dirPath << std::endl;
-                return;
-            }
-        }
-
-        time_t timer = time(0);
-        struct tm timeinfo = {};
-        localtime_r(&timer, &timeinfo);
-
-        std::stringstream ssDate;
-        ssDate << std::put_time(&timeinfo, "%y%m%d");
-
-        std::string exceptionFile = LOG_FILE_PATH + "/exception_" + ssDate.str() + ".log";
-
-        // Create async file logger
-        auto exLogger = spdlog::basic_logger_mt<spdlog::async_factory>("EXCEPTION_LOGGER", exceptionFile);
-        exLogger->set_pattern("%v");
-        exLogger->set_level(spdlog::level::err);
-        exLogger->flush_on(spdlog::level::err);
+        const std::string dateStr = getCurrentDateYYMMDD();
+        (void)getOrCreateExceptionLogger(dateStr);
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        std::cerr << "[LOGGER] Filesystem error while creating exception log: " << e.what() << std::endl;
     }
     catch (const spdlog::spdlog_ex& e)
     {
-        std::cerr << "Failed to create exception logger: " << e.what() << std::endl;
+        std::cerr << "[LOGGER] spdlog error while creating exception log: " << e.what() << std::endl;
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create exception log file: " << e.what() << std::endl;
+        std::cerr << "[LOGGER] Exception while creating exception log: " << e.what() << std::endl;
     }
     catch (...)
     {
-        std::cerr << "Unknown Exception during creating exception log file." << std::endl;
+        std::cerr << "[LOGGER] Unknown exception while creating exception log." << std::endl;
     }
 }
 
@@ -248,54 +384,57 @@ void Logger::FnLogExceptionError(const std::string& errorMsg)
 {
     try
     {
-        // Ensure the exception log file is created only once
-        FnCreateExceptionLogFile();
+        const std::string dateStr = getCurrentDateYYMMDD();
+        auto logger = getOrCreateExceptionLogger(dateStr);
 
-        // Get the current timestamp
-        time_t timer = time(0);
-        struct tm timeinfo = {};
-        localtime_r(&timer, &timeinfo);
-
-        std::stringstream ssDate;
-        ssDate << std::put_time(&timeinfo, "%y%m%d");
-
-        // Create log message with timestamp
-        std::stringstream logMsg;
-        logMsg << "[" << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S") << "] ";
-        logMsg << "Exception: " << errorMsg;
-
-        // Log the exception error message
-        auto exLogger = spdlog::get("EXCEPTION_LOGGER");
-        if (exLogger)
+        if (!logger)
         {
-            exLogger->error(logMsg.str());
-            exLogger->flush();
+            std::cerr << "[LOGGER] Exception logger is not available." << std::endl;
+            return;
         }
-        else
-        {
-            std::cerr << "Failed to log exception: Logger not initialized" << std::endl;
-        }
+
+        std::ostringstream oss;
+        oss << '[' << getCurrentTimestamp() << "] Exception: " << errorMsg;
+        logger->error(oss.str());
+    }
+    catch (const std::filesystem::filesystem_error& e)
+    {
+        std::cerr << "[LOGGER] Filesystem error while writing exception log: " << e.what() << std::endl;
     }
     catch (const spdlog::spdlog_ex& e)
     {
-        std::cerr << "Failed to create exception logger: " << e.what() << std::endl;
+        std::cerr << "[LOGGER] spdlog error while writing exception log: " << e.what() << std::endl;
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create exception log file: " << e.what() << std::endl;
+        std::cerr << "[LOGGER] Exception while writing exception log: " << e.what() << std::endl;
     }
     catch (...)
     {
-        std::cerr << "Unknown Exception during creating exception log file." << std::endl;
-    } 
+        std::cerr << "[LOGGER] Unknown exception while writing exception log." << std::endl;
+    }
 }
 
 void Logger::PrintActiveLoggerDates()
 {
+    std::lock_guard<std::mutex> lock(loggerMutex_);
+
     std::cout << "[Active Logger Dates]" << std::endl;
-    for (const auto& entry : activeLoggerDates_)
+
+    if (activeLoggerDates_.empty())
     {
-        std::cout << "  Logger Name: " << entry.first
-                  << " | Date: " << entry.second << std::endl;
+        std::cout << "  (none)" << std::endl;
+    }
+    else
+    {
+        for (const auto& [loggerName, date] : activeLoggerDates_)
+        {
+            std::cout << "  Logger Name: " << loggerName << " | Date: " << date << std::endl;
+        }
+    }
+
+    if (!exceptionLoggerDate_.empty())
+    {
+        std::cout << "  Logger Name: EXCEPTION" << " | Date: " << exceptionLoggerDate_ << std::endl;
     }
 }

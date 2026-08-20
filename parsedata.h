@@ -1,89 +1,192 @@
 
-#ifndef PARSEDATA_H_INCLUDED
-#define PARSEDATA_H_INCLUDED
+#pragma once
 
+#include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
-class ParseData {
-    std::vector<std::string> field;
-    char start_ch;
-    char end_ch;
-    char separator;
 
+// Passive synchronous delimiter-based field parser.
+//
+// Example:
+//   ParseData fields('[', ']', '|');
+//   fields.Parse("[A|B|C]");
+//
+//   Field(0) -> "A"
+//   Field(1) -> "B"
+//   Field(2) -> "C"
+//
+// The parser owns the parsed fields, so returned std::string copies remain
+// independent of the source buffer. It owns no thread, io_context, mutex,
+// work guard, strand, or coroutine state.
+class ParseData final
+{
 public:
-    ParseData()
+    ParseData() = default;
+
+    ParseData(
+        char startChar,
+        char endChar,
+        char separatorChar)
+        : startChar_(startChar),
+          endChar_(endChar),
+          separatorChar_(separatorChar)
     {
-        SetStyle('[',']','|');
     }
 
-    ParseData(char startChar,char endChar,char separatorChar)
+    void SetStyle(
+        char startChar,
+        char endChar,
+        char separatorChar)
     {
-        SetStyle(startChar,endChar,separatorChar);
+        startChar_ = startChar;
+        endChar_ = endChar;
+        separatorChar_ = separatorChar;
     }
 
-    void SetStyle(char startChar,char endChar,char separatorChar)
+    // Parses one framed field list.
+    //
+    // A start delimiter is required. For backward compatibility with the
+    // legacy parser, a missing end delimiter means "parse until end of input".
+    // Empty fields between separators, including a trailing empty field, are
+    // preserved. Example: "[A|B|]" -> {"A", "B", ""}.
+    std::size_t Parse(std::string_view text)
     {
-        start_ch=startChar;
-        end_ch=endChar;
-        separator=separatorChar;
-    }
+        fields_.clear();
+        hasStartDelimiter_ = false;
+        hasEndDelimiter_ = false;
 
-    static std::string SetStrLen(std::string str,int n)
-    {
-        std::string ostr(n,'0');
-        ostr+=str;
-        return ostr.substr(ostr.length()-n,n);
-    }
+        const std::size_t startPos = text.find(startChar_);
+        if (startPos == std::string_view::npos)
+        {
+            return 0;
+        }
 
-    static std::string i2nc(int i,int n)
-    {
-        std::string ostr(n,'0');
-        ostr+=std::to_string(i);
-        return ostr.substr(ostr.length()-n,n);
-    }
+        hasStartDelimiter_ = true;
 
-    int Parse(std::string str)
-    {
-        field.clear();
+        const std::size_t payloadBegin = startPos + 1;
+        const std::size_t endPos = text.find(endChar_, payloadBegin);
 
-        int startpos=str.find(start_ch);
-        startpos++;
+        hasEndDelimiter_ = (endPos != std::string_view::npos);
 
-        int endpos=str.find(end_ch,startpos);
-        if(endpos<0) endpos=str.length();
+        const std::size_t payloadEnd =
+            hasEndDelimiter_ ? endPos : text.size();
 
-        int len=endpos-startpos;
-        if(len<=0) return field.size();
+        if (payloadEnd <= payloadBegin)
+        {
+            return 0;
+        }
 
-        str=str.substr(startpos,len);
+        const std::string_view payload = text.substr(payloadBegin, payloadEnd - payloadBegin);
 
-        while(true){
-            startpos=str.find(separator);
-            if(startpos>=0){
-                field.push_back(str.substr(0,startpos));
-                startpos++;
-                if(startpos>=str.length()){
-                    break;
-                }
-                str=str.substr(startpos);
+        std::size_t fieldBegin = 0;
+
+        while (fieldBegin <= payload.size())
+        {
+            const std::size_t separatorPos = payload.find(separatorChar_, fieldBegin);
+
+            if (separatorPos == std::string_view::npos)
+            {
+                fields_.emplace_back(payload.substr(fieldBegin));
+                break;
             }
-            else{
-                if(!str.empty()){
-                    field.push_back(str);
-                }
+
+            fields_.emplace_back(payload.substr(fieldBegin, separatorPos - fieldBegin));
+
+            fieldBegin = separatorPos + 1;
+
+            // Preserve a trailing empty field: "[A|B|]".
+            if (fieldBegin == payload.size())
+            {
+                fields_.emplace_back();
                 break;
             }
         }
-        return field.size();
+
+        return fields_.size();
     }
 
-    std::string Field(int number)
+    std::string Field(std::size_t number) const
     {
-        if(number < field.size())
-            return field.at(number);
-        return "";
-    }
-};
+        if (number >= fields_.size())
+        {
+            return {};
+        }
 
-#endif
+        return fields_[number];
+    }
+
+    std::string_view FieldView(std::size_t number) const
+    {
+        if (number >= fields_.size())
+        {
+            return {};
+        }
+
+        return fields_[number];
+    }
+
+    bool HasField(std::size_t number) const
+    {
+        return number < fields_.size();
+    }
+
+    std::size_t Size() const
+    {
+        return fields_.size();
+    }
+
+    bool Empty() const
+    {
+        return fields_.empty();
+    }
+
+    bool HasStartDelimiter() const
+    {
+        return hasStartDelimiter_;
+    }
+
+    bool HasEndDelimiter() const
+    {
+        return hasEndDelimiter_;
+    }
+
+    // Legacy-compatible helper:
+    //   SetStrLen("12", 4)    -> "0012"
+    //   SetStrLen("12345", 3) -> "345"
+    static std::string SetStrLen(std::string_view text, int width)
+    {
+        if (width <= 0)
+        {
+            return {};
+        }
+
+        const std::size_t targetWidth = static_cast<std::size_t>(width);
+
+        if (text.size() >= targetWidth)
+        {
+            return std::string(text.substr(text.size() - targetWidth));
+        }
+
+        std::string result(targetWidth - text.size(), '0');
+
+        result.append(text);
+        return result;
+    }
+
+    static std::string i2nc(int value, int width)
+    {
+        return SetStrLen(std::to_string(value), width);
+    }
+
+private:
+    std::vector<std::string> fields_;
+
+    char startChar_{'['};
+    char endChar_{']'};
+    char separatorChar_{'|'};
+
+    bool hasStartDelimiter_{false};
+    bool hasEndDelimiter_{false};
+};

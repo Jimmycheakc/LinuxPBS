@@ -1,12 +1,17 @@
 #pragma once
 
-#include <iostream>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
-#include <queue>
-#include "boost/asio.hpp"
-#include "boost/asio/serial_port.hpp"
+#include <vector>
+
+#include <boost/asio.hpp>
+#include <boost/asio/serial_port.hpp>
 
 namespace ASCII
 {
@@ -169,86 +174,134 @@ public:
 
     static Printer* getInstance();
 
-    /*
-     * Singleton Printer should not be cloneable
-     */
-    Printer(Printer& printer) = delete;
-
-    /*
-     * Singleton Printer should not be assignable
-     */
-    void operator=(const Printer&) = delete;
+    Printer(const Printer&) = delete;
+    Printer& operator=(const Printer&) = delete;
+    Printer(Printer&&) = delete;
+    Printer& operator=(Printer&&) = delete;
 
     bool FnPrinterInit(unsigned int baudRate, const std::string& comPortName);
+    void FnPrinterClose();
+
     void FnSetPrintMode(int mode);
-    int FnGetPrintMode();
+    int FnGetPrintMode() const;
+
     void FnSetDefaultAlign(CBM_ALIGN align);
-    CBM_ALIGN FnGetDefaultAlign();
+    CBM_ALIGN FnGetDefaultAlign() const;
+
     void FnSetDefaultFont(int font);
-    int FnGetDefaultFont();
+    int FnGetDefaultFont() const;
+
     void FnSetLeftMargin(int leftMargin);
-    int FnGetLeftMargin();
+    int FnGetLeftMargin() const;
+
     void FnSetLineSpace(int space);
-    int FnGetLineSpace();
+    int FnGetLineSpace() const;
+
     void FnSetSelfTestInterval(int interval);
-    int FnGetSelfTestInterval();
+    int FnGetSelfTestInterval() const;
+
     void FnSetSiteID(int id);
-    int FnGetSiteID();
+    int FnGetSiteID() const;
+
     void FnSetPrinterType(PRINTER_TYPE type);
-    PRINTER_TYPE FnGetPrinterType();
+    PRINTER_TYPE FnGetPrinterType() const;
 
 
     void FnPrintLine(const std::string& text, int font = 0, int align = 0, bool underline = false, int font2 = 0);
+
     void FnFullCut(int bottom = 0);
     void FnGetAllFonts();
+
     void FnPrintBarCode(const std::string& text, int height = 0, int width = 0, int fontSetting = 21);
+
     void FnFeedLine(int line);
 
-    void FnPrinterClose();
-
 private:
-    static Printer* printer_;
-    static std::mutex mutex_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+    
+    Printer();
+    ~Printer();
+
+    bool startIoThreadLocked();
+    bool initOnIoThread(unsigned int baudRate, const std::string& comPortName);
+    void shutdownOnIoThread();
+
+    void configurePrinterCommandsOnIoThread(bool sendFtpSetup);
+
+    void startReadOnIoThread();
+    void handleReadOnIoThread(const boost::system::error_code& error, std::size_t bytesTransferred);
+
+    void enqueueWriteOnIoThread(std::vector<std::uint8_t> data);
+    void startWriteOnIoThread();
+    void handleWriteOnIoThread(const boost::system::error_code& error, std::size_t bytesTransferred);
+
+    void handleCmdResponseOnIoThread(const std::vector<std::uint8_t>& response);
+    
+    void startMonitorStatusTimerOnIoThread();
+    void handleMonitorStatusTimeoutOnIoThread(const boost::system::error_code& error);
+    
+    void startSelfTestTimerOnIoThread(int milliseconds);
+    void handleSelfTestTimeoutOnIoThread(const boost::system::error_code& error);
+    
+    void inquireStatusOnIoThread();
+    void publishStatusOnIoThread(PRINTER_STATUS status, bool force = false);
+    
+    void printLineOnIoThread(const std::string& text, int font, int align, bool underline, int font2);
+
+    void fullCutOnIoThread(int bottom);
+    void getAllFontsOnIoThread();
+
+    void printBarcodeOnIoThread(const std::string& text, int height, int width, int fontSetting);
+    
+    void feedLineOnIoThread(int line);
+
+    void log(const std::string& message) const;
+    void logException(const std::string& functionName, const std::exception& exception) const;
+    
+    static std::vector<std::uint8_t> toBytes(const std::string& value);
+    static std::string toHex(const std::vector<std::uint8_t>& data);
+    static const char* printerTypeName(PRINTER_TYPE type);
+    static const char* statusName(PRINTER_STATUS status);
+
     boost::asio::io_context ioContext_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
-    std::unique_ptr<boost::asio::serial_port> pSerialPort_;
-    std::string logFileName_;
-    std::thread ioContextThread_;
-    std::queue<std::vector<uint8_t>> writeQueue_;
-    std::array<uint8_t, 1024> readBuffer_;
-    int defaultFont_;
-    int defaultAlign_;
-    int lineSpace_;
-    int leftMargin_;
-    int printMode_;
-    PRINTER_TYPE printerType_;
-    int siteID_;
-    std::string cmdLeftMargin_;
-    std::string cmdCut_;
-    int lastAlign_;
-    std::string Align_[4];
-    std::string FC_[17];
-    std::string FF_[13];
-    std::string Font_[17];
-    bool isPrinterError_;
-    int selfTestInterval_;
+    boost::asio::serial_port serialPort_;
     boost::asio::steady_timer selfTestTimer_;
     boost::asio::steady_timer monitorStatusTimer_;
-    Printer();
-    void startIoContextThread();
-    void setPrinterSetting(PRINTER_TYPE type, int align, int font, int siteID, int leftMargin, int milliseconds);
-    void startSelfTestTimer(int milliseconds);
-    void handleSelfTestTimerTimeout(const boost::system::error_code& error);
-    void inqStatus();
-    void handleCmdResponse(const std::vector<uint8_t>& rsp);
-    void startMonitorStatusTimer();
-    void handleMonitorStatusTimeout(const boost::system::error_code& error);
+    std::optional<WorkGuard> workGuard_;
+    std::thread ioThread_;
 
-    // Serial read and write
-    void startRead();
-    void readEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
-    void enqueueWrite(const std::vector<uint8_t>& data);
-    void startWrite();
-    void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
+    mutable std::mutex lifecycleMutex_;
+
+    std::atomic<bool> running_{false};
+    std::atomic<bool> stopping_{false};
+    std::atomic<bool> initialized_{false};
+    std::atomic<bool> acceptingWork_{false};
+
+    std::deque<std::vector<std::uint8_t>> writeQueue_;
+    bool writeInProgress_{false};
+    std::array<std::uint8_t, 1024> readBuffer_{};
+
+    std::atomic<int> defaultFont_{2};
+    std::atomic<int> defaultAlign_{static_cast<int>(CBM_ALIGN::CBM_LEFT)};
+    std::atomic<int> lineSpace_{6};
+    std::atomic<int> leftMargin_{0};
+    std::atomic<int> printMode_{0};
+    std::atomic<PRINTER_TYPE> printerType_{PRINTER_TYPE::CBM1000};
+    std::atomic<int> siteID_{0};
+    std::atomic<int> selfTestInterval_{0};
+
+    std::string cmdLeftMargin_;
+    std::string cmdCut_;
+    int lastAlign_{static_cast<int>(CBM_ALIGN::CBM_LEFT)};
+
+    std::array<std::string, 4> alignCommands_{};
+    std::array<std::string, 17> cbmFonts_{};
+    std::array<std::string, 13> ftpFonts_{};
+    std::array<std::string, 17> activeFonts_{};
+
+    PRINTER_STATUS currentStatus_{PRINTER_STATUS::IDLE};
+
+    const std::string logFileName_{"printer"};
+
+    static constexpr std::chrono::seconds kMonitorStatusInterval{10};
 };

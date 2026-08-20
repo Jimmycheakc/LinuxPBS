@@ -1,10 +1,18 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
-#include <iostream>
-#include <string>
+#include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include <boost/asio.hpp>
+
 #include "tcp_client.h"
 
 class Lpr
@@ -18,7 +26,7 @@ public:
 
     struct LPREventData
     {
-        CType camType;
+        CType camType{CType::FRONT_CAMERA};
         std::string LPN;
         std::string TransID;
         std::string imagePath;
@@ -26,71 +34,95 @@ public:
 
     static Lpr* getInstance();
 
+    Lpr(const Lpr&) = delete;
+    Lpr& operator=(const Lpr&) = delete;
+    Lpr(Lpr&&) = delete;
+    Lpr& operator=(Lpr&&) = delete;
+
     void FnLprInit();
-    void FnSendTransIDToLPR(const std::string& transID, bool useFrontCamera);
-    struct LPREventData deserializeEventData(const std::string& serializeData);
     void FnLprClose();
 
-    /**
-     * Singleton Lpr should not be cloneable.
-     */
-    Lpr(Lpr& lpr) = delete;
+    void FnSendTransIDToLPR(const std::string& transID, bool useFrontCamera);
 
-    /**
-     * Singleton Lpr should not be assignable. 
-     */
-    void operator=(const Lpr&) = delete;
+    LPREventData deserializeEventData(const std::string& serializeData) const;
 
 private:
-    static Lpr* lpr_;
-    static std::mutex mutex_;
-    boost::asio::io_context ioContext_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
-    std::thread ioContextThread_;
-    int cameraNo_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+
+    Lpr();
+    ~Lpr();
+
+    void startModuleThread();
+    bool initializeOnIoThread();
+    void shutdownOnIoThread();
+
+    bool initCameraOnIoThread(CType cameraType, const std::string& cameraIP, int tcpPort, const std::string& cameraCH);
+
+    void startReconnectLoopOnIoThread(CType cameraType);
+    boost::asio::awaitable<void> reconnectLoopAsync(CType cameraType);
+
+    void handleCameraConnect(CType cameraType, bool success, const std::string& message);
+
+    void handleCameraClose(CType cameraType, bool success, const std::string& message);
+
+    void handleCameraSend(CType cameraType, bool success, const std::string& message);
+
+    void handleCameraReceive(CType cameraType, bool success, const std::vector<std::uint8_t>& data);
+
+    void sendTransIDOnIoThread(const std::string& request, CType cameraType);
+
+    AppTcpClient* cameraOnIoThread(CType cameraType);
+    const std::string& cameraIp(CType cameraType) const;
+    bool cameraInitialized(CType cameraType) const;
+    bool& cameraInitializedRef(CType cameraType);
+    bool& cameraConnectedRef(CType cameraType);
+    std::uint64_t& reconnectAttemptRef(CType cameraType);
+    boost::asio::steady_timer& reconnectTimer(CType cameraType);
+
+    static const char* cameraName(CType cameraType);
+    static std::string buildLprRequest(const std::string& transID);
+
+    void processData(const std::string& tcpData, CType cameraType);
+    static std::string extractSTX(const std::string& message);
+    static std::string extractETX(const std::string& message);
+    void extractLPRData(const std::string& tcpData, CType cameraType);
+    void enqueueLprEvent(CType cameraType, const std::string& lpn, const std::string& transID, const std::string& imagePath);
+    static std::string serializeEventData(const LPREventData& eventData);
+
+    void logModule(const std::string& message) const;
+    void logMainAndModule(const std::string& message) const;
+
+    std::string logFileName_;
     std::string lprIp4Front_;
     std::string lprIp4Rear_;
-    int reconnTime_;
-    int reconnTime2_;
-    std::string stdID_;
-    std::string logFileName_;
-    int commErrorTimeCriteria_;
-    int transErrorCountCriteria_;
+    int lprPort_;
     std::string frontCamCH_;
     std::string rearCamCH_;
+
+    boost::asio::io_context ioContext_;
+    boost::asio::steady_timer frontReconnectTimer_;
+    boost::asio::steady_timer rearReconnectTimer_;
+    std::optional<WorkGuard> workGuard_;
+    std::thread ioThread_;
+
     std::unique_ptr<AppTcpClient> pFrontCamera_;
     std::unique_ptr<AppTcpClient> pRearCamera_;
-    int lprPort_;
-    boost::asio::steady_timer periodicReconnectTimer_;
-    boost::asio::steady_timer periodicReconnectTimer2_;
+
+    // The following mutable camera state is owned by the single LPR io_context
+    // thread. No strand/mutex is required for it.
     bool frontCameraInitialized_;
     bool rearCameraInitialized_;
-    bool lastFrontCameraConnected_;
-    bool lastRearCameraConnected_;
-    Lpr();
-    void startIoContextThread();
-    void initFrontCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);
-    void initRearCamera(const std::string& cameraIP, int tcpPort, const std::string cameraCH);
-    void startReconnectTimer();
-    void handleReconnectTimerTimeout(const boost::system::error_code& error);
-    void startReconnectTimer2();
-    void handleReconnectTimer2Timeout(const boost::system::error_code& error);
-    void handleReceiveFrontCameraData(bool success, const std::vector<uint8_t>& data);
-    void handleFrontSocketConnect(bool success, const std::string& message);
-    void handleFrontSocketClose(bool success, const std::string& message);
-    void handleFrontSocketSend(bool success, const std::string& message);
-    void handleReceiveRearCameraData(bool success, const std::vector<uint8_t>& data);
-    void handleRearSocketConnect(bool success, const std::string& message);
-    void handleRearSocketClose(bool success, const std::string& message);
-    void handleRearSocketSend(bool success, const std::string& message);
+    bool frontCameraConnected_;
+    bool rearCameraConnected_;
+    std::uint64_t frontReconnectAttempt_;
+    std::uint64_t rearReconnectAttempt_;
 
-    void SendTransIDToLPR_Front(const std::string& transID);
-    void SendTransIDToLPR_Rear(const std::string& transID);
+    // Lifecycle state can be observed from external threads.
+    std::atomic<bool> running_;
+    std::atomic<bool> stopping_;
+    std::atomic<bool> initialized_;
+    std::atomic<bool> acceptingWork_;
+    mutable std::mutex lifecycleMutex_;
 
-    void processData(const std::string& tcpData, CType camType);
-    std::string extractSTX(const std::string& sMsg);
-    std::string extractETX(const std::string& sMsg);
-    void extractLPRData(const std::string& tcpData, CType camType);
-    std::string serializeEventData(const struct LPREventData& eventData);
+    static constexpr std::chrono::milliseconds kReconnectInterval{2000};
 };

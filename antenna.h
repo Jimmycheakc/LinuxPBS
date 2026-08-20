@@ -1,13 +1,22 @@
 #pragma once
 
 #include <atomic>
-#include <iostream>
-#include <string>
-#include <vector>
+#include <memory>
 #include <mutex>
-#include "boost/asio.hpp"
-#include "boost/thread.hpp"
-#include "boost/asio/serial_port.hpp"
+#include <string>
+#include <thread>
+#include <optional>
+#include <utility>
+#include <vector>
+
+#include <boost/asio.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/redirect_error.hpp>
+#include <boost/asio/serial_port.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/use_awaitable.hpp>
 
 class Antenna
 {
@@ -99,9 +108,19 @@ public:
     };
 
     static Antenna* getInstance();
-    void FnAntennaInit(boost::asio::io_context& mainIOContext, unsigned int baudRate, const std::string& comPortName);
+
+    // Starts Antenna's OWN io_context and dedicated worker thread.
+    // All serial/timer/coroutine work is executed by that one thread.
+    void FnAntennaInit(unsigned int baudRate, const std::string& comPortName);
+
+    // Gracefully cancels outstanding Antenna work and joins the worker thread.
+    void FnAntennaShutdown();
+
+    // Thread-safe public entry points. Work is posted into Antenna's io_context.
     void FnAntennaSendReadIUCmd();
     void FnAntennaStopRead();
+
+    // These snapshots may be read from another thread.
     bool FnGetIsCmdExecuting() const;
     int FnAntennaGetIUCmdSendCount();
 
@@ -117,16 +136,29 @@ public:
 
 private:
 
-    static std::mutex mutex_;
-    boost::asio::io_context* pMainIOContext_;
-    static Antenna* antenna_;
-    boost::asio::io_context io_serial_context;
-    std::unique_ptr<boost::asio::io_context::strand> pStrand_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+
+    // Antenna owns its event loop and exactly one thread runs it.
+    boost::asio::io_context ioContext_;
+    std::optional<WorkGuard> workGuard_;
+    std::thread ioThread_;
+
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
+    std::unique_ptr<boost::asio::steady_timer> periodicSendReadIUCmdTimer_;
+
     std::string logFileName_;
+
+    // Atomic only because public getters/start/stop can be called from outside
+    // the io_context thread. All protocol state below is owned by one io thread.
+    std::atomic<bool> moduleRunning_;
+    std::atomic<bool> stopping_;
     std::atomic<bool> continueReadFlag_;
     std::atomic<bool> isCmdExecuting_;
     std::atomic<int> antIUCmdSendCount_;
+
+    bool iuLoopRunning_;
+    bool initializationCompleted_;
+
     int antennaCmdTimeoutInMillisec_;
     int antennaCmdMaxRetry_;
     int antennaIUCmdMinOKtimes_;
@@ -140,10 +172,20 @@ private:
     std::string IUNumber_;
     int successRecvIUCount_;
     bool successRecvIUFlag_;
-   std::unique_ptr<boost::asio::steady_timer> periodicSendReadIUCmdTimer_;
+    
     Antenna();
-    int antennaInit();
-    int antennaCmd(AntCmdID cmdID);
+    ~Antenna();
+
+    void shutdownOnIoThread();
+
+    // C++20 coroutine entry points.
+    boost::asio::awaitable<void> antennaModuleInitAsync(unsigned int baudRate, std::string comPortName);
+    boost::asio::awaitable<int> antennaInitAsync();
+    boost::asio::awaitable<AntCmdRetCode> antennaCmdAsync(AntCmdID cmdID);
+    boost::asio::awaitable<bool> antennaCmdSendAsync(const std::vector<unsigned char>& dataBuff);
+    boost::asio::awaitable<ReadResult> antennaReadWithTimeoutAsync(int milliseconds);
+    boost::asio::awaitable<void> readIULoopAsync();
+
     std::vector<unsigned char> loadSetAntennaData(unsigned char destID, 
                                                 unsigned char sourceID,
                                                 unsigned char category,
@@ -164,9 +206,6 @@ private:
     std::vector<unsigned char> loadReqIOStatus(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo);
     std::vector<unsigned char> loadSetOutput(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo, unsigned char maskIO, unsigned char statusOfIO);
     std::vector<unsigned char> loadForceGetUINo(unsigned char destID, unsigned char sourceID, unsigned char category, unsigned char command, unsigned char seqNo);
-    void handleReadIUTimerExpiration();
-    void antennaCmdSend(const std::vector<unsigned char>& dataBuff);
-    ReadResult antennaReadWithTimeout(int milliseconds);
     void resetRxBuffer();
     bool responseIsComplete(const std::vector<char>& buffer, std::size_t bytesTransferred);
     AntCmdRetCode antennaHandleCmdResponse(AntCmdID cmd, const std::vector<char>& dataBuff);
@@ -184,5 +223,4 @@ private:
     void handleRXCRC1State(char c, char &b);
     int handleRXCRC2State(char c, unsigned int &rxcrc, char b);
     void resetState();
-    void startSendReadIUCmdTimer(int milliseconds);
 };

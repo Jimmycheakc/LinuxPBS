@@ -30,6 +30,37 @@
 #include "chu_client.h"
 #include "shutdown_manager.h"
 
+#if defined(__linux__)
+#include <pthread.h>
+#endif
+
+
+namespace
+{
+
+void setCurrentThreadName(const std::string& name)
+{
+#if defined(__linux__)
+    const int result =
+        ::pthread_setname_np(
+            ::pthread_self(),
+            name.c_str());
+
+    if (result != 0)
+    {
+        std::cerr
+            << "Failed to set thread name: "
+            << name
+            << " | error="
+            << result
+            << std::endl;
+    }
+#else
+    (void)name;
+#endif
+}
+
+} // namespace
 
 void dailyProcessTimerHandler(const boost::system::error_code &ec, boost::asio::steady_timer * timer, boost::asio::strand<boost::asio::io_context::executor_type>* strand_)
 {
@@ -982,7 +1013,11 @@ int main (int agrc, char* argv[])
 
     Common::getInstance()->FnLogExecutableInfo(argv[0]);
     SystemInfo::getInstance()->FnLogSysInfo();
-    EventManager::getInstance()->FnRegisterEvent(std::bind(&EventHandler::FnHandleEvents, EventHandler::getInstance(), std::placeholders::_1, std::placeholders::_2));
+    EventManager::getInstance()->FnRegisterEvent(
+        [](uint64_t eventId, const std::string& eventName, BaseEvent* event)
+        {
+            EventHandler::getInstance()->FnHandleEvents(eventId, eventName, event);
+        });
     EventManager::getInstance()->FnStartEventThread();
     operation::getInstance()->OperationInit(ioContext);
 
@@ -1000,7 +1035,15 @@ int main (int agrc, char* argv[])
 
     for (int i = 0; i < numThreads; i++)
     {
-        threadPool.emplace_back([&ioContext]() {
+        threadPool.emplace_back(
+        [&ioContext, i]()
+        {
+            const std::string threadName =
+                "CORE_IO_" +
+                std::to_string(i + 1);
+
+            setCurrentThreadName(threadName);
+
             ioContext.run();
         });
     }
@@ -1023,6 +1066,9 @@ int main (int agrc, char* argv[])
     Lpr::getInstance()->FnLprClose();
     CHUClient::getInstance()->FnCHUClose();
     //EEPClient::getInstance()->FnEEPClientClose();
+    heartbeatUdpServer_.stop();
+    operation::getInstance()->FnClose();
+    Logger::getInstance()->FnShutdown();
 
     return 0;
 }

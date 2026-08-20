@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 
-project(LinuxPBS)
+project(LinuxPBS VERSION 1.1.1)
 
 # Find ODBC
 find_package(ODBC REQUIRED)
@@ -14,7 +14,7 @@ find_package(PkgConfig REQUIRED)
 # Use pkg-config to find libevdev and libudev
 pkg_check_modules(LIBEVDEV REQUIRED libevdev)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -march=armv8-a")
 
 # Set the root directory for the target environment
@@ -22,9 +22,6 @@ set(CMAKE_FIND_ROOT_PATH ../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xil
 
 # Specify the sysroot directory
 set(CMAKE_SYSROOT ../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux)
-
-add_definitions(-DFMT_HEADER_ONLY)
-add_definitions(-DSPDLOG_FMT_EXTERNAL)
 
 # Add include directories
 include_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linux/usr/include)
@@ -40,6 +37,7 @@ link_directories(../../../../SDK_2023.1/sysroots/cortexa72-cortexa53-xilinx-linu
 # Lisy your source files
 set(SOURCE_FILES
     common.cpp
+    thread_pool_helper.cpp
     system_info.cpp
     log.cpp
     ini_parser.cpp
@@ -52,6 +50,7 @@ set(SOURCE_FILES
     shutdown_manager.cpp
     event_manager.cpp
     event_handler.cpp
+    mount.cpp
     lcsc.cpp
     ping.cpp
     udp.cpp
@@ -79,8 +78,26 @@ endif()
 # Copy LinuxPBS.ini to build directory
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/LinuxPBS.ini ${CMAKE_CURRENT_BINARY_DIR}/LinuxPBS.ini COPYONLY)
 
+execute_process(
+    COMMAND
+        ${CMAKE_COMMAND} -E env
+        TZ=Asia/Singapore
+        date "+%Y-%m-%d %H:%M:%S"
+    OUTPUT_VARIABLE BUILD_TIMESTAMP
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 # Create an executable
 add_executable(linuxpbs ${SOURCE_FILES})
+
+target_compile_definitions(
+    linuxpbs
+    PRIVATE
+        FMT_HEADER_ONLY
+        SPDLOG_FMT_EXTERNAL
+        SW_VERSION="${PROJECT_VERSION}"
+        BUILD_TIMESTAMP="${BUILD_TIMESTAMP}"
+)
 
 # Link against libraries
 target_link_libraries(linuxpbs

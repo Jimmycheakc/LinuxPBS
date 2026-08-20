@@ -1,16 +1,25 @@
 #pragma once
 
+#include <array>
 #include <atomic>
-#include <iostream>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <filesystem>
-#include <string>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
+#include <string>
 #include <thread>
 #include <vector>
-#include "boost/asio.hpp"
-#include "boost/asio/serial_port.hpp"
+
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/serial_port.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/thread_pool.hpp>
 
 class CscPacket
 {
@@ -29,7 +38,7 @@ public:
     void setPayload(const std::vector<uint8_t>& payload);
     std::vector<uint8_t> getPayload() const;
     void setCrc(uint16_t crc);
-    uint16_t getCrc();
+    uint16_t getCrc() const;
     std::vector<uint8_t> serializeWithoutCRC() const;
     std::vector<uint8_t> serialize() const;
     void deserialize(const std::vector<uint8_t>& data);
@@ -38,12 +47,12 @@ public:
     void clear();
 
 private:
-    uint8_t attn;
-    bool code;
-    uint8_t type;
-    uint16_t len;
+    uint8_t attn{0};
+    bool code{false};
+    uint8_t type{0};
+    uint16_t len{0};
     std::vector<uint8_t> payload;
-    uint16_t crc;
+    uint16_t crc{0};
 };
 
 class LCSCReader
@@ -202,6 +211,8 @@ public:
         WRITE_FAILED,
         RESPONSE_TIMEOUT,
         RESPONSE_RECEIVED,
+        RESPONSE_HANDLED,
+        RESPONSE_REJECTED,
         SEND_NEXT_CHUNK_COMMAND,
         ALL_CHUNK_COMMAND_COMPLETED,
         CHUNK_COMMAND_ERROR,
@@ -230,8 +241,12 @@ public:
         GET_LCSC_DEVICE_STATUS,
         CDFILE_UPLOADED,
         CDFILE_UPLOAD_FAILED,
+        CDFILE_CLEANUP_COMPLETED,
+        CDFILE_CLEANUP_FAILED,
         GET_LCSC_DEVICE_STATUS_OK,
         GET_LCSC_DEVICE_STATUS_FAILED,
+        CDACK_FINALIZE_COMPLETED,
+        CDACK_FINALIZE_FAILED,
         EVENT_COUNT
     };
 
@@ -293,59 +308,87 @@ public:
     std::string getCommandString(LCSC_CMD cmd);
     std::string getCommandTypeString(uint8_t type);
 
-    /**
-     * Singleton LCSCReader should not be cloneable.
-     */
-    LCSCReader(LCSCReader& lcscReader) = delete;
+    LCSCReader(const LCSCReader&) = delete;
+    LCSCReader& operator=(const LCSCReader&) = delete;
+    LCSCReader(LCSCReader&&) = delete;
+    LCSCReader& operator=(LCSCReader&&) = delete;
 
-    /**
-     * Singleton LCSCReader should not be assignable.
-     */
-    void operator=(const LCSCReader&) = delete;
-
-    int LCSCCard_In;
+    // Cross-thread status snapshot kept public for backward compatibility.
+    std::atomic<int> LCSCCard_In{0};
 
 private:
-    static LCSCReader* lcscReader_;
-    static std::mutex mutex_;
+    using WorkGuard = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
+
+    // Active module: exactly one dedicated thread calls ioContext_.run().
+    // Therefore all async protocol state is confined to that one thread and
+    // no strand is required.
     boost::asio::io_context ioContext_;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> workGuard_;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
+    std::optional<WorkGuard> workGuard_;
+
+    // Blocking filesystem / mount / ping work is isolated from the single
+    // LCSC I/O thread. This is recreated for every module start.
+    std::unique_ptr<boost::asio::thread_pool> filePool_;
+
+    // filePool_ has multiple workers. Settlement records for the same hourly
+    // file must still be serialized so header/create/append cannot race.
+    std::mutex settlementFileMutex_;
+
     std::unique_ptr<boost::asio::serial_port> pSerialPort_;
     boost::asio::steady_timer rspTimer_;
     boost::asio::steady_timer serialWriteDelayTimer_;
     boost::asio::steady_timer serialWriteTimer_;
+
     std::string logFileName_;
     std::thread ioContextThread_;
-    std::mutex commandQueueMutex_;
+    mutable std::mutex lifecycleMutex_;
+
+    std::atomic<bool> moduleRunning_{false};
+    std::atomic<bool> acceptingWork_{false};
+    std::atomic<bool> stopping_{false};
+
+    // I/O-thread-owned command/FSM state.
     std::deque<CommandWithData> commandQueue_;
-    std::mutex chunkCommandQueueMutex_;
     std::deque<CommandWithData> chunkCommandQueue_;
-    static std::mutex currentCmdMutex_;
-    LCSC_CMD currentCmd;
+    LCSC_CMD currentCmd_{LCSC_CMD::GET_STATUS_CMD};
     static const StateTransition stateTransitionTable[static_cast<int>(STATE::STATE_COUNT)];
-    STATE currentState_;
-    std::chrono::steady_clock::time_point lastSerialReadTime_;
-    std::array<uint8_t, 1024> readBuffer_;
+    STATE currentState_{STATE::IDLE};
+
+    std::chrono::steady_clock::time_point lastSerialReadTime_{std::chrono::steady_clock::now()};
+    std::array<uint8_t, 1024> readBuffer_{};
     std::queue<std::vector<uint8_t>> writeQueue_;
-    bool write_in_progress_;
-    std::array<uint8_t, 1024> rxBuffer_;
-    int rxNum_;
-    RX_STATE rxState_;
+    bool writeInProgress_{false};
+    bool writeTimedOut_{false};
+
+    std::array<uint8_t, 1024> rxBuffer_{};
+    std::size_t rxNum_{0};
+    RX_STATE rxState_{RX_STATE::RX_START};
+
     std::vector<uint8_t> aes_key;
-    std::atomic<bool> continueReadFlag_;
+    std::atomic<bool> continueReadFlag_{false};
+
     static const UploadLcscStateTransition UploadLcscStateTransitionTable[static_cast<int>(UPLOAD_LCSC_FILES_STATE::STATE_COUNT)];
-    UPLOAD_LCSC_FILES_STATE currentUploadLcscFilesState_;
-    bool HasCDFileToUpload_;
-    int LastCDUploadDate_;
-    int LastCDUploadTime_;
+    UPLOAD_LCSC_FILES_STATE currentUploadLcscFilesState_{UPLOAD_LCSC_FILES_STATE::IDLE};
+
+    // These fields belong to the upload workflow and are only touched from
+    // the LCSC I/O thread via processUploadLcscFilesEvent().
+    bool HasCDFileToUpload_{false};
+    int LastCDUploadDate_{0};
+    int LastCDUploadTime_{0};
     std::string uploadLcscFileName_;
     std::string lastDebitTime_;
+
     LCSCReader();
-    void startIoContextThread();
+    ~LCSCReader();
+
+    bool startIoContextThread();
+    void shutdownOnIoThread();
+    void resetRuntimeState();
     void enqueueCommand(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
     void enqueueCommandToFront(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
     void enqueueChunkCommand(LCSC_CMD cmd, std::shared_ptr<void> data = nullptr);
+    void enqueueCommandOnIoThread(LCSC_CMD cmd, std::shared_ptr<void> data);
+    void enqueueCommandToFrontOnIoThread(LCSC_CMD cmd, std::shared_ptr<void> data);
+    void enqueueChunkCommandOnIoThread(LCSC_CMD cmd, std::shared_ptr<void> data);
     void checkCommandQueue();
     std::string eventToString(EVENT event);
     std::string stateToString(STATE state);
@@ -369,7 +412,7 @@ private:
     void sendNextChunkCommandData();
     void clearChunkCommandQueue();
     std::vector<uint8_t> prepareCmd(LCSC_CMD cmd, std::shared_ptr<void> payloadData);
-    uint16_t CRC16_CCITT(const uint8_t* inStr, size_t length);
+    uint16_t CRC16_CCITT(const uint8_t* inStr, std::size_t length);
     std::string handleCmdResponse(const CscPacket& msg);
     void encryptAES256(const std::vector<uint8_t>& key, const std::vector<uint8_t>& challenge, std::vector<uint8_t>& encryptedChallenge);
     std::vector<uint8_t> readFile(const std::filesystem::path& filePath);
@@ -379,6 +422,20 @@ private:
     void handleDownloadCDFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
     void handleUploadCDFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
     void handleGenerateCDAckFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
+    void handleMoveCDAckFilesState(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
+    void startDownloadCdFilesJob();
+    void startScanDownloadedCdFilesJob();
+    void startUploadCdFileJob(std::string path);
+    void startCleanupCdFileJob(std::string path);
+    void startFinalizeCdAckFilesJob(const std::string& serialNum,
+                                    const std::string& fwVer,
+                                    const std::string& bl1Ver,
+                                    const std::string& bl2Ver,
+                                    const std::string& bl3Ver,
+                                    const std::string& cil1Ver,
+                                    const std::string& cil2Ver,
+                                    const std::string& cil3Ver,
+                                    const std::string& cfgVer);
     std::string uploadLcscFilesEventToString(UPLOAD_LCSC_FILES_EVENT event);
     std::string uploadLcscFilesStateToString(UPLOAD_LCSC_FILES_STATE state);
     void processUploadLcscFilesEvent(UPLOAD_LCSC_FILES_EVENT event, const std::string& str = "");
@@ -394,9 +451,10 @@ private:
 
     void handleCmdErrorOrTimeout(LCSC_CMD cmd, mCSCEvents eventStatus);
     void setCurrentCmd(LCSC_CMD cmd);
-    LCSC_CMD getCurrentCmd();
+    LCSC_CMD getCurrentCmd() const;
     void processTrans(const std::vector<uint8_t>& payload);
     void writeLCSCTrans(const std::string& data);
+    void writeLCSCTransBlocking(std::string settleFile, std::string header, std::string detail);
     bool isCurrentCmdResponse(LCSC_CMD currCmd, uint8_t respType);
 
     // Serial read and write
@@ -407,4 +465,5 @@ private:
     void enqueueWrite(const std::vector<uint8_t>& data);
     void startWrite();
     void writeEnd(const boost::system::error_code& error, std::size_t bytesTransferred);
+    std::string toHexString(const std::vector<uint8_t>& data) const;
 };
