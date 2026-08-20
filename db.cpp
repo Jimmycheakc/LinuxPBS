@@ -8094,7 +8094,7 @@ DBError db::insert2movementtrans(tExitTrans_Struct& tExit)
 	return iCentralFail;
 }
 
-int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, double& gbRedeemAmt, int& giRedeemTime)
+int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, float& gbRedeemAmt, int& giRedeemTime)
 {
 	// Valid
 	int iRet = 1;
@@ -8110,7 +8110,9 @@ int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket
 	{
 		sqlStmt = "SELECT Valid_from, Valid_to, exit_time FROM Complimentary_view WHERE complimentary_no='" + sBarcodeTicket + "'";
 	}
-
+	//-------
+	operation::getInstance()->writelog(sqlStmt, "DB");
+	//-------
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
@@ -8128,6 +8130,7 @@ int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket
 	{
 		try
 		{
+			//-----
 			if (selResult[0].GetDataItem(2) == "NULL" || selResult[0].GetDataItem(2) == "")
 			{
 				if (Common::getInstance()->FnGetDateDiffInSeconds(selResult[0].GetDataItem(0)) < 0)
@@ -8149,14 +8152,13 @@ int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket
 				// Used
 				iRet = 2;
 			}
-
 			auto tp = Common::getInstance()->FnParseDateTime(selResult[0].GetDataItem(1));
 			std::time_t tt = std::chrono::system_clock::to_time_t(tp);
 			dtExpireTime = *std::localtime(&tt);
 			// Valid
 			if ((iRet == 1) && (isRedemptionTicket == true))
 			{
-				gbRedeemAmt = std::stod(selResult[0].GetDataItem(3));
+				gbRedeemAmt = std::stof(selResult[0].GetDataItem(3));
 				giRedeemTime = std::stoi(selResult[0].GetDataItem(4));
 			}
 		}
@@ -8490,8 +8492,10 @@ int db::HasEZpay(std::string sIUNo)
 	std::string sqlStmt;
 	vector<ReaderItem> selResult;
 
-	sqlStmt = "SELECT * from tblIUList_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no =' " + sIUNo + "'"; 
-	
+	sqlStmt = "SELECT * from tblIUList_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no ='" + sIUNo + "'";
+	 
+	//operation::getInstance()->writelog(sqlStmt,"DB");
+
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
 	{
@@ -8503,7 +8507,8 @@ int db::HasEZpay(std::string sIUNo)
 	else
 	{
 		m_remote_db_err_flag.store(0);
-		iRet = 1;
+
+		if (selResult.size() > 0) iRet = 1;
 	}
 	return iRet;
 }
@@ -8516,7 +8521,7 @@ int db::HasAXS(std::string sIUNo)
 	std::string sqlStmt;
 	vector<ReaderItem> selResult;
 
-	sqlStmt = "SELECT * from tblwhitelist_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no =' " + sIUNo + "'"; 
+	sqlStmt = "SELECT * from tblwhitelist_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no ='" + sIUNo + "'"; 
 	
 	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
 	if (r != 0)
@@ -8529,7 +8534,55 @@ int db::HasAXS(std::string sIUNo)
 	else
 	{
 		m_remote_db_err_flag.store(0);
-		iRet = 1;
+
+		if (selResult.size() > 0) iRet = 1;
 	}
 	return iRet;
+}
+
+string db::GetIUByLPN(std::string sLPN)
+{
+	// Valid
+	std::string sRet = "";
+	int r;
+	std::string sqlStmt;
+	vector<ReaderItem> selResult;
+
+	sqlStmt = "SELECT season_no from season_mst WHERE vehicle_no ='" + sLPN + "'"; 
+	//-------
+	operation::getInstance()->writelog(sqlStmt,"DB");
+	//--------
+	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+	if (r != 0)
+	{
+		m_remote_db_err_flag.store(1);
+	}
+	else
+	{
+		m_remote_db_err_flag.store(0);
+
+		if (selResult.size() > 0) sRet = selResult[0].GetDataItem(0);
+	}
+
+	if (sRet == "" &&  operation::getInstance()->gtStation.iType == tiExit)
+	{
+		sqlStmt = "SELECT iu_tk_no from movement_trans_tmp WHERE entry_lpn ='" + sLPN + "'"; 
+		//-----
+		operation::getInstance()->writelog(sqlStmt,"DB");
+		//-------
+		r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+		if (r != 0)
+		{
+			m_remote_db_err_flag.store(1);
+		}
+		else
+		{
+			m_remote_db_err_flag.store(0);
+
+			if (selResult.size() > 0) sRet = selResult[0].GetDataItem(0);
+		}
+
+	}
+
+	return sRet;
 }

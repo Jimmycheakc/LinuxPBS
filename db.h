@@ -126,6 +126,7 @@ public:
     int GetSeasonHolder(string sIUNo);
     int HasAXS(std::string sIUNo);
     int HasEZpay(std::string sIUNo);
+    string GetIUByLPN(std::string sLPN);
     int CheckCardOK(string sCardNo);
     int AddRemoteControl(string sTID,string sAction, string sRemarks);
     int AddSysEvent(string sEvent,int iEventType = 0, string sOccurTime = ""); 
@@ -139,7 +140,7 @@ public:
     int updateExitTrans(string lpn, string sTransID);
     int UpdateEEPExitTrans(string OBU, string sDSerialNo,string sCardNo,float sfee, float sTopupAmt,int TransRoute,int Result); 
     int updateExitReceiptNo(string sReceiptNo, string StnID); 
-    int isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, double& gbRedeemAmt, int& giRedeemTime);
+    int isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, float& gbRedeemAmt, int& giRedeemTime);
     int HasValidTicket(std::string sIUNo, std::string sLPN);
     DBError update99PaymentTrans();
     DBError insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate);

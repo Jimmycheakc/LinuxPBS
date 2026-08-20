@@ -499,8 +499,14 @@ void operation::LoopAGone()
         }
         //------
         if (tExit.sRedeemAmt == 0) {
-            if (tExit.bPayByEZPay == true) CloseExitOperation(EZPayParking);
-            else if (tExit.bPayByAXS == true) CloseExitOperation(AXSParking);
+            if (tExit.bPayByEZPay == true) {
+                EnableCashcard(false);
+                CloseExitOperation(EZPayParking);
+            }
+            else if (tExit.bPayByAXS == true) {
+                    EnableCashcard(false);
+                    CloseExitOperation(AXSParking);
+            }
         }
     }
     EnableCashcard(false);
@@ -648,6 +654,7 @@ void operation::Clearme()
     tProcess.gbBarrierOpened = false;
     tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
     tProcess.fiLastCHUCmd = iInit; 
+    tProcess.gsTransID = ""; 
 
     //---
     if (gtStation.iType == tientry)
@@ -672,7 +679,6 @@ void operation::Clearme()
         tEntry.sLPN[1] = "";
         tEntry.iVehicleType = 0;
         tEntry.gbEntryOK = false;
-        tProcess.gsTransID = ""; 
         tEntry.VCC = "";
     }
     else
@@ -778,7 +784,7 @@ std::string operation::getSerialPort(const std::string& key)
 
 void operation::Initdevice(boost::asio::io_context& ioContext)
 {
-    if (tParas.giCommPortAntenna > 0)
+    if (tParas.giCommPortAntenna > 0 && tParas.giEPS != 3)
     {
         Antenna::getInstance()->FnAntennaInit(19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
     }
@@ -1003,6 +1009,13 @@ void operation::PBSEntry(string sIU)
     }
     tEntry.iVehicleType = (tEntry.iTransType -1 )/3;
     iRet = CheckSeason(sIU,1);
+    //----- added on 18/08/2026
+     if (iRet != 1 && std::stoi(IniParser::getInstance()->FnGetNotAllowHourly()) == 1) {
+        writelog ("Season Only.", "OPR");
+        ShowLEDMsg("Season Parking Only", "Season Parking Only");
+        if (tParas.giEPS == 3) SendMsg2OBU(tExit.sIUNo,0,"Season", "Parking Only","","","");
+        return;
+     }
 
     if (tProcess.gbcarparkfull.load() == true && iRet == 1 && (std::stoi(tSeason.rate_type) !=0) && tParas.giFullAction ==iNoPartial )
     {   
@@ -2363,13 +2376,26 @@ void operation:: EnableCashcard(bool bEnable)
 {
     
     if  (bEnable == tProcess.sEnableReader) return;
-    
     tProcess.sEnableReader = bEnable;
-  
-     EnableLCSC (bEnable);
-     EnableKDE(bEnable);
-     EnableUPOS(bEnable);
-
+    //------ added on 18/08/2026
+     if (tProcess.gsTransID != "" && (gtStation.iType == tientry || tExit.sIUNo == "")) {
+        string sLPN;
+        string sIU;
+        if (gtStation.iType == tientry) sLPN = tEntry.sLPN[0];
+        else sLPN = tExit.sLPN[0];
+        if (sLPN != "" && sLPN != "0000000000") sIU = db::getInstance()->GetIUByLPN(sLPN);
+        if (sIU != "" && sIU.length() == 10) {
+            writelog ("Get IU from DB : " + sIU + " based on LPR: " + sLPN, "OPR");
+            VehicleCome(sIU);
+            return;
+        }  
+    }
+    //------------
+    if (tExit.bPayByAXS == false and tExit.bPayByEZPay == false) {
+        EnableLCSC (bEnable);
+        EnableKDE(bEnable);
+        EnableUPOS(bEnable);
+     }
     if (bEnable == true)
     {
         BARCODE_READER::getInstance()->FnBarcodeStartRead();
@@ -4356,8 +4382,9 @@ std::string operation::GetVTypeStr(int iVType)
         }else {
             tExit.iTransType= db::getInstance()->FnGetVehicleType(sIU.substr(0,3));
         }
-    }
+    }else {
         tExit.iTransType=GetVTypeFromLoop();
+    }
 
     if (tExit.iTransType == 9) {
         ShowLEDMsg(tMsg.Msg_authorizedvehicle[0],tMsg.Msg_authorizedvehicle[1]);
@@ -4504,6 +4531,7 @@ std::string operation::GetVTypeStr(int iVType)
                     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
                     //-------
                     ShowLEDMsg("Pls Insert Tix^Complimentary","Pls Insert Tix^Complimentary");
+                    EnableCashcard(true);
                 }else{
                     ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
                     CloseExitOperation(EZPayParking);
@@ -4523,6 +4551,7 @@ std::string operation::GetVTypeStr(int iVType)
                     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
                     //-------
                     ShowLEDMsg("Fee Paid.^OR Scan Ticket","Fee Paid.^OR Scan Ticket");
+                    EnableCashcard(true);
                     return;
                 }else {
                     ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
@@ -4906,7 +4935,7 @@ void operation::ticketScan(std::string skeyedNo)
     int iRet = 0;
     std::string sCardTkNo = "";
     std::tm dtExpireTime;
-    double gbRedeemAmt = 0.00;
+    float gbRedeemAmt = 0.00;
     int giRedeemTime = 0;
     std::string sMsg = "";
     long lParkTime = 0;
@@ -4960,7 +4989,7 @@ void operation::ticketScan(std::string skeyedNo)
                 TT = sCardTkNo.substr(7, 1);
                 if ((TT == "V") or (TT == "W") or (TT == "U") or (TT == "Z"))
                 {
-                    if ((TT == "V") or (TT == "W"))
+                    if ((TT == "V") or (TT == "W") )
                     {
                         isRedemptionTicket = true;
                     }
@@ -5012,9 +5041,9 @@ void operation::ticketScan(std::string skeyedNo)
     }
 
     // Ret : 0 = Expired, 1 = Valid, 2 = Used, 6 = Not Started, -1 = DB Error, 4 = Not Found
-    iRet = db::getInstance()->isValidBarCodeTicket(isRedemptionTicket, skeyedNo, dtExpireTime, gbRedeemAmt, giRedeemTime);
+   iRet = db::getInstance()->isValidBarCodeTicket(isRedemptionTicket, skeyedNo, dtExpireTime, gbRedeemAmt, giRedeemTime);
 
-    if (iRet != 1){
+    if (iRet != 1 && tParas.giEPS == 3) {
         if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket", "Pls Present","Valid Payment","","");
         else SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket","","","","");
         sMsg = "Invalid Ticket^ Pls Present Valid Payment";
@@ -5111,8 +5140,10 @@ void operation::ticketScan(std::string skeyedNo)
                 else
                 {
                     //----- added on 03/08/2026
-                    if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Ticket Accepted.", "Fee Paid:$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt),"Present Payment","","");
-                    else SendMsg2OBU(tExit.sIUNo,0,"Fee Paid","$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt),"","","");
+                    if (tParas.giEPS == 3) {
+                        if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Ticket Accepted.", "Fee Paid:$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt),"Present Payment","","");
+                        else SendMsg2OBU(tExit.sIUNo,0,"Fee Paid","$" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt),"","","");
+                    }
                     EnableCashcard(true);
                     //----- added on 14/07/2026
                     sMsg = "Fee Paid $" + Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Present Payment";
@@ -6756,18 +6787,19 @@ void operation::processCHU(const std::string& eventData)
                }
                if (iRC == ChuRC_DebitFail)
                {
-                    tExit.sCHUDebitCode = tmpStr[6];
-                    writelog ("CHU Debit Fail, Error Code: "+ tmpStr[6], "OPR");
-                    SendMsg2Server ("90",tmpStr[2] + "," + tmpStr[4] + ",,,1, Debit Fail: " + tmpStr[6]);
-                    tExit.giDeductionStatus = WaitingCard;
                     //----- added on 12/03/2026
                     if (tmpStr[6] == "00000001") {
                         sMsg = "Fee:$" + Common::getInstance()->SetFeeFormat(tExit.sPaidAmt) + "^Tap/Insert Card";
                         ShowLEDMsg(sMsg, sMsg);
+                        tExit.giDeductionStatus = WaitingCard;
                         EnableCashcard(true);
                         CHUInq(2);
                         return;
                     }
+                    tExit.sCHUDebitCode = tmpStr[6];
+                    writelog ("CHU Debit Fail, Error Code: "+ tmpStr[6], "OPR");
+                    SendMsg2Server ("90",tmpStr[2] + "," + tmpStr[4] + ",,,1, Debit Fail: " + tmpStr[6]);
+                    tExit.giDeductionStatus = WaitingCard;
                     //----- added on 03/03/2026
                     L4 = tmpStr[6].substr(1,4);
                     R4 = tmpStr[6].substr(5,8);
