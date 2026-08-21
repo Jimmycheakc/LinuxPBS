@@ -1,904 +1,1204 @@
-
-#include <stdio.h>
-#include <sstream>
 #include "odbc.h"
+
+#include <array>
+#include <chrono>
+#include <cstring>
+#include <ctime>
+#include <sstream>
+#include <utility>
+
 #include "log.h"
+#include "ping.h"
 
-ReaderItem::ReaderItem()
+namespace
 {
-    //ctor
-}
-ReaderItem::~ReaderItem()
-{
-    //dtor
-}
-void ReaderItem::appendData(std::string s)
-{
-    data.push_back(s);
-}
 
-unsigned long ReaderItem::getDataSize()
+class StatementHandle final
 {
-    return data.size();
-}
-std::string ReaderItem::GetDataItem(unsigned long index)
-{
-    if ((data.size()>0)&& (index<data.size()))
+public:
+    StatementHandle() = default;
+
+    ~StatementHandle()
     {
-        return data[index];
+        reset();
     }
-    else
+
+    StatementHandle(const StatementHandle&) = delete;
+    StatementHandle& operator=(const StatementHandle&) = delete;
+    StatementHandle(StatementHandle&&) = delete;
+    StatementHandle& operator=(StatementHandle&&) = delete;
+
+    SQLHSTMT get() const
     {
-        //return empty string for particular index is
-        //data size =0 or
-        //index> data size
-        return "";
+        return handle_;
     }
+
+    SQLHSTMT* put()
+    {
+        reset();
+        return &handle_;
+    }
+
+    void reset()
+    {
+        if (handle_ != SQL_NULL_HSTMT)
+        {
+            (void)::SQLFreeStmt(handle_, SQL_CLOSE);
+            (void)::SQLFreeHandle(SQL_HANDLE_STMT, handle_);
+            handle_ = SQL_NULL_HSTMT;
+        }
+    }
+
+private:
+    SQLHSTMT handle_{SQL_NULL_HSTMT};
+};
+
+SQLCHAR* asSqlChar(std::string& value)
+{
+    return reinterpret_cast<SQLCHAR*>(value.data());
+}
+
+SQLCHAR* asSqlChar(const std::string& value)
+{
+    return reinterpret_cast<SQLCHAR*>(
+        const_cast<char*>(value.c_str()));
+}
+
+} // namespace
+
+
+void ReaderItem::appendData(std::string value)
+{
+    data_.push_back(std::move(value));
+}
+
+unsigned long ReaderItem::getDataSize() const
+{
+    return static_cast<unsigned long>(data_.size());
+}
+
+std::string ReaderItem::GetDataItem(unsigned long index) const
+{
+    if (index >= data_.size())
+    {
+        return {};
+    }
+
+    return data_[index];
 }
 
 
-// constructor
-// allocate environment handle and connection handle
-odbc::odbc(unsigned int ConnTO,unsigned int queryTO, float pingTO,
-            std::string IP,string conn)
+odbc::odbc(
+    unsigned int ConnTO,
+    unsigned int queryTO,
+    float pingTO,
+    std::string IP,
+    std::string conn)
+    : m_IP(std::move(IP)),
+      m_connString(std::move(conn)),
+      ConnTimeOutVal(ConnTO),
+      queryTimeOut(queryTO),
+      pingTimeOut(pingTO)
 {
-    SQLRETURN ret; //return status
-    NumberOfRowsAffected=0;
     try
     {
-        ConnTimeOutVal=ConnTO;
-        m_IP=IP;
-        m_connString=conn;
-        queryTimeOut=queryTO;
-        pingTimeOut=pingTO;
+        initialized_ = initializeHandles();
 
-        ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env); //allocate environment handle
-        if (!SQL_SUCCEEDED(ret)) {
-          GetError("SQLAllocHandle", env, SQL_HANDLE_ENV);
-          return;
-        }
-        SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (void *) SQL_OV_ODBC3, 0); // ODBC version 3
-      
-        ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc); // allocate connection handle
-        if (!SQL_SUCCEEDED(ret)) {
-          GetError("SQLAllocHandle", dbc, SQL_HANDLE_DBC);
-          return;
-        } 
-
-        ret=SQLSetConnectAttr(dbc, SQL_ATTR_CONNECTION_TIMEOUT, (SQLPOINTER)(intptr_t)ConnTimeOutVal, 0);
-        if (!SQL_SUCCEEDED(ret))
+        if (!initialized_)
         {
-          GetError("SQLSetConnectAttr(SQL_CONNECTION_TIMEOUT)", dbc, SQL_HANDLE_DBC);
-
-          return;
+            releaseHandles();
         }
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
+
+        releaseHandles();
+        initialized_ = false;
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
+
+        releaseHandles();
+        initialized_ = false;
     }
 }
 
-// destructor
-// free up connection handle and environment handle
 odbc::~odbc()
 {
-    // free up allocated handles
-    SQLFreeHandle(SQL_HANDLE_DBC, dbc);
-    SQLFreeHandle(SQL_HANDLE_ENV, env);    
+    releaseHandles();
 }
 
-// connect to datasource
+bool odbc::initializeHandles()
+{
+    SQLRETURN ret = ::SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
+    if (!SQL_SUCCEEDED(ret))
+    {
+        logSimpleError("SQLAllocHandle(SQL_HANDLE_ENV) failed");
+        env = SQL_NULL_HENV;
+        return false;
+    }
+
+    ret = ::SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+    if (!SQL_SUCCEEDED(ret))
+    {
+        (void)GetError("SQLSetEnvAttr(SQL_ATTR_ODBC_VERSION)", env, SQL_HANDLE_ENV);
+        return false;
+    }
+
+    ret = ::SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
+    if (!SQL_SUCCEEDED(ret))
+    {
+        // For SQLAllocHandle failure, diagnostics belong to the input handle.
+        (void)GetError("SQLAllocHandle(SQL_HANDLE_DBC)", env, SQL_HANDLE_ENV);
+        dbc = SQL_NULL_HDBC;
+        return false;
+    }
+
+    ret = ::SQLSetConnectAttr(dbc, SQL_ATTR_CONNECTION_TIMEOUT, reinterpret_cast<SQLPOINTER>(static_cast<intptr_t>(ConnTimeOutVal)), 0);
+    if (!SQL_SUCCEEDED(ret))
+    {
+        (void)GetError("SQLSetConnectAttr(SQL_ATTR_CONNECTION_TIMEOUT)", dbc, SQL_HANDLE_DBC);
+        return false;
+    }
+
+    return true;
+}
+
+void odbc::releaseHandles()
+{
+    if (dbc != SQL_NULL_HDBC)
+    {
+        (void)::SQLDisconnect(dbc);
+        (void)::SQLFreeHandle(SQL_HANDLE_DBC, dbc);
+        dbc = SQL_NULL_HDBC;
+    }
+
+    if (env != SQL_NULL_HENV)
+    {
+        (void)::SQLFreeHandle(SQL_HANDLE_ENV, env);
+        env = SQL_NULL_HENV;
+    }
+
+    initialized_ = false;
+}
 
 int odbc::Connect()
 {
-    SQLRETURN ret; //return status
-    SQLCHAR outstr[1024]; // output string
-    SQLSMALLINT outstrlen; // output string length
-    
+    std::lock_guard<std::mutex> lock(mutex_);
+
     try
     {
-        if (vPing(m_IP,pingTimeOut)==false) return -1;
-        // Connect to a DSN
-        //SQLCHAR* connStr = (SQLCHAR*)"DSN=mssqlserver;DATABASE=RF;UID=sa;PWD=yzhh2007";
-        std::string constr=m_connString;
-        SQLCHAR* connStr = (SQLCHAR*) constr.c_str();
-        ret = SQLDriverConnect(dbc, NULL, 
-          connStr, SQL_NTS,
-          outstr, sizeof(outstr), &outstrlen,
-          SQL_DRIVER_NOPROMPT);
-        if (!SQL_SUCCEEDED(ret)) {
-          GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
-          return -1;
-        }
-        if (ret == SQL_SUCCESS_WITH_INFO) {
-          GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
-        }
+        return connectUnlocked();
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
         return -1;
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
         return -1;
     }
-    return 0;  
 }
 
+int odbc::connectUnlocked()
+{
+    if (!initialized_ || dbc == SQL_NULL_HDBC)
+    {
+        logSimpleError("ODBC connection handle is not initialized");
+        return -1;
+    }
 
- int odbc::SQLSelect(std::string statement, std::vector<ReaderItem> *result,bool FullResult)
- {
-    int ret; //return status
-    int row=0;
-  
-    SQLSMALLINT columns; // number of columns
-    SQLLEN rows; // number of rows
-    //std::vector<std::vector<std::string>> ds;
-    SQLHSTMT stmt = SQL_NULL_HSTMT;
+    if (isConnectedUnlocked() == 1)
+    {
+        return 0;
+    }
 
-    std::vector<ReaderItem> mList;
+    // Keep the existing synchronous ping gate. The calling thread remains
+    // blocked until PingWithTimeOut() completes.
+    std::string pingDetails;
+    if (!PingWithTimeOut(m_IP, pingTimeOut, pingDetails))
+    {
+        return -1;
+    }
 
-	if (result) result->clear();
+    std::array<SQLCHAR, 1024> outString{};
+    SQLSMALLINT outLength = 0;
+
+    SQLRETURN ret =
+        ::SQLDriverConnect(
+            dbc,
+            nullptr,
+            asSqlChar(m_connString),
+            SQL_NTS,
+            outString.data(),
+            static_cast<SQLSMALLINT>(outString.size()),
+            &outLength,
+            SQL_DRIVER_NOPROMPT);
+
+    if (!SQL_SUCCEEDED(ret))
+    {
+        (void)GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
+        return -1;
+    }
+
+    if (ret == SQL_SUCCESS_WITH_INFO)
+    {
+        (void)GetError("SQLDriverConnect", dbc, SQL_HANDLE_DBC);
+    }
+
+    return 0;
+}
+
+int odbc::Disconnect()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
 
     try
     {
-        if (IsConnected()!=1)
+        return disconnectUnlocked();
+    }
+    catch (const std::exception& e)
+    {
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
+        return -1;
+    }
+    catch (...)
+    {
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
+        return -1;
+    }
+}
+
+int odbc::disconnectUnlocked()
+{
+    if (!initialized_ || dbc == SQL_NULL_HDBC)
+    {
+        return 0;
+    }
+
+    const SQLRETURN ret = ::SQLDisconnect(dbc);
+
+    if (ret == SQL_SUCCESS ||
+        ret == SQL_SUCCESS_WITH_INFO ||
+        ret == SQL_ERROR)
+    {
+        // SQL_ERROR can mean the connection was already unusable. Keep the
+        // legacy Disconnect() behaviour non-fatal, but record diagnostics.
+        if (ret == SQL_SUCCESS_WITH_INFO || ret == SQL_ERROR)
         {
-            Disconnect();
-            if (Connect() != 0) {return -1;}
+            (void)GetError("SQLDisconnect", dbc, SQL_HANDLE_DBC);
         }
 
-        ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt); // allocate statement handle
-        if (!SQL_SUCCEEDED(ret)) {
-          GetError("SQLAllocHandle", stmt, SQL_HANDLE_STMT);
-          return -1;
+        return ret == SQL_ERROR ? -1 : 0;
+    }
+
+    return 0;
+}
+
+int odbc::IsConnected()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    try
+    {
+        return isConnectedUnlocked();
+    }
+    catch (const std::exception& e)
+    {
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
+        return 0;
+    }
+    catch (...)
+    {
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
+        return 0;
+    }
+}
+
+int odbc::isConnectedUnlocked()
+{
+    if (!initialized_ || dbc == SQL_NULL_HDBC)
+    {
+        return 0;
+    }
+
+    SQLUINTEGER connectionDead = SQL_CD_TRUE;
+
+    const SQLRETURN ret =
+        ::SQLGetConnectAttr(
+            dbc,
+            SQL_ATTR_CONNECTION_DEAD,
+            &connectionDead,
+            static_cast<SQLINTEGER>(
+                sizeof(connectionDead)),
+            nullptr);
+
+    if (!SQL_SUCCEEDED(ret))
+    {
+        // A not-yet-connected handle commonly reaches this path. Returning 0
+        // is enough for ensureConnectedUnlocked() to reconnect.
+        return 0;
+    }
+
+    return connectionDead == SQL_CD_FALSE ? 1 : 0;
+}
+
+bool odbc::ensureConnectedUnlocked()
+{
+    if (isConnectedUnlocked() == 1)
+    {
+        return true;
+    }
+
+    (void)disconnectUnlocked();
+    return connectUnlocked() == 0;
+}
+
+bool odbc::setQueryTimeout(SQLHSTMT stmt)
+{
+    const SQLRETURN ret =
+        ::SQLSetStmtAttr(
+            stmt,
+            SQL_QUERY_TIMEOUT,
+            reinterpret_cast<SQLPOINTER>(
+                static_cast<intptr_t>(queryTimeOut)),
+            SQL_IS_UINTEGER);
+
+    if (!SQL_SUCCEEDED(ret))
+    {
+        (void)GetError("SQLSetStmtAttr(SQL_QUERY_TIMEOUT)", stmt, SQL_HANDLE_STMT);
+        return false;
+    }
+
+    return true;
+}
+
+bool odbc::getColumnText(
+    SQLHSTMT stmt,
+    SQLUSMALLINT column,
+    std::string& value)
+{
+    value.clear();
+
+    std::array<char, 512> buffer{};
+    SQLLEN indicator = 0;
+
+    for (;;)
+    {
+        buffer.fill('\0');
+
+        const SQLRETURN ret =
+            ::SQLGetData(
+                stmt,
+                column,
+                SQL_C_CHAR,
+                buffer.data(),
+                static_cast<SQLLEN>(buffer.size()),
+                &indicator);
+
+        if (indicator == SQL_NULL_DATA)
+        {
+            value = "NULL";
+            return true;
         }
 
-        SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL_IS_UINTEGER);
+        if (ret == SQL_NO_DATA)
+        {
+            return true;
+        }
 
-        ret = SQLExecDirect(stmt, (SQLCHAR*)statement.c_str(), SQL_NTS);
-        if (!SQL_SUCCEEDED(ret)) {
-          GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
-          SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-          return -1;
-        }    
-        SQLNumResultCols(stmt, &columns);//get numbers of columns
-        SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
-        //printf("Number of rows affected: %ld \n",(long int)rows);
-        NumberOfRowsAffected=(long int)rows;
-        
-        while (SQL_SUCCEEDED(ret= SQLFetch(stmt))) {
-            //cout<<"Enter..."<<endl;
-            SQLUSMALLINT i;
-            ReaderItem ri;
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLGetData", stmt, SQL_HANDLE_STMT);
+            return false;
+        }
 
+        value.append(buffer.data());
 
-            //printf("Row %d\n", row);
-            row++;
-            //ri.rowNum=row;
-            // Loop through the columns
-            for (i = 1; i <= columns; i++) {
-                //SQLINTEGER indicator;
-          SQLLEN indicator;
-                char buf[512];
-                //retrieve column data as a string
-                ret = SQLGetData(stmt, i, SQL_C_CHAR,buf, sizeof(buf), &indicator);
+        if (ret == SQL_SUCCESS)
+        {
+            return true;
+        }
 
-                if (!(ret==SQL_SUCCESS||ret==SQL_SUCCESS_WITH_INFO))
-                {
-                  	GetError("SQLGetData", stmt, SQL_HANDLE_STMT);
-				  	SQLFreeStmt(stmt, SQL_CLOSE); // Clean up before exit
-				  	SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-                	return -1;
-                }
-                if (SQL_SUCCEEDED(ret)) {
-                    // Handle null columns
-                    if (indicator == SQL_NULL_DATA) strcpy(buf, "NULL");//strcpy(buf, "NULL");
-                    //printf("  Column %u : %s\n", i, buf);
+        // SQL_SUCCESS_WITH_INFO commonly means the value was truncated to the
+        // current buffer. Continue SQLGetData() to collect the next chunk.
+    }
+}
 
-                    //ri.data.push_back(buf);
-                    ri.appendData(buf);
-                }
+int odbc::SQLSelect(
+    std::string statement,
+    std::vector<ReaderItem>* result,
+    bool FullResult)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (result == nullptr)
+    {
+        logSimpleError("SQLSelect called with null result pointer");
+        return -1;
+    }
+
+    result->clear();
+    NumberOfRowsAffected = 0;
+
+    try
+    {
+        if (!ensureConnectedUnlocked())
+        {
+            return -1;
+        }
+
+        StatementHandle statementHandle;
+
+        SQLRETURN ret =
+            ::SQLAllocHandle(
+                SQL_HANDLE_STMT,
+                dbc,
+                statementHandle.put());
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLAllocHandle(SQL_HANDLE_STMT)", dbc, SQL_HANDLE_DBC);
+            return -1;
+        }
+
+        SQLHSTMT stmt = statementHandle.get();
+
+        if (!setQueryTimeout(stmt))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLExecDirect(
+                stmt,
+                asSqlChar(statement),
+                SQL_NTS);
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
+            return -1;
+        }
+
+        if (ret == SQL_SUCCESS_WITH_INFO)
+        {
+            (void)GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
+        }
+
+        SQLSMALLINT columns = 0;
+        ret = ::SQLNumResultCols(stmt, &columns);
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLNumResultCols", stmt, SQL_HANDLE_STMT);
+            return -1;
+        }
+
+        SQLLEN rows = 0;
+        ret = ::SQLRowCount(stmt, &rows);
+
+        if (SQL_SUCCEEDED(ret))
+        {
+            NumberOfRowsAffected = static_cast<long>(rows);
+        }
+
+        std::vector<ReaderItem> rowsResult;
+
+        for (;;)
+        {
+            ret = ::SQLFetch(stmt);
+
+            if (ret == SQL_NO_DATA)
+            {
+                break;
             }
-          if (columns>=1) mList.push_back(std::move(ri));
 
-          if(FullResult==false)  break;
-        }   
+            if (!SQL_SUCCEEDED(ret))
+            {
+                (void)GetError("SQLFetch", stmt, SQL_HANDLE_STMT);
+                return -1;
+            }
 
-        *result = std::move(mList);
+            ReaderItem item;
 
-		SQLFreeStmt(stmt, SQL_CLOSE);
-        SQLFreeHandle(SQL_HANDLE_STMT, stmt); 
+            for (SQLUSMALLINT column = 1; column <= static_cast<SQLUSMALLINT>(columns); ++column)
+            {
+                std::string columnValue;
+
+                if (!getColumnText(stmt, column, columnValue))
+                {
+                    return -1;
+                }
+
+                item.appendData(std::move(columnValue));
+            }
+
+            if (columns >= 1)
+            {
+                rowsResult.push_back(std::move(item));
+            }
+
+            if (!FullResult)
+            {
+                break;
+            }
+        }
+
+        *result = std::move(rowsResult);
         return 0;
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
-            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
-        }
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
         return -1;
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
-            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
-        }
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
         return -1;
     }
 }
 
 int odbc::SQLExecutNoneQuery(std::string statement)
 {
-    SQLSMALLINT columns; // number of columns
-    SQLLEN rows; // number of rows
-    int ret=-1;
-    NumberOfRowsAffected=0;
-    SQLHSTMT stmt = SQL_NULL_HSTMT;
+    std::lock_guard<std::mutex> lock(mutex_);
 
-  try
-  {
-      if (IsConnected()!=1)
-      {
-          Disconnect();
-          if (Connect() != 0){return ret;}
-      }
+    NumberOfRowsAffected = 0;
 
-      ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt); // allocate statement handle
-      if (!SQL_SUCCEEDED(ret)) {
-        GetError("SQLAllocHandle", stmt, SQL_HANDLE_STMT);
-        return ret;
-      }
-
-      SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t)queryTimeOut, SQL_IS_UINTEGER);
-
-      ret = SQLExecDirect(stmt, (SQLCHAR*)statement.c_str(), SQL_NTS);
-      if (!SQL_SUCCEEDED(ret)) {
-        GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
-        SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-        return ret;
-      }    
-      //SQLNumResultCols(stmt, &columns);//get numbers of columns
-      ret = SQLRowCount(stmt, &rows); // get number of rows affected for UPDATE, INSERT, DELETE statements
-      if (!SQL_SUCCEEDED(ret))
-      {
-          GetError("SQLRowCount", stmt, SQL_HANDLE_STMT);
-      }
-    //  printf("Number of rows affected: %ld \n",(long int)rows);
-    
-    //  printf("Statement: %s\n",statement.c_str());
-
-      NumberOfRowsAffected=(long int)rows;
-      ret=0;
-      
-	    SQLFreeStmt(stmt, SQL_CLOSE);
-      SQLFreeHandle(SQL_HANDLE_STMT, stmt);    
-    }
-    catch (const std::exception& e)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
-            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
-        }
-    }
-    catch (...)
-    {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
-        if (stmt != SQL_NULL_HSTMT) {  // Check if handle is valid
-            SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-            stmt = SQL_NULL_HSTMT;   // Nullify after freeing
-        }
-    }
-    
-    return ret;
-}
-
-int odbc::Disconnect()
-{
-    SQLRETURN ret; //return status
     try
     {
-      SQLDisconnect(dbc); // disconnect    
+        if (!ensureConnectedUnlocked())
+        {
+            return -1;
+        }
+
+        StatementHandle statementHandle;
+
+        SQLRETURN ret =
+            ::SQLAllocHandle(
+                SQL_HANDLE_STMT,
+                dbc,
+                statementHandle.put());
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLAllocHandle(SQL_HANDLE_STMT)", dbc, SQL_HANDLE_DBC);
+            return -1;
+        }
+
+        SQLHSTMT stmt = statementHandle.get();
+
+        if (!setQueryTimeout(stmt))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLExecDirect(
+                stmt,
+                asSqlChar(statement),
+                SQL_NTS);
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
+            return -1;
+        }
+
+        if (ret == SQL_SUCCESS_WITH_INFO)
+        {
+            (void)GetError("SQLExecDirect", stmt, SQL_HANDLE_STMT);
+        }
+
+        SQLLEN rows = 0;
+        ret = ::SQLRowCount(stmt, &rows);
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLRowCount", stmt, SQL_HANDLE_STMT);
+            return -1;
+        }
+
+        NumberOfRowsAffected = static_cast<long>(rows);
+
+        return 0;
     }
     catch (const std::exception& e)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: " << e.what();
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
         return -1;
     }
     catch (...)
     {
-        std::stringstream ss;
-        ss << __func__ << ", Exception: Unknown Exception";
-        Logger::getInstance()->FnLogExceptionError(ss.str());
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
         return -1;
     }
-    return 0;
 }
 
-std::vector<std::string> odbc::GetError(char const *fn,SQLHANDLE handle,SQLSMALLINT type)
+std::vector<std::string> odbc::GetError(
+    const char* fn,
+    SQLHANDLE handle,
+    SQLSMALLINT type)
 {
-    SQLINTEGER   i = 0;
-    SQLINTEGER   native;
-    SQLCHAR      state[7];
-    SQLCHAR      text[256];
-    SQLSMALLINT  len;
-    SQLRETURN    ret;
-    std::vector<std::string> emes;
-	  std::string logMsg="";
-    emes.push_back(fn);
-    do { 
-        ret = SQLGetDiagRec(type, handle, ++i, state, &native, text,sizeof(text), &len);
-        if (SQL_SUCCEEDED(ret)) { 
-          //printf("%s:%ld:%ld:%s\n", state, (long int)i, (long int)native, text); 
+    std::vector<std::string> messages;
 
-			
-			  logMsg= std::string((char *)state ) + ":" +std::to_string(i)+ ":" ;
-			  logMsg=logMsg +std::to_string(native) + ":" + std::string((char *)text);
-        std::stringstream ss;
-        ss << logMsg ;
-        Logger::getInstance()->FnLog(ss.str(), "", "ODBC");
+    if (fn != nullptr)
+    {
+        messages.emplace_back(fn);
+    }
 
-        emes.push_back((char*)text);
-        }            
-    } while( ret == SQL_SUCCESS );
-    return emes;
+    if (handle == SQL_NULL_HANDLE)
+    {
+        return messages;
+    }
+
+    for (SQLSMALLINT record = 1;; ++record)
+    {
+        SQLCHAR state[7]{};
+        SQLINTEGER nativeError = 0;
+        SQLCHAR text[512]{};
+        SQLSMALLINT textLength = 0;
+
+        const SQLRETURN ret =
+            ::SQLGetDiagRec(
+                type,
+                handle,
+                record,
+                state,
+                &nativeError,
+                text,
+                static_cast<SQLSMALLINT>(sizeof(text)),
+                &textLength);
+
+        if (ret == SQL_NO_DATA)
+        {
+            break;
+        }
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            break;
+        }
+
+        const std::string stateText(reinterpret_cast<const char*>(state));
+        const std::string messageText(reinterpret_cast<const char*>(text));
+
+        std::ostringstream log;
+        log << stateText
+            << ':'
+            << record
+            << ':'
+            << nativeError
+            << ':'
+            << messageText;
+
+        Logger::getInstance()->FnLog(log.str(), "", "ODBC");
+
+        messages.push_back(messageText);
+    }
+
+    return messages;
 }
 
-// check connection status
-// 1 : connected
-// 0 : disconnected
-// -1: error, connection doesn't exist
-int odbc::IsConnected()
+void odbc::logSimpleError(const std::string& message) const
 {
-  SQLRETURN    ret;
-  SQLUINTEGER	uIntVal; // Unsigned int attribute values
-
-
-//  if (vPing(m_IP,pingTimeOut)==false) return -1;
-
-  ret = SQLGetConnectAttr(dbc,SQL_ATTR_CONNECTION_DEAD,(SQLPOINTER)&uIntVal,(SQLINTEGER) sizeof(uIntVal),NULL);
-  if (!SQL_SUCCEEDED(ret)) {
-    GetError("SQLGetConnectAttr(SQL_ATTR_CONNECTION_DEAD)", dbc, SQL_HANDLE_DBC);
-    return 0;
-  }
-  if (uIntVal==SQL_CD_FALSE) return 1; // The connection is open and available for statement processing.
-  if (uIntVal==SQL_CD_TRUE) return 0; // The connection to the server has been lost.
-  
-  return 0;
+    try
+    {
+        Logger::getInstance()->FnLogExceptionError(message);
+    }
+    catch (...)
+    {
+        // Logging must never make ODBC cleanup/error handling fail.
+    }
 }
 
-
-
-//@input Params: sSeasonNo, iInOut, iZoneID, AllowedHolderType
-
-//@Output Params:returnStatus (function return value), sSerialNo, iRateType, sFee, sAdminFee, sAppFee
-//               iExpireDays, iRedeemTime, sRedeemAmt, dtValidTo, dtValidFrom
-
-//note function return value is the output paras returnStatus
-int odbc::isValidSeason(const std::string & sSeasonNo,
-                          BYTE  iInOut,unsigned int iZoneID,std::string  &sSerialNo, short int &iRateType,
-                          float &sFee, float &sAdminFee, float &sAppFee,
-                          short int &iExpireDays, short int &iRedeemTime, float &sRedeemAmt,
-                          std::string &AllowedHolderType,
-                          std::string &dtValidTo,
-                          std::string &dtValidFrom)
+int odbc::isValidSeason(
+    const std::string& sSeasonNo,
+    BYTE iInOut,
+    unsigned int iZoneID,
+    std::string& sSerialNo,
+    short int& iRateType,
+    float& sFee,
+    float& sAdminFee,
+    float& sAppFee,
+    short int& iExpireDays,
+    short int& iRedeemTime,
+    float& sRedeemAmt,
+    std::string& AllowedHolderType,
+    std::string& dtValidTo,
+    std::string& dtValidFrom)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
 
+    sSerialNo.clear();
+    iRateType = 0;
+    sFee = 0.0F;
+    sAdminFee = 0.0F;
+    sAppFee = 0.0F;
+    iExpireDays = 0;
+    iRedeemTime = 0;
+    sRedeemAmt = 0.0F;
+    dtValidTo.clear();
+    dtValidFrom.clear();
 
-    int nRet=-1;
-    bool debugFlag=false;
-    SQLHSTMT stmt = SQL_NULL_HSTMT;
-
-
-try
-{
-
-
-  char* connectionStr;
- 	SQLCHAR outstr[1024];
-	SQLSMALLINT outstrlen;
-
-
-    CE_Time tmpDt,tmpDt2;
-
-    std::string strCallSP   = "{CALL sp_IsValidSeason (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)}";
-
-    //1st ?: input Params
-    //2nd ?: input Params
-    //10th ?: input params
-    //13th ?: input params
-
-    //the rest ?: output params
-
-    // SQLBindParameter output variables.
-     int returnStatus=0;
-    SQLCHAR tmpSerialNo[5]={0,};
-    SQLCHAR tmpValidTo[24]={0,};
-    SQLCHAR tmpValidFrom[24]={0,};
-
-    //SQL len
-    SQLLEN len0=0,lenNTS=SQL_NTS;
-    SQLLEN lenNULL=SQL_NULL_DATA;
-
-    //SQLCHAR NullParam[16]={'N','U','L','L',0};
-
-    //clear all by by ref paras
-    sSerialNo="";
-    iRateType=0;
-    sFee=0;
-    sAdminFee=0;
-    sAppFee=0;
-    iExpireDays=0;
-    iRedeemTime=0;
-    sRedeemAmt=0;
-    dtValidTo="";
-    dtValidFrom="";
-    //------------------------------
-
-    if (IsConnected()!=1)
+    try
     {
-        Disconnect();
-        if (Connect()!=0 ){return -1;} 
-    }
-
-
-//    std::cout<< "#Input paras#"<<std::endl;
-//
-//    std::cout<< "Season No= " << sSeasonNo<< std::endl;
-//
-//    std::cout<< "iZoneID= " << iZoneID<< std::endl;
-//
-//    printf("iInOut: %d\n", iInOut);
-//    std::cout<< "AllowedHolderType= " <<AllowedHolderType<<std::endl;
-//
-//    std::cout<< "---------------------------------"<<std::endl;
-
-
-
-
-	nRet= SQLAllocHandle( SQL_HANDLE_STMT, dbc, &stmt);
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLAllocHandle(SQL_HANDLE_STMT)",  stmt, SQL_HANDLE_STMT);
-      //exit(1);
-      //throw(20);
-      //goto exit;
-      return -1;
-    }
-
-    //(SQLPOINTER)(intptr_t)TimeOutVal
-SQLSetStmtAttr(stmt, SQL_QUERY_TIMEOUT, (SQLPOINTER)(intptr_t) queryTimeOut, SQL_IS_UINTEGER);
-
-    //m_log->WriteAndPrint("Set connect DB diff: "+
-                         //std::to_string(m_log->getDiffLogTimeinS()));
-
-//--------------------------------------------------------------------------------
-// Bind input parameter1
-
-
-    if (sSeasonNo=="")
-    {
-       nRet=  SQLBindParameter(stmt, 1, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 16, 0, (void*)sSeasonNo.c_str(),
-                               16, &lenNULL);
-    }
-    else
-    {
-
-
-           //sSeasonNo must convert to char* first
-         nRet=  SQLBindParameter(stmt, 1, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 16, 0, (void*)sSeasonNo.c_str(),
-                               16, &lenNTS);
-
-    }
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_INPUT1)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-// Bind input parameter2
-
-
-    if (iInOut==SQL_NULL_DATA)
-    {
-       nRet=  SQLBindParameter(stmt, 2, SQL_PARAM_INPUT, SQL_C_TINYINT,
-                               SQL_TINYINT, len0, 0, &iInOut, len0, &lenNULL);
-
-    }
-    else
-    {
-
-       nRet=  SQLBindParameter(stmt, 2, SQL_PARAM_INPUT, SQL_C_TINYINT,
-                               SQL_TINYINT, len0, 0, &iInOut, len0, NULL); //NULL means cannot have null value pass in
-    }
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_INPUT2)", stmt, SQL_HANDLE_STMT);
-      //exit(1);
-      //throw(20);
-      //goto exit;
-      return -1;
-    }
-    //----------------------------------
-
-
-    // Bind the output parameter3 to variable RetStatus.
-    nRet= SQLBindParameter(stmt, 3, SQL_PARAM_OUTPUT, SQL_C_TINYINT,
-                               SQL_TINYINT, len0, 0, &returnStatus, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT3)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-
-     // Bind the output parameter4 to variable SerialNo.
-    nRet= SQLBindParameter(stmt, 4, SQL_PARAM_OUTPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 5, 0, (SQLCHAR*)&tmpSerialNo, 5, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT4)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-    // Bind the output parameter5 to variable RateType.
-    nRet= SQLBindParameter(stmt, 5, SQL_PARAM_OUTPUT, SQL_C_SSHORT,
-                               SQL_SMALLINT, len0, 0, &iRateType, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT5)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-   // Bind the output parameter6 to variable SeasonFee.
-    nRet= SQLBindParameter(stmt, 6, SQL_PARAM_OUTPUT, SQL_C_FLOAT,
-                               SQL_DECIMAL, 5, 2, &sFee, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT6)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-    // Bind the output parameter7 to variable adminFee.
-    nRet= SQLBindParameter(stmt, 7, SQL_PARAM_OUTPUT, SQL_C_FLOAT,
-                               SQL_DECIMAL, 5, 2, &sAdminFee, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT7)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-     // Bind the output parameter8 to variable AppFee.
-    nRet= SQLBindParameter(stmt, 8, SQL_PARAM_OUTPUT, SQL_C_FLOAT,
-                               SQL_DECIMAL, 5, 2, &sAppFee, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT8)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-     // Bind the output parameter9 to variable ExpireDays
-    nRet= SQLBindParameter(stmt, 9, SQL_PARAM_OUTPUT, SQL_C_SSHORT,
-                               SQL_SMALLINT, len0, 0, &iExpireDays, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT9)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-    // Bind the input parameter10 to variable ZoneID
-    nRet= SQLBindParameter(stmt, 10, SQL_PARAM_INPUT, SQL_C_TINYINT,
-                               SQL_TINYINT, len0, 0, &iZoneID, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT10)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-     // Bind the output parameter11 to variable RedeemTime
-    nRet= SQLBindParameter(stmt, 11, SQL_PARAM_OUTPUT, SQL_C_SSHORT,
-                               SQL_SMALLINT, len0, 0, &iRedeemTime, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT11)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-     // Bind the output parameter12 to variable RedeemAmt
-    nRet= SQLBindParameter(stmt, 12, SQL_PARAM_OUTPUT, SQL_C_FLOAT,
-                               SQL_DECIMAL, 5, 2, &sRedeemAmt, len0, &lenNTS);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_OUTPUT12)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-    // Bind input parameter13
-
-    if (AllowedHolderType=="")
-    {
-       nRet=  SQLBindParameter(stmt, 13, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 20, 0, (void*)AllowedHolderType.c_str(), 20, &lenNULL);
-
-    }
-    else
-    {
-         nRet=  SQLBindParameter(stmt, 13, SQL_PARAM_INPUT, SQL_C_CHAR,
-                               SQL_VARCHAR, 20, 0, (void*)AllowedHolderType.c_str(), 20, &lenNTS);
-
-    }
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLBindParameter(SQL_PARAM_INPUT13)", stmt, SQL_HANDLE_STMT);
-      //goto exit;
-      return -1;
-    }
-    //-----------------------------------------------------------------------------
-
-
-
-     // Bind the output parameter14 to variable ValidTo
-        nRet= SQLBindParameter(stmt, 14, SQL_PARAM_OUTPUT, SQL_C_CHAR,
-                               SQL_TIMESTAMP, sizeof(tmpValidTo), 0, (SQLCHAR*)&tmpValidTo,
-                               sizeof(tmpValidTo), &lenNTS);
-
-
-        if (!SQL_SUCCEEDED(nRet))
+        if (!ensureConnectedUnlocked())
         {
-          GetError("SQLBindParameter(SQL_PARAM_OUTPUT14)", stmt, SQL_HANDLE_STMT);
-          //goto exit;
-          return -1;
-        }
-        //-----------------------------------------------------------------------------
-
-
-        // Bind the output parameter15 to variable ValidFrom
-        nRet= SQLBindParameter(stmt, 15, SQL_PARAM_OUTPUT, SQL_C_CHAR,
-                               SQL_TIMESTAMP, sizeof(tmpValidFrom), 0, (SQLCHAR*)&tmpValidFrom,
-                               sizeof(tmpValidFrom), &lenNTS);
-
-
-        if (!SQL_SUCCEEDED(nRet))
-        {
-          GetError("SQLBindParameter(SQL_PARAM_OUTPUT15)", stmt, SQL_HANDLE_STMT);
-          //goto exit;
-          return -1;
-        }
-        //-----------------------------------------------------------------------------
-         
-    nRet= SQLPrepare (stmt, (SQLCHAR*)strCallSP.c_str(), SQL_NTS);
-
-     if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLPrepare(SQL_HANDLE_STMT)", stmt, SQL_HANDLE_STMT);
-      //exit(1);
-      //throw(20);
-      //goto exit;
-      return -1;
-    }
-
- //-----------------------------------------------------------------------------
-    //if (IsConnected()!=1) return -1;
-
-    nRet=SQLExecute (stmt);
-
-    if (!SQL_SUCCEEDED(nRet))
-    {
-      GetError("SQLExecute(SQL_HANDLE_STMT)", stmt, SQL_HANDLE_STMT);
-      //exit(1);
-      //throw(20);
-      //goto exit;
-      return -1;
-    }
-
- //-----------------------------------------------------------------------------
-
-    // Clear any result sets generated.
-
-      
-   while ( ( nRet= SQLMoreResults(stmt) ) != SQL_NO_DATA )
-    ;
-
-        //printf("Return Parameter  : %d\n", RetParam);
-        //printf("Number of Records move to MovementRecord: %d\n", OutParam);
-
-        //if (strlen((char*)tmpValidTo)==0) strcpy((char*)&tmpValidTo, (char*)&NullParam);
-        //if (strlen((char*)tmpValidFrom)==0) strcpy((char*)&tmpValidFrom, (char*)&NullParam);
-        //if (strlen((char*)tmpSerialNo)==0) strcpy((char*)&tmpSerialNo, (char*)&NullParam);
-
-        //Empty string get from ValidTo output paras
-        if (strlen((char*)tmpValidTo)==0)
-        {
-            time_t now;
-
-            time(&now);
-
-            tm * ltm=localtime(&now);
-
-            //must add 1900 to year and add 1 to month
-            //to get exact current date time
-            tmpDt.SetTime(1900+ltm->tm_year,ltm->tm_mon+1,ltm->tm_mday,
-            ltm->tm_hour,ltm->tm_min,ltm->tm_sec);
-
-            //result need to - 4 years
-            tmpDt.SetTime(tmpDt.Year()-4,tmpDt.Month(),tmpDt.Day(),
-            tmpDt.Hour(),tmpDt.Minute(),tmpDt.Second());
-
-            dtValidTo=tmpDt.DateTimeString();
-        }
-        else //add 1 day
-        {
-
-            tmpDt.SetTime(std::string((char*)tmpValidTo));
-			      tmpDt.SetTime(tmpDt.GetUnixTimestamp()+86400);
-
-            //tmpDt.SetTime(tmpDt.Year(),tmpDt.Month(),tmpDt.Day()+1,
-           // tmpDt.Hour(),tmpDt.Minute(),tmpDt.Second());
-
-            //std::cout<< "tmpDt= "<< tmpDt.DateTimeString()<<std::endl;
-            dtValidTo=tmpDt.DateTimeString();
+            return -1;
         }
 
+        StatementHandle statementHandle;
 
-        if (strlen((char*)tmpValidFrom)==0)
+        SQLRETURN ret =
+            ::SQLAllocHandle(
+                SQL_HANDLE_STMT,
+                dbc,
+                statementHandle.put());
+
+        if (!SQL_SUCCEEDED(ret))
         {
+            (void)GetError("SQLAllocHandle(SQL_HANDLE_STMT)", dbc, SQL_HANDLE_DBC);
+            return -1;
+        }
 
-            time_t now;
+        SQLHSTMT stmt = statementHandle.get();
 
-            time(&now);
+        if (!setQueryTimeout(stmt))
+        {
+            return -1;
+        }
 
-            tm * ltm=localtime(&now);
+        auto bindSucceeded =
+            [this, stmt](
+                SQLRETURN bindRet,
+                const char* name)
+            {
+                if (SQL_SUCCEEDED(bindRet))
+                {
+                    return true;
+                }
 
-            //must add 1900 to year and add 1 to month
-            //to get exact current date
-            //time fixed to 00:00:00
-            tmpDt2.SetTime(1900+ltm->tm_year,ltm->tm_mon+1,ltm->tm_mday,
-            0,0,0);
+                (void)GetError(name, stmt, SQL_HANDLE_STMT);
+                return false;
+            };
 
-             dtValidFrom= tmpDt2.DateTimeString();
+        SQLSCHAR returnStatusValue = 0;
+        SQLCHAR tmpSerialNo[5]{};
+        SQLCHAR tmpValidTo[24]{};
+        SQLCHAR tmpValidFrom[24]{};
 
+        SQLLEN lenNTS = SQL_NTS;
+        SQLLEN lenNULL = SQL_NULL_DATA;
+
+        SQLLEN* seasonIndicator = sSeasonNo.empty() ? &lenNULL : &lenNTS;
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                1,
+                SQL_PARAM_INPUT,
+                SQL_C_CHAR,
+                SQL_VARCHAR,
+                16,
+                0,
+                const_cast<char*>(sSeasonNo.c_str()),
+                16,
+                seasonIndicator);
+
+        if (!bindSucceeded( ret, "SQLBindParameter(SQL_PARAM_INPUT1)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                2,
+                SQL_PARAM_INPUT,
+                SQL_C_TINYINT,
+                SQL_TINYINT,
+                0,
+                0,
+                &iInOut,
+                0,
+                nullptr);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_INPUT2)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                3,
+                SQL_PARAM_OUTPUT,
+                SQL_C_TINYINT,
+                SQL_TINYINT,
+                0,
+                0,
+                &returnStatusValue,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT3)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                4,
+                SQL_PARAM_OUTPUT,
+                SQL_C_CHAR,
+                SQL_VARCHAR,
+                sizeof(tmpSerialNo),
+                0,
+                tmpSerialNo,
+                sizeof(tmpSerialNo),
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT4)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                5,
+                SQL_PARAM_OUTPUT,
+                SQL_C_SSHORT,
+                SQL_SMALLINT,
+                0,
+                0,
+                &iRateType,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT5)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                6,
+                SQL_PARAM_OUTPUT,
+                SQL_C_FLOAT,
+                SQL_DECIMAL,
+                5,
+                2,
+                &sFee,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT6)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                7,
+                SQL_PARAM_OUTPUT,
+                SQL_C_FLOAT,
+                SQL_DECIMAL,
+                5,
+                2,
+                &sAdminFee,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT7)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                8,
+                SQL_PARAM_OUTPUT,
+                SQL_C_FLOAT,
+                SQL_DECIMAL,
+                5,
+                2,
+                &sAppFee,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT8)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                9,
+                SQL_PARAM_OUTPUT,
+                SQL_C_SSHORT,
+                SQL_SMALLINT,
+                0,
+                0,
+                &iExpireDays,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT9)"))
+        {
+            return -1;
+        }
+
+        SQLCHAR zoneIdValue = static_cast<SQLCHAR>(iZoneID);
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                10,
+                SQL_PARAM_INPUT,
+                SQL_C_UTINYINT,
+                SQL_TINYINT,
+                0,
+                0,
+                &zoneIdValue,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_INPUT10)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                11,
+                SQL_PARAM_OUTPUT,
+                SQL_C_SSHORT,
+                SQL_SMALLINT,
+                0,
+                0,
+                &iRedeemTime,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT11)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                12,
+                SQL_PARAM_OUTPUT,
+                SQL_C_FLOAT,
+                SQL_DECIMAL,
+                5,
+                2,
+                &sRedeemAmt,
+                0,
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT12)"))
+        {
+            return -1;
+        }
+
+        SQLLEN* holderIndicator = AllowedHolderType.empty() ? &lenNULL : &lenNTS;
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                13,
+                SQL_PARAM_INPUT,
+                SQL_C_CHAR,
+                SQL_VARCHAR,
+                20,
+                0,
+                AllowedHolderType.data(),
+                20,
+                holderIndicator);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_INPUT13)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                14,
+                SQL_PARAM_OUTPUT,
+                SQL_C_CHAR,
+                SQL_TIMESTAMP,
+                sizeof(tmpValidTo),
+                0,
+                tmpValidTo,
+                sizeof(tmpValidTo),
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT14)"))
+        {
+            return -1;
+        }
+
+        ret =
+            ::SQLBindParameter(
+                stmt,
+                15,
+                SQL_PARAM_OUTPUT,
+                SQL_C_CHAR,
+                SQL_TIMESTAMP,
+                sizeof(tmpValidFrom),
+                0,
+                tmpValidFrom,
+                sizeof(tmpValidFrom),
+                &lenNTS);
+
+        if (!bindSucceeded(ret, "SQLBindParameter(SQL_PARAM_OUTPUT15)"))
+        {
+            return -1;
+        }
+
+        std::string storedProcedure =
+            "{CALL sp_IsValidSeason (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)}";
+
+        ret =
+            ::SQLPrepare(
+                stmt,
+                asSqlChar(storedProcedure),
+                SQL_NTS);
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLPrepare(SQL_HANDLE_STMT)", stmt, SQL_HANDLE_STMT);
+            return -1;
+        }
+
+        ret = ::SQLExecute(stmt);
+
+        if (!SQL_SUCCEEDED(ret))
+        {
+            (void)GetError("SQLExecute(SQL_HANDLE_STMT)", stmt, SQL_HANDLE_STMT);
+            return -1;
+        }
+
+        for (;;)
+        {
+            ret = ::SQLMoreResults(stmt);
+
+            if (ret == SQL_NO_DATA)
+            {
+                break;
+            }
+
+            if (!SQL_SUCCEEDED(ret))
+            {
+                (void)GetError("SQLMoreResults", stmt, SQL_HANDLE_STMT);
+                return -1;
+            }
+        }
+
+        // The original implementation bound tmpSerialNo but never copied it
+        // back to sSerialNo. Preserve the stored procedure output correctly.
+        sSerialNo = reinterpret_cast<const char*>(tmpSerialNo);
+
+        CE_Time validTo;
+        CE_Time validFrom;
+
+        if (std::strlen(reinterpret_cast<const char*>(tmpValidTo)) == 0)
+        {
+            const std::time_t now = std::time(nullptr);
+            std::tm localTime{};
+
+#if defined(_WIN32)
+            localtime_s(&localTime, &now);
+#else
+            localtime_r(&now, &localTime);
+#endif
+
+            validTo.SetTime(
+                1900 + localTime.tm_year,
+                localTime.tm_mon + 1,
+                localTime.tm_mday,
+                localTime.tm_hour,
+                localTime.tm_min,
+                localTime.tm_sec);
+
+            validTo.SetTime(
+                validTo.Year() - 4,
+                validTo.Month(),
+                validTo.Day(),
+                validTo.Hour(),
+                validTo.Minute(),
+                validTo.Second());
+
+            dtValidTo = validTo.DateTimeString();
         }
         else
         {
+            validTo.SetTime(
+                std::string(
+                    reinterpret_cast<const char*>(
+                        tmpValidTo)));
 
-            dtValidFrom= std::string((char*)tmpValidFrom);
+            // Preserve existing business rule: ValidTo is inclusive, so add
+            // one day to the stored-procedure value.
+            validTo.SetTime(
+                validTo.GetUnixTimestamp() +
+                86400);
+
+            dtValidTo = validTo.DateTimeString();
         }
 
-        /*std::cout<< "#Output paras#"<<std::endl;
-        std::cout<< "SerialNo= " << tmpSerialNo<< std::endl;
-        std::cout<< "returnStatus= " << returnStatus <<std::endl;
-        std::cout<< "iRateType= " << iRateType <<std::endl;
-        std::cout<< "iExpireDays= " << iExpireDays<<std::endl;
-        std::cout<< "sRedeemAmt= " << sRedeemAmt <<std::endl;
+        if (std::strlen(reinterpret_cast<const char*>(tmpValidFrom)) == 0)
+        {
+            const std::time_t now = std::time(nullptr);
+            std::tm localTime{};
 
+#if defined(_WIN32)
+            localtime_s(&localTime, &now);
+#else
+            localtime_r(&now, &localTime);
+#endif
 
-        printf("sFee= %.2f\n", sFee);
-        printf("sAdminFee= %.2f\n", sAdminFee);
+            validFrom.SetTime(
+                1900 + localTime.tm_year,
+                localTime.tm_mon + 1,
+                localTime.tm_mday,
+                0,
+                0,
+                0);
 
-
-        printf("sRedeemAmt= %.2f\n", sRedeemAmt);*/
-
-
-         
-		SQLFreeStmt(stmt, SQL_CLOSE);
-      	SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-        nRet=returnStatus;   
-
-
-
-}
-/*catch(const std::exception &e){
-    m_log->WriteAndPrint("SPisValid Season: exception");
-    }*/
-catch (const std::exception& e)
-{
-    std::stringstream ss;
-    ss << __func__ << ", Exception: " << e.what();
-    Logger::getInstance()->FnLogExceptionError(ss.str());
-	if (stmt != SQL_NULL_HSTMT) {
-            SQLFreeStmt(stmt, SQL_CLOSE); // Close cursor
-            SQLFreeHandle(SQL_HANDLE_STMT, stmt); // Destroy handle
+            dtValidFrom = validFrom.DateTimeString();
         }
-    nRet=-1;
-}
-catch (...)
-{
-    std::stringstream ss;
-    ss << __func__ << ", Exception: Unknown Exception";
-    Logger::getInstance()->FnLogExceptionError(ss.str());
-	if (stmt != SQL_NULL_HSTMT) {
-            SQLFreeStmt(stmt, SQL_CLOSE); // Close cursor
-            SQLFreeHandle(SQL_HANDLE_STMT, stmt); // Destroy handle
+        else
+        {
+            dtValidFrom = reinterpret_cast<const char*>(tmpValidFrom);
         }
-    nRet=-1;
+
+        return static_cast<int>(returnStatusValue);
+    }
+    catch (const std::exception& e)
+    {
+        logSimpleError(std::string(__func__) + ", Exception: " + e.what());
+        return -1;
+    }
+    catch (...)
+    {
+        logSimpleError(std::string(__func__) + ", Exception: Unknown Exception");
+        return -1;
+    }
 }
-
-
-
-
-    return nRet;
-
-}
-
- bool odbc::vPing(string IP,float timeOut)
- {
-
- 	std::string details;
-
-  return PingWithTimeOut(std::string(IP),timeOut, details);
- }

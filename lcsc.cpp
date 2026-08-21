@@ -29,6 +29,7 @@
 #include "log.h"
 #include "mount.h"
 #include "operation.h"
+#include "ping.h"
 #include "thread_pool_helper.h"
 
 // CscPacket Class

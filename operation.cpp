@@ -33,6 +33,7 @@
 #include "boost/algorithm/string.hpp"
 #include "eep_client.h"
 #include "chu_client.h"
+#include "ping.h"
 
 operation* operation::operation_ = nullptr;
 std::mutex operation::mutex_;

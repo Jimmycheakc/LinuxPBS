@@ -83,6 +83,7 @@ private:
     static LoadAverage getLoadAverage();
     static long getCpuCoreCount();
     static std::uint64_t getOpenFileDescriptorCount();
+    static std::uint64_t getApplicationRuntimeSeconds();
 
     static double percentage(std::uint64_t value, std::uint64_t total);
 

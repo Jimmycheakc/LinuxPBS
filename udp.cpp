@@ -100,7 +100,7 @@ std::vector<std::string> splitCsv(std::string_view text)
 
 void logInvalidPacket(const std::string& reason)
 {
-    Logger::getInstance()->FnLog("UDP: [RX] Invalid packet | " + reason, "", "UDP");
+    Logger::getInstance()->FnLog("[RX] Invalid packet | " + reason, "", "UDP");
 }
 
 
@@ -239,7 +239,7 @@ void udpclient::startOnStrand()
     started_ = true;
 
     Logger::getInstance()->FnLog(
-        "UDP: [START] Listening | LocalPort=" +
+        "[START] Listening | LocalPort=" +
             std::to_string(localPort_) +
             " | Remote=" +
             serverEndpoint_.address().to_string() +
@@ -1115,7 +1115,7 @@ void udpclient::processData(std::string_view packet)
 
 void udpclient::logTransportError(const std::string& message) const
 {
-    Logger::getInstance()->FnLog("UDP: " + message, "", "UDP");
+    Logger::getInstance()->FnLog(message, "", "UDP");
 }
 
 HeartbeatUdpServer::HeartbeatUdpServer(
@@ -1283,5 +1283,5 @@ void HeartbeatUdpServer::scheduleNextHeartbeatOnStrand()
 
 void HeartbeatUdpServer::logError(const std::string& message) const
 {
-    Logger::getInstance()->FnLog("UDP: " + message, "", "UDP");
+    Logger::getInstance()->FnLog(message, "", "UDP");
 }

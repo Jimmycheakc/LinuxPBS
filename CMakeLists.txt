@@ -51,8 +51,8 @@ set(SOURCE_FILES
     event_manager.cpp
     event_handler.cpp
     mount.cpp
-    lcsc.cpp
     ping.cpp
+    lcsc.cpp
     udp.cpp
     ce_time.cpp
     odbc.cpp

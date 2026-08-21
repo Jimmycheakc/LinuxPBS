@@ -29,6 +29,7 @@
 #include "eep_client.h"
 #include "chu_client.h"
 #include "shutdown_manager.h"
+#include "ping.h"
 
 #if defined(__linux__)
 #include <pthread.h>

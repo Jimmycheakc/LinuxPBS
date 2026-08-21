@@ -86,75 +86,147 @@ void SystemInfo::FnLogSysInfo() const
     const DiskInfo rootDisk = getDiskInfo("/");
     const ProcessInfo process = getProcessInfo();
 
+    const std::uint64_t applicationRuntimeSeconds = getApplicationRuntimeSeconds();
+
     std::ostringstream logStream;
 
-    logStream << "SYSTEM: [INFO]";
+    constexpr int kLabelWidth = 39;
+
+    // Align continuation lines with the start of the first log message.
+    const std::string lineIndent(33, ' ');
+
+    const auto appendInfo =
+        [&logStream, &lineIndent](
+            const std::string& label,
+            const auto& value)
+        {
+            logStream
+                << lineIndent
+                << "[*] "
+                << std::right
+                << std::setw(kLabelWidth)
+                << label
+                << " = "
+                << value
+                << '\n';
+        };
+
+    logStream << "*** Start display system information ***\n";
 
     if (identity.valid)
     {
-        logStream
-            << " Host=" << identity.hostname
-            << " | Kernel=" << identity.kernel
-            << " | Arch=" << identity.architecture;
+        appendInfo("Hostname", identity.hostname);
+
+        appendInfo("Kernel", identity.kernel);
+
+        appendInfo("Architecture", identity.architecture);
     }
 
     if (runtime.valid)
     {
         const double uptimeDays =
-            static_cast<double>(runtime.uptimeSeconds) /
-            static_cast<double>(kSecondsPerDay);
+            static_cast<double>(
+                runtime.uptimeSeconds) /
+            static_cast<double>(
+                kSecondsPerDay);
 
-        logStream
-            << " | Uptime=" << runtime.uptimeSeconds << "s"
-            << " (" << std::fixed << std::setprecision(2)
-            << uptimeDays << "d)"
-            << " | SystemProcesses=" << runtime.processCount;
+        appendInfo("System uptime since boot (seconds)", runtime.uptimeSeconds);
+
+        {
+            std::ostringstream value;
+            value
+                << std::fixed
+                << std::setprecision(2)
+                << uptimeDays;
+
+            appendInfo("System uptime since boot (days)", value.str());
+        }
+    }
+
+    {
+        const double applicationRuntimeDays =
+            static_cast<double>(
+                applicationRuntimeSeconds) /
+            static_cast<double>(
+                kSecondsPerDay);
+
+        appendInfo("Application runtime (seconds)", applicationRuntimeSeconds);
+
+        std::ostringstream value;
+        value
+            << std::fixed
+            << std::setprecision(2)
+            << applicationRuntimeDays;
+
+        appendInfo("Application runtime (days)", value.str());
+    }
+
+    if (runtime.valid)
+    {
+        appendInfo("Number of processes running", runtime.processCount);
     }
 
     if (cpuCoreCount > 0)
     {
-        logStream << " | CPU Cores=" << cpuCoreCount;
+        appendInfo("CPU cores", cpuCoreCount);
     }
 
     if (loadAverage.valid)
     {
-        logStream
-            << " | Load="
-            << std::fixed << std::setprecision(2)
-            << loadAverage.values[0] << ","
-            << loadAverage.values[1] << ","
+        std::ostringstream value;
+
+        value
+            << std::fixed
+            << std::setprecision(2)
+            << loadAverage.values[0]
+            << " / "
+            << loadAverage.values[1]
+            << " / "
             << loadAverage.values[2];
+
+        appendInfo("Load average (1m / 5m / 15m)", value.str());
     }
 
     if (memory.valid)
     {
-        logStream
-            << " | RAM Total=" << formatGiB(memory.totalBytes)
-            << " | RAM Available=" << formatGiB(memory.availableBytes)
-            << " | RAM Used=" << formatPercent(memory.usedPercent)
-            << " | SWAP Total=" << formatGiB(memory.swapTotalBytes)
-            << " | SWAP Free=" << formatGiB(memory.swapFreeBytes)
-            << " | SWAP Used=" << formatPercent(memory.swapUsedPercent);
+        appendInfo("Total RAM memory", formatGiB(memory.totalBytes));
+
+        appendInfo("Available RAM memory", formatGiB(memory.availableBytes));
+
+        appendInfo("Used RAM memory", formatPercent(memory.usedPercent));
+
+        appendInfo("Total SWAP", formatGiB(memory.swapTotalBytes));
+
+        appendInfo("Free SWAP", formatGiB(memory.swapFreeBytes));
+
+        appendInfo("Used SWAP", formatPercent(memory.swapUsedPercent));
     }
 
     if (rootDisk.valid)
     {
-        logStream
-            << " | Disk(/) Total=" << formatGiB(rootDisk.totalBytes)
-            << " | Disk(/) Available=" << formatGiB(rootDisk.availableBytes)
-            << " | Disk(/) Used=" << formatPercent(rootDisk.usedPercent);
+        appendInfo("Root disk total", formatGiB(rootDisk.totalBytes));
+
+        appendInfo("Root disk available", formatGiB(rootDisk.availableBytes));
+
+        appendInfo("Root disk used", formatPercent(rootDisk.usedPercent));
     }
 
     if (process.valid)
     {
-        logStream
-            << " | App=" << process.name
-            << " | PID=" << process.pid
-            << " | App RSS=" << formatMiB(process.rssBytes)
-            << " | App VmSize=" << formatMiB(process.virtualMemoryBytes)
-            << " | App Threads=" << process.threadCount
-            << " | App FDs=" << process.openFileDescriptors;
+        appendInfo("Application name", process.name);
+
+        appendInfo("Application PID", process.pid);
+
+        appendInfo("Application RSS", formatMiB(process.rssBytes));
+
+        appendInfo("Application virtual memory", formatMiB(process.virtualMemoryBytes));
+
+        appendInfo("Application threads", process.threadCount);
+
+        appendInfo("Application open FDs", process.openFileDescriptors);
     }
+
+    logStream << lineIndent << "*** End display system information ***";
 
     Logger::getInstance()->FnLog(logStream.str());
 }
@@ -533,4 +605,94 @@ std::string SystemInfo::formatPercent(double value)
         << "%";
 
     return stream.str();
+}
+
+std::uint64_t
+SystemInfo::getApplicationRuntimeSeconds()
+{
+    std::ifstream file("/proc/self/stat");
+
+    if (!file.is_open())
+    {
+        return 0;
+    }
+
+    std::string line;
+
+    if (!std::getline(file, line))
+    {
+        return 0;
+    }
+
+    // /proc/self/stat field 2 is the process name enclosed
+    // in parentheses and can contain spaces, so start parsing
+    // after the final ')'.
+    const std::size_t closingParenthesis = line.rfind(')');
+
+    if (closingParenthesis == std::string::npos)
+    {
+        return 0;
+    }
+
+    std::istringstream stream(line.substr(closingParenthesis + 2));
+
+    char processState{};
+
+    if (!(stream >> processState))
+    {
+        return 0;
+    }
+
+    // We are currently at field 3 (state).
+    // Skip fields 4 through 21.
+    std::string ignored;
+
+    for (int field = 4; field <= 21; ++field)
+    {
+        if (!(stream >> ignored))
+        {
+            return 0;
+        }
+    }
+
+    // Field 22:
+    // process start time in clock ticks since system boot.
+    std::uint64_t startTimeTicks{0};
+
+    if (!(stream >> startTimeTicks))
+    {
+        return 0;
+    }
+
+    const long clockTicksPerSecond = ::sysconf(_SC_CLK_TCK);
+
+    if (clockTicksPerSecond <= 0)
+    {
+        return 0;
+    }
+
+    struct ::sysinfo info{};
+
+    if (::sysinfo(&info) != 0)
+    {
+        return 0;
+    }
+
+    const std::uint64_t processStartSeconds =
+        startTimeTicks /
+        static_cast<std::uint64_t>(
+            clockTicksPerSecond);
+
+    const std::uint64_t systemUptimeSeconds =
+        info.uptime > 0
+            ? static_cast<std::uint64_t>(
+                  info.uptime)
+            : 0ULL;
+
+    if (systemUptimeSeconds < processStartSeconds)
+    {
+        return 0;
+    }
+
+    return systemUptimeSeconds - processStartSeconds;
 }

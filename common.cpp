@@ -26,9 +26,9 @@ void Common::FnLogExecutableInfo(const std::string& str)
     std::ostringstream info;
     info << "start "
          << FnGetFileName(str)
-         << " | Version="
+         << " , Version="
          << SW_VERSION
-         << " | Build="
+         << " , Build="
          << BUILD_TIMESTAMP;
     Logger::getInstance()->FnLog(info.str());
 }
