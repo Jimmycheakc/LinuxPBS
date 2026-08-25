@@ -28,8 +28,8 @@
 
 namespace
 {
-constexpr int kMaxMountAttempts = 3;
-constexpr int kMaxUnmountAttempts = 3;
+constexpr int kMaxMountAttempts = 2;
+constexpr int kMaxUnmountAttempts = 1;
 
 struct MountRegistryEntry
 {

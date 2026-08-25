@@ -1,39 +1,47 @@
 #pragma once
 
-#include <iostream>
+#include <atomic>
+#include <condition_variable>
 #include <mutex>
-#include "boost/asio.hpp"
 
-class ShutdownManager
+// Passive shutdown coordinator.
+//
+// Responsibilities:
+//   - record a shutdown request exactly once
+//   - wake the main/lifecycle thread
+//
+// Non-responsibilities:
+//   - does not own an io_context
+//   - does not own a thread
+//   - does not stop io_context directly
+//   - does not close hardware/modules
+//   - does not perform blocking work
+class ShutdownManager final
 {
-
 public:
-
     static ShutdownManager* getInstance();
 
-    void set(boost::asio::io_context* io, boost::asio::executor_work_guard<boost::asio::io_context::executor_type>* guard);
-    boost::asio::io_context* getIoContext();
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type>* getWorkGuard();
-    
-    // Graceful shutdown callable from anywhere
-    void gracefulShutdown();
-    
-    /**
-     * Singleton ShutdownManager should not be cloneable.
-     */
-    ShutdownManager (ShutdownManager& shutdownManager) = delete;
+    // Thread-safe. May be called from signal handlers dispatched by Asio,
+    // UDP/module threads, or other application threads.
+    void FnRequestShutdown();
 
-    /**
-     * Singleton ShutdownManager should not be assignable.
-     */
-    void operator=(const ShutdownManager&) = delete;
+    // Blocks the caller until shutdown has been requested.
+    // Intended for the main/lifecycle thread only.
+    void FnWaitForShutdown();
+
+    bool FnIsShutdownRequested() const;
+
+    ShutdownManager(const ShutdownManager&) = delete;
+    ShutdownManager& operator=(const ShutdownManager&) = delete;
+    ShutdownManager(ShutdownManager&&) = delete;
+    ShutdownManager& operator=(ShutdownManager&&) = delete;
 
 private:
-    static ShutdownManager* shutdownManager_;
-    static std::mutex mutex_;
-    boost::asio::io_context* ioContext_ = nullptr;
-    boost::asio::executor_work_guard<boost::asio::io_context::executor_type>* workGuard_ = nullptr;
-    std::atomic<bool> shutdownInitiated_{false};
-    
-    ShutdownManager();
+    ShutdownManager() = default;
+    ~ShutdownManager() = default;
+
+    std::atomic<bool> shutdownRequested_{false};
+
+    mutable std::mutex waitMutex_;
+    std::condition_variable waitCondition_;
 };

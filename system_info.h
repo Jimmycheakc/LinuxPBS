@@ -15,6 +15,7 @@ public:
     SystemInfo(SystemInfo&&) = delete;
     SystemInfo& operator=(SystemInfo&&) = delete;
 
+    void FnSetExecutablePath(const std::string& executablePath);
     void FnLogSysInfo() const;
 
 private:
@@ -90,4 +91,6 @@ private:
     static std::string formatGiB(std::uint64_t bytes);
     static std::string formatMiB(std::uint64_t bytes);
     static std::string formatPercent(double value);
+
+    std::string executablePath_;
 };

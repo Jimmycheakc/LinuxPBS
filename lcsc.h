@@ -285,7 +285,16 @@ public:
     };
 
     static LCSCReader* getInstance();
-    int FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName);
+    int FnLCSCReaderInit(
+            unsigned int baudRate,
+            const std::string& comPortName,
+            int commPortLCSC,
+            int stationId,
+            const std::string& cpoId,
+            const std::string& carparkId,
+            int eps,
+            const std::string& cscrCdackFolder,
+            const std::string& cscrCdfFolder);
     void FnLCSCReaderClose();
 
     void FnLCSCReaderStopRead();
@@ -345,6 +354,14 @@ private:
     std::atomic<bool> moduleRunning_{false};
     std::atomic<bool> acceptingWork_{false};
     std::atomic<bool> stopping_{false};
+
+    int commPortLCSC_{0};
+    int stationId_{0};
+    std::string cpoId_;
+    std::string carparkId_;
+    int eps_{0};
+    std::string cscrCdackFolder_;
+    std::string cscrCdfFolder_;
 
     // I/O-thread-owned command/FSM state.
     std::deque<CommandWithData> commandQueue_;

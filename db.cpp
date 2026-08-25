@@ -3,7 +3,8 @@
 #include <iomanip>
 #include <stdlib.h>
 #include <sstream>
-#include <iomanip>  // For std::setprecision
+#include <memory>
+#include <utility>
 #include <sys/time.h>
 #include <boost/algorithm/string.hpp>
 #include "db.h"
@@ -11,8578 +12,11394 @@
 #include "operation.h"
 #include "common.h"
 
-db* db::db_ = nullptr;
-std::mutex db::mutex_;
-
-db::db()
+namespace
 {
-	m_remote_db_err_flag.store(0);
+
+void logDbMessage(const std::string& message, const std::string& category = "DB")
+{
+    Logger::getInstance()->FnLog(message, "", category);
+}
+
+void disconnectAndReset(std::unique_ptr<odbc>& connection)
+{
+    if (!connection)
+    {
+        return;
+    }
+
+    try
+    {
+        connection->Disconnect();
+    }
+    catch (...)
+    {
+        // FnClose/destructor must not throw. The odbc destructor will still
+        // release the underlying handles when the unique_ptr is reset.
+    }
+
+    connection.reset();
+}
+
+
+template <typename Modifier>
+bool updateOperationProcess(Modifier&& modifier)
+{
+    auto* op = operation::getInstance();
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        return false;
+    }
+
+    auto process = data->tProcess;
+    std::forward<Modifier>(modifier)(process);
+
+    OperationSharedDataUpdate update;
+    update.tProcess = std::move(process);
+
+    return op->FnUpdateSharedData(std::move(update));
+}
+
+template <typename Modifier>
+bool updateOperationSeason(Modifier&& modifier)
+{
+    auto* op = operation::getInstance();
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        return false;
+    }
+
+    auto season = data->tSeason;
+    std::forward<Modifier>(modifier)(season);
+
+    OperationSharedDataUpdate update;
+    update.tSeason = std::move(season);
+
+    return op->FnUpdateSharedData(std::move(update));
+}
+
+template <typename Modifier>
+bool updateOperationEntry(Modifier&& modifier)
+{
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        return false;
+    }
+
+    auto entry = data->tEntry;
+
+    std::forward<Modifier>(modifier)(entry);
+
+    OperationSharedDataUpdate update;
+    update.tEntry = std::move(entry);
+
+    return op->FnUpdateSharedData(std::move(update));
+}
+
+} // namespace
+
+db::db() = default;
+
+db::~db()
+{
+    FnClose();
 }
 
 db* db::getInstance()
 {
-	std::lock_guard<std::mutex> lock(mutex_);
-    if (db_ == nullptr)
-    {
-        db_ = new db();
-    }
-    return db_;
+    static db instance;
+    return &instance;
 }
 
+void db::FnClose()
+{
+    // Lifecycle operation: invoke only after outstanding DB work has drained.
+    disconnectAndReset(centraldb);
+    disconnectAndReset(localdb);
+}
 
 int db::connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOut, int SP_SQLTimeOut,float mPingTimeOut)
 {
 
-	CentralConnStr=connectStr;
-	
-	central_IP=connectIP;
+    CentralConnStr = std::move(connectStr);
+    central_IP = std::move(connectIP);
+    CentralDB_TimeOut = CentralSQLTimeOut;
+    SP_TimeOut = SP_SQLTimeOut;
+    PingTimeOut = mPingTimeOut;
 
-	CentralDB_TimeOut=CentralSQLTimeOut;
+    season_update_flag = 0;
+    season_update_count = 0;
+    param_update_flag = 0;
+    param_update_count = 0;
 
-	SP_TimeOut=SP_SQLTimeOut;
+    // Reinitialization is allowed during the lifecycle, but must not race
+    // with other DB operations.
+    disconnectAndReset(centraldb);
 
-	PingTimeOut=mPingTimeOut;
+    centraldb = std::make_unique<odbc>(
+        static_cast<unsigned int>(SP_TimeOut),
+        1U,
+        mPingTimeOut,
+        central_IP,
+        CentralConnStr);
 
-	season_update_flag=0;
-	season_update_count=0;
-	param_update_flag=0;
+    if (centraldb->Connect() == 0)
+    {
+        logDbMessage("Central DB is connected!");
 
-	Alive=0;
-	timeOutVal=100; // PMS offline timeOut=10s
+        if (!updateOperationProcess(
+                [](tProcess_Struct& process)
+                {
+                    process.giSystemOnline = 0;
+                }))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+        }
 
-	onlineState=_Online;
-	initialFlag=false;
-	//---------------------------------
-	centraldb=new odbc(SP_TimeOut,1,mPingTimeOut,central_IP,CentralConnStr);
-   
-    std::stringstream dbss;
-	if (centraldb->Connect()==0) {
-		dbss << "Central DB is connected!" ;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		operation::getInstance()->tProcess.giSystemOnline = 0;
-		m_remote_db_err_flag.store(0);
-		return 1;
-	}
-	else {
-		dbss << "unable to connect Central DB" ;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_remote_db_err_flag.store(1);
-		return 0;
-	}
+        m_remote_db_err_flag.store(0);
+        return 1;
+    }
+
+    logDbMessage("Unable to connect Central DB");
+    m_remote_db_err_flag.store(1);
+    return 0;
 }
 
 int db::connectlocaldb(string connectstr,int LocalSQLTimeOut,int SP_SQLTimeOut,float mPingTimeOut)
 {
+    localConnStr = std::move(connectstr);
+    LocalDB_TimeOut = LocalSQLTimeOut;
+    SP_TimeOut = SP_SQLTimeOut;
+    PingTimeOut = mPingTimeOut;
 
-	std::stringstream dbss;
-	localConnStr=connectstr;
-	LocalDB_TimeOut=LocalSQLTimeOut;
-	SP_TimeOut=SP_SQLTimeOut;
+    season_update_flag = 0;
+    season_update_count = 0;
+    param_update_flag = 0;
+    param_update_count = 0;
 
-	PingTimeOut=mPingTimeOut;
+    disconnectAndReset(localdb);
 
-	season_update_flag=0;
-	season_update_count=0;
-	param_update_flag=0;
+    localdb = std::make_unique<odbc>(
+        static_cast<unsigned int>(LocalDB_TimeOut),
+        1U,
+        PingTimeOut,
+        "127.0.0.1",
+        localConnStr);
 
-	Alive=0;
-	timeOutVal=100; // PMS offline timeOut=10s
+    if (localdb->Connect() == 0)
+    {
+        logDbMessage("Local DB is connected!");
+        m_local_db_err_flag.store(0);
+        return 1;
+    }
 
-	onlineState=_Online;
-	initialFlag=false;
-	//---------------------------------
-	localdb=new odbc(LocalDB_TimeOut,1,PingTimeOut,"127.0.0.1",localConnStr);
-
-	if (localdb->Connect()==0) {
-		dbss << "Local DB is connected!" ;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		return 1;
-	}
-	else{
-		dbss << "unable to connect Local DB" ;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		return 0;
-	}
-
+    logDbMessage("Unable to connect Local DB");
+    m_local_db_err_flag.store(1);
+    return 0;
 }
 
-db::~db()
+// Return:
+//  0 = Invalid season
+//  1 = Valid
+// -1 = Database error
+//  2 = Expired
+//  3 = Terminated
+//  4 = Blocked
+//  5 = Lost
+//  6 = Passback
+//  7 = Not started
+//  8 = Not found
+//  9 = Complimentary
+int db::sp_isvalidseason(
+    const std::string& seasonNo,
+    BYTE inOut,
+    unsigned int zoneId,
+    std::string& serialNo,
+    short& rateType,
+    float& fee,
+    float& adminFee,
+    float& appFee,
+    short& expireDays,
+    short& redeemTime,
+    float& redeemAmount,
+    std::string& allowedHolderType,
+    std::string& validTo,
+    std::string& validFrom)
 {
-	centraldb->Disconnect();
-	localdb->Disconnect();
-
-	delete centraldb;
-	delete localdb;
+    return centraldb->isValidSeason(
+        seasonNo,
+        inOut,
+        zoneId,
+        serialNo,
+        rateType,
+        fee,
+        adminFee,
+        appFee,
+        expireDays,
+        redeemTime,
+        redeemAmount,
+        allowedHolderType,
+        validTo,
+        validFrom);
 }
 
-//Return: 0=invalid season, 1=valid, -1=db error
-//            2=Expired,3=Terminated,4=blocked
-//            5=lost, 6=passback, 7=not start, 8=not found
-//            9=complimentary
-
-int db::sp_isvalidseason(const std::string & sSeasonNo,
-BYTE  iInOut,unsigned int iZoneID,std::string  &sSerialNo, short int &iRateType,
-float &sFee, float &sAdminFee, float &sAppFee,
-short int &iExpireDays, short int &iRedeemTime, float &sRedeemAmt,
-std::string &AllowedHolderType,
-std::string &dtValidTo,
-std::string &dtValidFrom)
+int db::local_isvalidseason(
+    const std::string& seasonNo,
+    unsigned int zoneId)
 {
+    try
+    {
+        const std::string sqlStmt =
+            "SELECT "
+            "season_type, "
+            "s_status, "
+            "date_from, "
+            "date_to, "
+            "vehicle_no, "
+            "rate_type, "
+            "multi_season_no, "
+            "zone_id, "
+            "redeem_amt, "
+            "redeem_time, "
+            "holder_type, "
+            "sub_zone_id "
+            "FROM season_mst "
+            "WHERE (season_no = '" + seasonNo +
+            "' OR INSTR(multi_season_no, '" + seasonNo + "') > 0) "
+            "AND date_from <= NOW() "
+            "AND DATE(date_to) >= DATE(NOW()) "
+            "AND (zone_id = '0' OR zone_id = " +
+            std::to_string(zoneId) + ")";
 
+        std::vector<ReaderItem> result;
 
-	//std::string sqlStmt;
-	//std::string tbName="season_mst";
-	//ClsDB clsObj(CentralDB_TimeOut,SP_TimeOut,m_log,central_IP,PingTimeOut);
+        const int ret = localdb->SQLSelect(sqlStmt, &result, false);
 
-	//return clsObj.isValidSeason(CentralConnStr,sSeasonNo, iInOut,iZoneID, sSerialNo,iRateType,
-	//                     sFee,sAdminFee,sAppFee,iExpireDays,iRedeemTime, sRedeemAmt,
-	//                     AllowedHolderType,dtValidTo,dtValidFrom);
+        if (ret != 0)
+        {
+            return iLocalFail;
+        }
 
-	return centraldb->isValidSeason(sSeasonNo, iInOut,iZoneID, sSerialNo,iRateType,
-	sFee,sAdminFee,sAppFee,iExpireDays,iRedeemTime, sRedeemAmt,
-	AllowedHolderType,dtValidTo,dtValidFrom);
+        if (result.empty())
+        {
+            return iNoData;
+        }
 
+        const auto& row = result.front();
+
+        if (!updateOperationSeason(
+                [&](tseason_struct& season)
+                {
+                    season.SeasonType = row.GetDataItem(0);
+                    season.s_status = row.GetDataItem(1);
+                    season.date_from = row.GetDataItem(2);
+                    season.date_to = row.GetDataItem(3);
+                    season.rate_type = row.GetDataItem(5);
+                    season.redeem_amt = row.GetDataItem(8);
+                    season.redeem_time = row.GetDataItem(9);
+                }))
+        {
+            logDbMessage("Unable to update Operation season data.", "DB");
+
+            return iLocalFail;
+        }
+
+        return iDBSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage(std::string("local_isvalidseason exception: ") + e.what(), "DB");
+
+        return iLocalFail;
+    }
 }
 
-int db::local_isvalidseason(string L_sSeasonNo,unsigned int iZoneID)
+int db::isvalidseason(const std::string& seasonNo, BYTE inOut, unsigned int zoneId)
 {
-	std::string sqlStmt;
-	std::string tbName="season_mst";
-	std::string sValue;
-	vector<ReaderItem> selResult;
-	int r,j,k,i;
+    std::string serialNo;
+    float fee = 0.0F;
+    short rateType = 0;
+    short expireDays = 0;
+    short redeemTime = 0;
+    float adminFee = 0.0F;
+    float appFee = 0.0F;
+    float redeemAmt = 0.0F;
 
-	try
-	{
+    std::string validTo;
+    std::string validFrom;
+    std::string allowedHolderType;
 
+    logDbMessage("Check Season on Central DB for IU/card: " + seasonNo, "DB");
 
-		sqlStmt="Select season_type,s_status,date_from,date_to,vehicle_no,rate_type,multi_season_no,zone_id,redeem_amt,redeem_time,holder_type,sub_zone_id ";
-		sqlStmt= sqlStmt +  " FROM " + tbName + " where (season_no='";
-		sqlStmt=sqlStmt + L_sSeasonNo;
-		sqlStmt=sqlStmt + "' or instr(multi_season_no," + "'" + L_sSeasonNo + "') >0 ) ";
-		sqlStmt=sqlStmt + "AND date_from <= now() AND DATE(date_to) >= DATE(now()) AND (zone_id = '0' or zone_id = "+ to_string(iZoneID)+ ")";
+    int retCode =
+        sp_isvalidseason(
+            seasonNo,
+            inOut,
+            zoneId,
+            serialNo,
+            rateType,
+            fee,
+            adminFee,
+            appFee,
+            expireDays,
+            redeemTime,
+            redeemAmt,
+            allowedHolderType,
+            validTo,
+            validFrom);
 
-		//operation::getInstance()->writelog(sqlStmt,"DB");
+    logDbMessage("Check Season Ret = " + std::to_string(retCode), "DB");
 
-		r=localdb->SQLSelect(sqlStmt,&selResult,false);
-		if (r!=0) return iLocalFail;
+    // Central DB accessible
+    if (retCode != -1)
+    {
+        if (retCode != 8)
+        {
+            logDbMessage("ValidFrom = " + validFrom, "DB");
 
-		if (selResult.size()>0){
-				operation::getInstance()->tSeason.SeasonType =selResult[0].GetDataItem(0);
-				operation::getInstance()->tSeason.s_status=selResult[0].GetDataItem(1);
-				operation::getInstance()->tSeason.date_from=selResult[0].GetDataItem(2);
-				operation::getInstance()->tSeason.date_to=selResult[0].GetDataItem(3);
-				operation::getInstance()->tSeason.rate_type=selResult[0].GetDataItem(5);
-				operation::getInstance()->tSeason.redeem_amt=selResult[0].GetDataItem(8);
-				operation::getInstance()->tSeason.redeem_time=selResult[0].GetDataItem(9);
-			return iDBSuccess;
-		}
-		else
-		{
-			return iNoData;
-		}
-	}
-	catch(const std::exception &e)
-	{
-		return iLocalFail;
-	}
+            logDbMessage("ValidTo = " + validTo, "DB");
 
+            if (!updateOperationSeason(
+                    [&](tseason_struct& season)
+                    {
+                        season.date_from = validFrom;
+                        season.date_to = validTo;
+                        season.rate_type = std::to_string(rateType);
+                        season.redeem_amt = std::to_string(redeemAmt);
+                        season.redeem_time = std::to_string(redeemTime);
+                    }))
+            {
+                logDbMessage("Unable to update Operation shared data.", "DB");
+                return -1;
+            }
+        }
+
+        return retCode;
+    }
+
+    // Central DB error -> fallback to Local DB
+    const int localRet = local_isvalidseason(seasonNo, zoneId);
+
+    retCode = (localRet == iDBSuccess) ? 1 : 8;
+
+    logDbMessage("Check Local Season Return = " + std::to_string(retCode), "DB");
+
+    return retCode;
 }
 
-int db::isvalidseason(string m_sSeasonNo,BYTE iInOut, unsigned int iZoneID)
+DBError db::insertbroadcasttrans(
+    const std::string& sid,
+    const std::string& iuNo,
+    const std::string& cardNo,
+    const std::string& paidAmt,
+    const std::string& iType)
 {
-	string sSerialNo="";
-	float sFee=0;
-	short int iRateType=0;
-	short int m_iExpireDays=0, m_iRedeemTime=0;
-	float m_sAdminFee=0,m_sAppFee=0, m_sRedeemAmt=0;
-	std::string  m_dtValidTo="", m_dtValidFrom="";
-	
-	std::string  m_AllowedHolderType="";
+    localdb->SQLExecutNoneQuery(
+        "DELETE FROM Entry_Trans "
+        "WHERE iu_tk_No = '" + iuNo + "'");
 
-	const std::string m_sBlank="";
-	int retcode;
-	string msg;
-    std::stringstream dbss;
-	dbss << "Check Season on Central DB for IU/card: " << m_sSeasonNo;
-    Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    CE_Time dt;
+    const std::string dateTime = dt.DateString() + " " + dt.TimeString();
 
-	retcode=sp_isvalidseason(m_sSeasonNo,iInOut,iZoneID,sSerialNo,iRateType,
-	sFee,m_sAdminFee,m_sAppFee,m_iExpireDays,m_iRedeemTime, m_sRedeemAmt,
-	m_AllowedHolderType,m_dtValidTo,m_dtValidFrom );
+    const std::string sqlStmt =
+        "INSERT INTO Entry_Trans "
+        "(Station_ID, Entry_Time, iu_tk_No, trans_type, card_no, paid_amt) "
+        "VALUES ('" +
+        sid + "', '" +
+        dateTime + "', '" +
+        iuNo + "', '" +
+        iType + "', '" +
+        cardNo + "', '" +
+        paidAmt + "')";
 
-	dbss.str("");  // Set the underlying string to an empty string
-    dbss.clear();   // Clear the state of the stream
-	dbss << "Check Season Ret =" << retcode;
-    Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+    const int result = localdb->SQLExecutNoneQuery(sqlStmt);
 
-	if(retcode!=-1)
-	{
-		if (retcode != 8) 
-		{
-			dbss.str("");  // Set the underlying string to an empty string
-    		dbss.clear();   // Clear the state of the stream
-			dbss << "ValidFrom = " << m_dtValidFrom;
-    		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			dbss.str("");  // Set the underlying string to an empty string
-    		dbss.clear();   // Clear the state of the stream
-			dbss << "ValidTo = " << m_dtValidTo;
-    		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			//----
-			operation::getInstance()->tSeason.date_from=m_dtValidFrom;
-			operation::getInstance()->tSeason.date_to=m_dtValidTo;
-			operation::getInstance()->tSeason.rate_type=std::to_string(iRateType);
-			operation::getInstance()->tSeason.redeem_amt=std::to_string(m_sRedeemAmt);
-			operation::getInstance()->tSeason.redeem_time=std::to_string(m_iRedeemTime);
-		}
-	}
-	else
-	{
-		int l_ret=local_isvalidseason(m_sSeasonNo,iZoneID);
-		if(l_ret==iDBSuccess) retcode = 1;
-		else 
-		retcode = 8;
-		operation::getInstance()->writelog ("Check Local Season Return = "+ std::to_string(retcode), "DB");
-	}
-	return(retcode);
+    if (result != 0)
+    {
+        logDbMessage("Insert Broadcast Entry_Trans to Local: fail", "DB");
+
+        return iLocalFail;
+    }
+
+    return iDBSuccess;
 }
 
-DBError db::insertbroadcasttrans(string sid,string iu_No,string cardno,string paidamt,string itype)
+DBError db::UpdateLocalEntry(const std::string& iuTkNo)
 {
+    const std::string sqlStmt =
+        "UPDATE Entry_Trans "
+        "SET Status = 3 "
+        "WHERE iu_tk_no = '" + iuTkNo + "'";
 
-	std::string sqlStmt;
-	string sLPRNo="";
-	int r;
-	int sNo;
+    const int result = localdb->SQLExecutNoneQuery(sqlStmt);
 
-	r = localdb->SQLExecutNoneQuery("DELETE FROM Entry_Trans where iu_tk_No = '" + iu_No + "'");
-    //------
-	CE_Time dt;
-	string dtStr=dt.DateString()+" "+dt.TimeString();
+    if (result != 0)
+    {
+        logDbMessage("Fail to update Local Entry_Trans", "DB");
 
-	sqlStmt= "Insert into Entry_Trans ";
-	sqlStmt=sqlStmt + "(Station_ID,Entry_Time,iu_tk_No,";
-	sqlStmt=sqlStmt + "trans_type";
-	sqlStmt=sqlStmt + ",card_no,paid_amt";
+        return iLocalFail;
+    }
 
-	sqlStmt = sqlStmt + ") Values ('" + sid+ "','" +dtStr+ "','" + iu_No;
-	sqlStmt = sqlStmt +  "','" + itype;
-	sqlStmt = sqlStmt + "','" + cardno + "','" + paidamt+"'";
-	sqlStmt = sqlStmt +  ")";
-
-	//operation::getInstance()->writelog (sqlStmt, "DB");
-
-	r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-	std::stringstream dbss;
-	if (r!=0)
-	{
-        dbss << "Insert Broadcast Entry_trans to Local: fail";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		return iLocalFail;
-
-	}
-	else
-	{
-		//dbss << "Insert Broadcast Entry_trans to Local: success";
-    	//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		return iDBSuccess;
-	}
-
-}
-
-DBError db::UpdateLocalEntry(string IUTkNo)
-{
-	int r=0;
-	string sqstr="";
-
-	// insert into Central trans tmp table
-
-	sqstr="UPDATE Entry_Trans set Status = 3 WHERE iu_tk_no = '"+ IUTkNo + "'";
-	
-	r = localdb->SQLExecutNoneQuery(sqstr);
-
-	if (r==0) 
-	{
-		
-	}
-	else {
-		operation::getInstance()->writelog("fail to update Local Entry_Trans","DB");
-		return iLocalFail;
-	}
-	
-	return iDBSuccess;
+    return iDBSuccess;
 }
 
 DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
 {
+    std::string sqlStmt;
+    std::string lprNo;
 
-	std::string sqlStmt;
-	string sLPRNo="";
-	int r;
-	int sNo;
-	std::stringstream dbss;
-	std::string gsTransID;
+    const auto data = operation::getInstance()->FnGetSharedData();
 
-	//TK_Serialno is an integer type in DB
-	//make sure the value must be the integer
-	//to avoid exception
-	tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-	
-	gsTransID = operation::getInstance()->tProcess.gsTransID;
-
-	if (tEntry.sSerialNo=="") tEntry.sSerialNo="0";
-	else{
-
-		try
-		{
-			sNo=std::stoi(tEntry.sSerialNo);
-		}
-		catch(const std::exception &e)
-		{
-			tEntry.sSerialNo="0";
-		}
-
-
-	}
-
-	//std::cout<<"operation::getInstance()->tEntry.sSerialNo: " <<operation::getInstance()->tEntry.sSerialNo<<std::endl;
-
-	if(centraldb->IsConnected()!=1)
-	{
-		centraldb->Disconnect();
-		if (centraldb->Connect() != 0)
-		{
-			dbss << "Insert Entry_trans to Central: fail1" ;
-    		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			operation::getInstance()->tProcess.giSystemOnline = 1;
-			goto processLocal;
-		}
-	}
-
-	operation::getInstance()->tProcess.giSystemOnline = 0;
-
-	if ((tEntry.sLPN[0] != "")|| (tEntry.sLPN[1] !=""))
-	{
-		if(tEntry.iTransType==7 || tEntry.iTransType==8||tEntry.iTransType==22)
-		{
-			sLPRNo = tEntry.sLPN[1];
-
-		}
-		else
-		{
-			sLPRNo = tEntry.sLPN[0];
-		}
-
-	}
-
-	sqlStmt= "Insert into Entry_Trans_tmp (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
-
-	sqlStmt = sqlStmt + ",card_no,paid_amt,parking_fee,VCC";
-	sqlStmt = sqlStmt + ",gst_amt,entry_lpn_SID";
-	if (sLPRNo!="") sqlStmt = sqlStmt + ",lpn";
-
-	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid + "',convert(datetime,'" + tEntry.sEntryTime+ "',120),'" + tEntry.sIUTKNo;
-	sqlStmt = sqlStmt +  "','" + std::to_string(tEntry.iTransType);
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType)+"'";
-	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
-	sqlStmt = sqlStmt + "','" + tEntry.VCC;
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
-	sqlStmt = sqlStmt + "','" + gsTransID +"'";
-	if (sLPRNo!="") sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
-
-	sqlStmt = sqlStmt +  ")";
-
-	r = centraldb->SQLExecutNoneQuery(sqlStmt);
-	if (r != 0)
-	{
-    	Logger::getInstance()->FnLog(sqlStmt, "", "DB");
-        Logger::getInstance()->FnLog("Insert Entry_trans to Central: fail.", "", "DB");
-		return iCentralFail;
-
-	}
-	else
-	{
-		dbss << "Insert Entry_trans to Central: success";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		return iDBSuccess;
-	}
-
-processLocal:
-
-	if(localdb->IsConnected()!=1)
-	{
-		localdb->Disconnect();
-		if (localdb->Connect() != 0)
-		{
-			dbss.str("");  // Set the underlying string to an empty string
-        	dbss.clear();   // Clear the state of the stream
-			dbss << "Insert Entry_trans to Local: fail1" ;
-    		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			return iLocalFail;
-		}
-	}
-
-	sqlStmt= "Insert into Entry_Trans ";
-	sqlStmt=sqlStmt + "(Station_id,Entry_Time,iu_tk_no,";
-	sqlStmt=sqlStmt + "trans_type,status";
-	sqlStmt=sqlStmt + ",TK_SerialNo";
-
-	sqlStmt=sqlStmt + ",Card_Type";
-	sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
-	sqlStmt=sqlStmt +  ",gst_amt,entry_lpn_SID";
-	sqlStmt = sqlStmt + ",lpn";
-
-	sqlStmt = sqlStmt + ") Values ('" + tEntry.esid+ "','" + tEntry.sEntryTime+ "','" + tEntry.sIUTKNo;
-	sqlStmt = sqlStmt +  "','" + std::to_string(tEntry.iTransType);
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iStatus) + "','" + tEntry.sSerialNo;
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.iCardType) + "'";
-	sqlStmt = sqlStmt + ",'" + tEntry.sCardNo + "','" + std::to_string(tEntry.sPaidAmt) + "','" + std::to_string(tEntry.sFee);
-	sqlStmt = sqlStmt + "','" + std::to_string(tEntry.sGSTAmt);
-	sqlStmt = sqlStmt + "','" + gsTransID +"'";
-
-	sqlStmt = sqlStmt + ",'" + sLPRNo + "'";
-
-	sqlStmt = sqlStmt +  ")";
-
-	r = localdb->SQLExecutNoneQuery(sqlStmt);
-	if (r != 0)
-	{
-        Logger::getInstance()->FnLog(sqlStmt, "", "DB");
-    	Logger::getInstance()->FnLog("Insert Entry_trans to Local: fail", "", "DB");
-		return iLocalFail;
-
-	}
-	else
-	{
-    	Logger::getInstance()->FnLog("Insert Entry_trans to Local: success", "", "DB");
-		operation::getInstance()->tProcess.glNoofOfflineData = operation::getInstance()->tProcess.glNoofOfflineData + 1;
-		return iDBSuccess;
-	}
-
-}
-
-void db::synccentraltime()
-{
-
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-	int r;
-	int sNo;
-	std:string dt;
-
-	if(centraldb->IsConnected()!=1)
-	{
-		centraldb->Disconnect();
-		if(centraldb->Connect() != 0) { return;}
-	}
-	
-	sqlStmt= "SELECT GETDATE() AS CurrentTime";
-	r=centraldb->SQLSelect(sqlStmt,&selResult,false);
-	if (r!=0)
-	{
-		dbss << "Unable to retrieve Central DB time";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_remote_db_err_flag.store(1);
-
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-		if (selResult.size()>0)
-		{
-			dt=selResult[0].GetDataItem(0);
-			dbss << "Central DB time: " << dt;
-    		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-			struct tm tmTime = {};
-
-			std::istringstream ss(dt);
-			ss >> std::get_time(&tmTime, "%Y-%m-%d %H:%M:%S");
-			if (ss.fail()) 
-			{
-				dbss.str("");  // Set the underlying string to an empty string
-    			dbss.clear();   // Clear the state of the stream
-				dbss << "Failed to parse the time string.";
-    			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-				return ;
-			}
-
-			// Convert tm structure to seconds since epoch
-			time_t epochTime = mktime(&tmTime);
-
-			// Create a timeval structure
-			struct timeval newTime;
-			newTime.tv_sec = epochTime;
-			newTime.tv_usec = 0;
-
-			// Set the new time
-			dbss.str("");  // Set the underlying string to an empty string
-    		dbss.clear();   // Clear the state of the stream
-			if (settimeofday(&newTime, nullptr) == 0)
-			{
-				dbss << "Time set successfully.";
-    			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-				if (std::system("hwclock --systohc") != 0)
-				{
-					Logger::getInstance()->FnLog("Sync error.", "", "DB");
-				}
-				else
-				{
-					Logger::getInstance()->FnLog("Sync successfully.", "", "DB");
-				}
-			}
-			else
-			{
-				dbss << "Error setting time.";
-    			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-					return;
-		}			
-	}
-	return;
-}
-
-int db::downloadseason()
-{
-	int ret = -1;
-	unsigned long j,k;
-	vector<ReaderItem> tResult;
-	vector<ReaderItem> selResult;
-	tseason_struct v;
-	int r = 0;
-	string seasonno;
-	std::string sqlStmt;
-	int w = -1;
-	std::stringstream dbss;
-	int giStnid;
-	giStnid = operation::getInstance()->gtStation.iSID;
-
-	sqlStmt = "SELECT SUM(A) FROM (";
-	sqlStmt = sqlStmt + "SELECT count(season_no) as A FROM season_mst WHERE s" + to_string(giStnid) + "_fetched = 0 ";
-	sqlStmt = sqlStmt + ") as B ";
-
-	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
-	if(r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		return ret;
-	}
-	else 
-	{
-		if (std::stoi(tResult[0].GetDataItem(0)) == 0)
-		{
-			return ret;
-		}
-		m_remote_db_err_flag.store(0);
-		dbss << "Total: " << std::string (tResult[0].GetDataItem(0)) << " Seasons to be download.";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-	
-	r = centraldb->SQLSelect("SELECT TOP 10 * FROM season_mst WHERE s" + to_string(giStnid) + "_fetched = 0 ", &selResult, true);
-	if(r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		//--------------------------------------------------------
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading " << std::to_string (selResult.size()) << " Records: Started";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-		for(j = 0; j < selResult.size(); j++)
-		{
-			v.season_no = selResult[j].GetDataItem(1);
-			v.SeasonType = selResult[j].GetDataItem(2);  
-			seasonno = v.season_no;          
-			v.s_status = selResult[j].GetDataItem(3);   
-			v.date_from = selResult[j].GetDataItem(4);     
-			v.date_to = selResult[j].GetDataItem(5);    
-			v.vehicle_no = selResult[j].GetDataItem(8);
-			v.rate_type = selResult[j].GetDataItem(58);
-			v.pay_to = selResult[j].GetDataItem(66);
-			v.pay_date = selResult[j].GetDataItem(67);
-			v.multi_season_no=selResult[j].GetDataItem(72);
-			v.zone_id = selResult[j].GetDataItem(77);
-			v.redeem_time = selResult[j].GetDataItem(78);
-			v.redeem_amt = selResult[j].GetDataItem(79);
-			v.holder_type = selResult[j].GetDataItem(6);
-			v.sub_zone_id = selResult[j].GetDataItem(80);
-
-			season_update_count++;
-
-			w = writeseason2local(v);
-			
-			if (w == 0) 
-			{
-				dbss.str("");  // Set the underlying string to an empty string
-    			dbss.clear();   // Clear the state of the stream
-				dbss << "Download season: " << seasonno;
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-				//update to central DB
-				r = centraldb->SQLExecutNoneQuery("UPDATE season_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE season_no = '" + seasonno + "'");
-				dbss.str("");  // Set the underlying string to an empty string
-    			dbss.clear();   // Clear the state of the stream
-				if (r != 0) 
-				{
-					m_remote_db_err_flag.store(2);
-					dbss.str("");  // Set the underlying string to an empty string
-    				dbss.clear();   // Clear the state of the stream
-					dbss << "update central season status failed.";
-					Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-				}
-				else 
-				{
-					downloadCount++;
-					m_remote_db_err_flag.store(0);
-					//dbss << "set central season success.";
-					//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-				}
-			}
-			//---------------------------------------
-		}
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	if (selResult.size() < 10)
-	{
-		season_update_flag = 0;
-	}
-
-	ret = downloadCount;
-
-	return ret;
-}
-
-int db::writeseason2local(tseason_struct& v)
-{
-	int r=-1;// success flag
-	int debug=0;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-	
-	try 
-	{
-		r = localdb->SQLSelect("SELECT season_type FROM season_mst Where season_no= '" + v.season_no + "'", &selResult, false);
-		if (r != 0)
-		{
-			m_local_db_err_flag=1;
-			operation::getInstance()->writelog("update season failed.", "DB");
-			return r;
-		}
-		else
-		{
-			m_local_db_err_flag = 0;
-		}
-
-		if (selResult.size() > 0)
-		{
-			v.found = 1;
-
-			//update season records
-			sqlStmt="Update season_mst SET ";
-			sqlStmt= sqlStmt+ "season_no='" + v.season_no + "',";
-			sqlStmt= sqlStmt+ "season_type='" + v.SeasonType + "',";
-			sqlStmt= sqlStmt+ "s_status='" + v.s_status  + "',";
-			sqlStmt= sqlStmt+ "date_from='" + v.date_from + "',";
-			sqlStmt= sqlStmt+ "date_to='" + v.date_to  + "',";
-			sqlStmt= sqlStmt+ "vehicle_no='" + v.vehicle_no  + "',";
-			sqlStmt= sqlStmt+ "rate_type='" + v.rate_type  + "',";
-			sqlStmt= sqlStmt+ "pay_to='" + v.pay_to  + "',";
-			sqlStmt= sqlStmt+ "pay_date='" + v.pay_date  + "',";
-			sqlStmt= sqlStmt+ "multi_Season_no='" + v.multi_season_no  + "',";
-			sqlStmt= sqlStmt+ "zone_id='" + v.zone_id + "',";
-			sqlStmt= sqlStmt+ "redeem_amt='" + v.redeem_amt + "',";
-			sqlStmt= sqlStmt+ " redeem_time='" + v.redeem_time + "',";
-			sqlStmt= sqlStmt+ " holder_type='" + v.holder_type + "',";
-			sqlStmt= sqlStmt+ " sub_zone_id='" + v.sub_zone_id + "'";
-			sqlStmt= sqlStmt+ " WHERE season_no='" +v.season_no + "'";
-			
-			r = localdb->SQLExecutNoneQuery (sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				operation::getInstance()->writelog("update season failed.", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			}
-		}
-		else
-		{
-			v.found = 0;
-			//insert season records
-			sqlStmt ="INSERT INTO season_mst ";
-			sqlStmt = sqlStmt + " (season_no,season_type,s_status,date_from,date_to,vehicle_no,rate_type, ";
-			sqlStmt = sqlStmt + " pay_to,pay_date,multi_season_no,zone_id,redeem_amt,redeem_time,holder_type,sub_zone_id)";
-			sqlStmt = sqlStmt + " VALUES ('" + v.season_no+ "'";
-			sqlStmt = sqlStmt + ",'" + v.SeasonType  + "'";
-			sqlStmt = sqlStmt + ",'" + v.s_status + "'";
-			sqlStmt = sqlStmt + ",'" + v.date_from   + "'";
-			sqlStmt = sqlStmt + ",'" + v.date_to  + "'";
-			sqlStmt = sqlStmt + ",'" + v.vehicle_no   + "'";
-			sqlStmt = sqlStmt + ",'" + v.rate_type    + "'";
-			sqlStmt = sqlStmt + ",'" + v.pay_to + "'";
-			sqlStmt = sqlStmt + ",'" + v.pay_date    + "'";
-			sqlStmt = sqlStmt + ",'" + v.multi_season_no   + "'";
-			sqlStmt = sqlStmt + ",'" + v.zone_id   + "'";
-			sqlStmt = sqlStmt + ",'" + v.redeem_amt   + "'";
-			sqlStmt = sqlStmt + ",'" + v.redeem_time   + "'";
-			sqlStmt = sqlStmt + ",'" + v.holder_type   + "'";
-			sqlStmt = sqlStmt + ",'" + v.sub_zone_id  + "') ";
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-    			dbss.clear();   // Clear the state of the stream
-				//dbss << "Insert season to local failed. ";
-				dbss << sqlStmt;
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-				dbss.str("");  // Set the underlying string to an empty string
-    			dbss.clear();   // Clear the state of the stream
-				dbss << "Insert season to local success. ";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-		}
-	}
-	catch (const std::exception &e)
-	{
-		r = -1;// success flag
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "DB: local db error in writing rec: " << std::string(e.what());
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_local_db_err_flag = 1;
-	}
-
-	return r;
-}
-
-int db::downloadvehicletype()
-{
-	int ret = -1;
-	unsigned long j;
-	vector<ReaderItem> tResult;
-	vector<ReaderItem> selResult;
-	int r=0;
-	string iu_code;
-	string iu_type;
-	std::string sqlStmt;
-	int w = -1;
-	std::stringstream dbss;
-
-	//write log for total seasons
-
-	sqlStmt = "SELECT SUM(A) FROM (";
-	sqlStmt = sqlStmt + "SELECT count(IUCode) as A FROM Vehicle_type";
-	sqlStmt = sqlStmt + ") as B ";
-
-	//dbss << sqlStmt;
-    //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-	r = centraldb->SQLSelect(sqlStmt,&tResult,false);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download vehicle type fail.", "DB");
-		return ret;
-	}
-	else 
-	{
-		m_remote_db_err_flag.store(0);
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " vehicle type to be download.";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	r = centraldb->SQLSelect("SELECT  * FROM Vehicle_type", &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		//--------------------------------------------------------
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading " << std::to_string (selResult.size()) << " Records: Started";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		
-
-		for(j = 0; j < selResult.size(); j++){
-			// std::cout<<"Rec "<<j<<std::endl;
-			// for (k=0;k<selResult[j].getDataSize();k++){
-			//     std::cout<<"item["<<k<< "]= " << selResult[j].GetDataItem(k)<<std::endl;                
-			// }  
-			iu_code = selResult[j].GetDataItem(1);
-			iu_type = selResult[j].GetDataItem(2); 
-
-			w = writevehicletype2local(iu_code, iu_type);
-			if (w == 0)
-			{
-				downloadCount++;
-			}
-			//---------------------------------------
-			
-		}
-		//operation::getInstance()->initStnParameters();
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading vehicle type Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	ret = downloadCount;
-
-	return ret;
-}
-
-int db::writevehicletype2local(string iucode,string iutype)
-{
-
-	int r = -1;// success flag
-	int debug=0;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-	
-	try 
-	{
-		r = localdb->SQLSelect("SELECT IUCode FROM Vehicle_type Where IUCode= '" + iucode + "'", &selResult, false);
-		if(r != 0)
-		{
-			operation::getInstance()->writelog("update vehicle type to local fail.", "DB");
-			m_local_db_err_flag = 1;
-			return r;
-		}
-		else
-		{
-			m_local_db_err_flag = 0;
-		}
-
-		if (selResult.size() > 0)
-		{
-
-			//update param records
-			sqlStmt = "Update Vehicle_type SET ";
-			sqlStmt = sqlStmt + "TransType='" + iutype + "'";
-			sqlStmt = sqlStmt + " Where IUCode= '" + iucode + "'";
-			
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "update local vehicle type failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag=0;
-				//dbss.str("");  // Set the underlying string to an empty string
-				//dbss.clear();   // Clear the state of the stream
-				//dbss << "update local vehicle type success ";
-				//Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			
-		}
-		else
-		{
-			sqlStmt = "INSERT INTO Vehicle_type";
-			sqlStmt = sqlStmt + " (IUCode,TransType) ";
-			sqlStmt = sqlStmt + " VALUES ('" +iucode+ "'";
-			sqlStmt = sqlStmt + ",'" + iutype + "')";
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "insert vehicle type to local failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			}
-		}
-
-	}
-	catch (const std::exception &e)
-	{
-		r = -1;// success flag
-		// cout << "ERROR: " << err << endl;
-		dbss.str("");  // Set the underlying string to an empty string
-		dbss.clear();   // Clear the state of the stream
-		dbss << "DB: local db error in writing rec: " << std::string(e.what());
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_local_db_err_flag = 1;
-	}
-
-	return r;
-}
-
-int db::downloadledmessage()
-{
-	int ret = -1;
-	unsigned long j, k;
-	vector<ReaderItem> tResult;
-	vector<ReaderItem> selResult;
-	int r = -1;
-	string msg_id;
-	string msg_body;
-	string msg_status;
-	std::string sqlStmt;
-	int w = -1;
-	std::stringstream dbss;
-	int giStnid;
-	giStnid = operation::getInstance()->gtStation.iSID;
-
-	//write log for total seasons
-
-	sqlStmt="SELECT SUM(A) FROM (";
-	sqlStmt = sqlStmt + "SELECT count(msg_id) as A FROM message_mst WHERE s" + to_string(giStnid) + "_fetched = 0";
-	sqlStmt = sqlStmt + ") as B ";
-
-	//dbss << sqlStmt;
-    //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download LED message fail.", "DB");
-		return ret;
-	}
-	else 
-	{
-		m_remote_db_err_flag.store(0);
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " message to be download.";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	r = centraldb->SQLSelect("SELECT  * FROM message_mst WHERE s" + to_string(giStnid) + "_fetched = 0", &selResult, true);
-	if(r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download LED message fail.", "DB");
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		//--------------------------------------------------------
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading message " << std::to_string (selResult.size()) << " Records: Started";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-		for(j = 0; j < selResult.size(); j++)
-		{
-			// std::cout<<"Rec "<<j<<std::endl;
-			// for (k=0;k<selResult[j].getDataSize();k++){
-			//     std::cout<<"item["<<k<< "]= " << selResult[j].GetDataItem(k)<<std::endl;                
-			// }  
-			msg_id = selResult[j].GetDataItem(0);
-			msg_body = selResult[j].GetDataItem(2);
-			msg_status =  selResult[j].GetDataItem(3); 
-			
-			w = writeledmessage2local(msg_id,msg_body,msg_status);
-			
-			if (w == 0) 
-			{
-				//update to central DB
-				r = centraldb->SQLExecutNoneQuery("UPDATE message_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE msg_id = '" + msg_id + "'");
-				if(r != 0) 
-				{
-					m_remote_db_err_flag.store(2);
-					dbss.str("");  // Set the underlying string to an empty string
-    				dbss.clear();   // Clear the state of the stream
-					dbss << "update central message status failed.";
-					Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-				}
-				else 
-				{
-					downloadCount++;
-					m_remote_db_err_flag.store(0);
-					//printf("update central message success \n");
-				}
-			}
-			//---------------------------------------
-		}
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Msg Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	ret = downloadCount;
-
-	return ret;
-}
-
-int db::writeledmessage2local(string m_id,string m_body, string m_status)
-{
-
-	int r = -1;// success flag
-	int debug = 0;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-
-	try 
-	{
-		r = localdb->SQLSelect("SELECT msg_id FROM message_mst Where msg_id= '" + m_id + "'", &selResult, false);
-		if(r != 0)
-		{
-			m_local_db_err_flag = 1;
-			operation::getInstance()->writelog("update local LED Message failed.", "DB");
-			return r;
-		}
-		else
-		{
-			m_local_db_err_flag = 0;
-		}
-
-		if (selResult.size() > 0)
-		{
-
-			//update param records
-			sqlStmt = "Update message_mst SET ";
-			sqlStmt = sqlStmt + "msg_body='" + m_body + "'";
-			sqlStmt = sqlStmt + ", m_status= '" + m_status + "'";
-			sqlStmt = sqlStmt + " Where msg_id= '" + m_id + "'";
-			
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "update local message failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			//	printf("update local msg success \n");
-			}
-		}
-		else
-		{
-			sqlStmt = "INSERT INTO message_mst";
-			sqlStmt = sqlStmt + " (msg_id,msg_body,m_status) ";
-			sqlStmt = sqlStmt + " VALUES ('" + m_id+ "'";
-			sqlStmt = sqlStmt + ",'" + m_body + "'";
-			sqlStmt = sqlStmt + ",'" + m_status + "')";
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "insert message to local failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			//	printf("set local msg success \n");
-			}
-		}
-
-	}
-	catch (const std::exception &e)
-	{
-		r = -1;// success flag
-		// cout << "ERROR: " << err << endl;
-		dbss.str("");  // Set the underlying string to an empty string
-		dbss.clear();   // Clear the state of the stream
-		dbss << "DB: local db error in writing rec: " << std::string(e.what());
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_local_db_err_flag = 1;
-	}
-
-	return r;
-}
-
-int db::downloadparameter()
-{
-	int ret = -1;
-	unsigned long j, k;
-	vector<ReaderItem> tResult;
-	vector<ReaderItem> selResult;
-	int r = 0;
-	string param_name;
-	string param_value;
-	std::string sqlStmt;
-	std::stringstream dbss;
-	int w = -1;
-	int giStnid;
-	giStnid = operation::getInstance()->gtStation.iSID;
-
-	//write log for total seasons
-
-	sqlStmt = "SELECT SUM(A) FROM (";
-	sqlStmt = sqlStmt + "SELECT count(name) as A FROM parameter_mst WHERE s" + to_string(giStnid) + "_fetched = 0 and for_station=1";
-	sqlStmt = sqlStmt + ") as B ";
-
-
-	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download parameter fail.", "DB");
-		return ret;
-	}
-	else 
-	{
-		m_remote_db_err_flag.store(0);
-		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " parameter to be download.";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	r = centraldb->SQLSelect("SELECT  * FROM parameter_mst WHERE s" + to_string(giStnid) + "_fetched = 0 and for_station=1", &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("update parameter failed.", "DB");
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		//--------------------------------------------------------
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading parameter " << std::to_string (selResult.size()) << " Records: Started";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-		for(j = 0; j < selResult.size(); j++)
-		{
-			param_name = selResult[j].GetDataItem(0);
-			param_value = selResult[j].GetDataItem(49+giStnid);      
-			dbss.str("");  // Set the underlying string to an empty string
-			dbss.clear();   // Clear the state of the stream
-			dbss << param_name << " = "  << param_value;
-			Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			param_update_count++;
-			w = writeparameter2local(param_name,param_value);
-			
-			if (w == 0) 
-			{
-				//update to central DB
-				r = centraldb->SQLExecutNoneQuery("UPDATE parameter_mst SET s" + to_string(giStnid) + "_fetched = '1' WHERE name = '" + param_name + "'");
-				if(r != 0) 
-				{
-					m_remote_db_err_flag.store(2);
-					dbss.str("");  // Set the underlying string to an empty string
-    				dbss.clear();   // Clear the state of the stream
-					dbss << "update central parameter status failed.";
-					Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-				}
-				else 
-				{
-					downloadCount++;
-					m_remote_db_err_flag.store(0);
-				//	printf("set central parameter success \n");
-				}
-			}			
-			
-		}
-		//LoadParam();
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Parameter Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-	else
-	{
-		param_update_flag = 0;
-	}
-
-	ret = downloadCount;
-
-	return ret;
-}
-
-
-int db::writeparameter2local(string name,string value)
-{
-	int r = -1;// success flag
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-	
-	try 
-	{
-		r = localdb->SQLSelect("SELECT ParamName FROM Param_mst Where ParamName= '" + name + "'", &selResult, false);
-		if (r != 0)
-		{
-			m_local_db_err_flag = 1;
-			operation::getInstance()->writelog("update parameter fail.", "DB");
-			return r;
-		}
-		else
-		{
-			m_local_db_err_flag = 0;
-		}
-
-		if (selResult.size() > 0)
-		{
-
-			//update param records
-			sqlStmt = "Update Param_mst SET ";
-			sqlStmt = sqlStmt + "ParamValue='" + value + "'";
-			sqlStmt = sqlStmt + " Where ParamName= '" + name + "'";
-			
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "update parameter to local failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			//	printf("update Param success \n");
-			}
-			
-		}
-		else
-		{
-			sqlStmt = "INSERT INTO Param_mst";
-			sqlStmt = sqlStmt + " (ParamName,ParamValue) ";
-			sqlStmt = sqlStmt + " VALUES ('" + name + "'";
-			sqlStmt = sqlStmt + ",'" + value  + "')";
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "insert parameter to local failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-				//printf("set Param success \n");
-			}
-		}
-
-	}
-	catch (const std::exception &e)
-	{
-		r = -1;// success flag
-		// cout << "ERROR: " << err << endl;
-		dbss.str("");  // Set the underlying string to an empty string
-		dbss.clear();   // Clear the state of the stream
-		dbss << "DB: local db error in writing rec: " << std::string(e.what());
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_local_db_err_flag = 1;
-	}
-
-	return r;
-}
-
-int db::downloadstationsetup()
-{
-	int ret = -1;
-	tstation_struct v;
-	vector<ReaderItem> tResult;
-	vector<ReaderItem> selResult;
-	std::string sqlStmt;
-	std::stringstream dbss;
-	int r = -1;
-	int w = -1;
-	
-	//write log for total seasons
-
-	sqlStmt = "SELECT SUM(A) FROM (";
-	sqlStmt = sqlStmt + "SELECT count(station_id) as A FROM station_setup";
-	sqlStmt = sqlStmt + ") as B ";
-
-	//dbss << sqlStmt;
-    //Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download station setup fail.", "DB");
-		return ret;
-	}
-	else 
-	{
-		m_remote_db_err_flag.store(0);
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Total " << std::string (tResult[0].GetDataItem(0)) << " station setup to be download.";
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		
-	}
-
-	r = centraldb->SQLSelect("SELECT  * FROM station_setup",&selResult,true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download station setup fail.", "DB");
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		for(int j = 0; j < selResult.size(); j++)
-		{
-			v.iGroupID = std::stoi(selResult[j].GetDataItem(0));
-			v.iSID = std::stoi(selResult[j].GetDataItem(2));
-			v.sName = selResult[j].GetDataItem(3);
-
-			switch(std::stoi(selResult[j].GetDataItem(5)))
-			{
-			case 1:
-				v.iType = tientry;
-				break;
-			case 2:
-				v.iType = tiExit;
-				break;
-			default:
-				break;
-			};
-			v.iStatus = std::stoi(selResult[j].GetDataItem(6));
-			v.sPCName = selResult[j].GetDataItem(4);
-			v.iCHUPort = std::stoi(selResult[j].GetDataItem(17));
-			v.iAntID = std::stoi(selResult[j].GetDataItem(18));
-			v.iZoneID = std::stoi(selResult[j].GetDataItem(19));
-			v.iIsVirtual = std::stoi(selResult[j].GetDataItem(20));
-			switch(std::stoi(selResult[j].GetDataItem(22)))
-			{
-			case 0:
-				v.iSubType = iNormal;
-				break;
-			case 1:
-				v.iSubType = iXwithVENoPay;
-				break;
-			case 2:
-				v.iSubType = iXwithVEPay;
-				break;
-			default:
-				break;
-			};
-			v.iVirtualID = std::stoi(selResult[j].GetDataItem(21));
-			
-			w = writestationsetup2local(v);
-			
-			if (w == 0) 
-			{
-				downloadCount++;
-			//	printf("set station setup ok \n");
-			}
-			//operation::getInstance()->initStnParameters();
-		}
-
-		dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Station Setup Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		
-	}
-	if (selResult.size() < 1){
-		//no record
-		r = -1;
-	}
-
-	ret = downloadCount;
-
-	return ret;
-}
-
-
-int db::writestationsetup2local(tstation_struct& v)
-{
-	
-	int r = -1;// success flag
-	int debug = 0;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-	
-	try 
-	{ 
-		r = localdb->SQLSelect("SELECT StationType FROM Station_Setup Where StationID= '" + std::to_string(v.iSID) + "'", &selResult, false);
-		if(r != 0)
-		{
-			m_local_db_err_flag = 1;
-			operation::getInstance()->writelog("update station setup fail.", "DB");
-			return r;
-		}
-		else
-		{
-			m_local_db_err_flag = 0;
-		}
-
-		if (selResult.size() > 0)
-		{
-			sqlStmt = "Update Station_Setup SET ";
-			//sqlStmt= sqlStmt+ "groupid='" + std::to_string(v.iGroupID) + "',";
-			sqlStmt = sqlStmt + "StationID='" + std::to_string(v.iSID) + "',";
-			sqlStmt = sqlStmt + "StationName='" +v.sName + "',";
-			sqlStmt = sqlStmt + "StationType='" + std::to_string(v.iType) + "',";
-			sqlStmt = sqlStmt + "Status='" + std::to_string(v.iStatus) + "',";
-			sqlStmt = sqlStmt + "PCName='" + v.sPCName + "',";
-			sqlStmt = sqlStmt + "CHUPort='" + std::to_string(v.iCHUPort) + "',";
-			sqlStmt = sqlStmt + "AntID='" + std::to_string(v.iAntID) + "',";
-			sqlStmt = sqlStmt + "ZoneID='" + std::to_string(v.iZoneID) + "',";
-			sqlStmt = sqlStmt + "IsVirtual='" + std::to_string(v.iIsVirtual) + "',";
-			sqlStmt = sqlStmt + "SubType='" + std::to_string(v.iSubType) + "',";
-			sqlStmt = sqlStmt + "VirtualID='" + std::to_string(v.iVirtualID) + "'";
-			sqlStmt = sqlStmt + " WHERE StationID='" +std::to_string(v.iSID) + "'";
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << " Update local station set up failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			//	printf("update Station_Setup success \n");
-			}
-		}
-		else
-		{
-			sqlStmt = "INSERT INTO Station_Setup";
-			sqlStmt = sqlStmt + " (StationID,StationName,StationType,Status,PCName,CHUPort,AntID, ";
-			sqlStmt = sqlStmt + " ZoneID,IsVirtual,SubType,VirtualID)";
-			sqlStmt = sqlStmt + " VALUES ('" + std::to_string(v.iSID)+ "'";
-			sqlStmt = sqlStmt + ",'" + v.sName + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iType) + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iStatus) + "'";
-			sqlStmt = sqlStmt + ",'" + v.sPCName + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iCHUPort) + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iAntID) + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iZoneID) + "'";
-			sqlStmt = sqlStmt + ",'" +  std::to_string(v.iIsVirtual) + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iSubType) + "'";
-			sqlStmt = sqlStmt + ",'" + std::to_string(v.iVirtualID) + "')";
-			//sqlStmt=sqlStmt+ ",'" + std::to_string(v.iGroupID) + "') ";
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if (r != 0)  
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");  // Set the underlying string to an empty string
-				dbss.clear();   // Clear the state of the stream
-				dbss << "insert parameter to local failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else  
-			{
-				m_local_db_err_flag = 0;
-			//	printf("station_setup insert sucess\n");
-			}	               
-		}
-	}
-	catch (const std::exception &e)
-	{
-		r = -1;// success flag
-		// cout << "ERROR: " << err << endl;
-		dbss.str("");  // Set the underlying string to an empty string
-		dbss.clear();   // Clear the state of the stream
-		dbss << "DB: local db error in writing rec: " << std::string(e.what());
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_local_db_err_flag = 1;
-	}
-
-	return r;
-}
-
-int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
-{
-	int ret = -1;
-	std::vector<ReaderItem> tResult;
-	std::vector<ReaderItem> selResult;
-	std::string sqlStmt;
-    std::stringstream dbss;
-	int r = -1;
-	int w = -1;
-	int iZoneID;
-
-	if (iCheckStatus == 1)
-	{
-		// Check tariff is downloaded or not
-		sqlStmt = "SELECT name FROM parameter_mst ";
-		sqlStmt = sqlStmt + "WHERE name='DownloadTariff' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-
-		r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-		if (r != 0)
-		{
-			m_remote_db_err_flag.store(1);
-			operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
-			return ret;
-		}
-		else if (tResult.size() == 0)
-		{
-			m_remote_db_err_flag.store(0);
-			operation::getInstance()->writelog("Tariff download already.", "DB");
-			return -3;
-		}
-	}
-
-	r = localdb->SQLExecutNoneQuery("DELETE FROM tariff_setup");
-	if (r != 0)
-	{
-		m_local_db_err_flag = 1;
-		operation::getInstance()->writelog("Delete tariff_setup from local failed.", "DB");
-		return -1;
-	}
-	else
-	{
-		m_local_db_err_flag = 0;
-	}
-
-	if (operation::getInstance()->gtStation.iZoneID > 0)
-	{
-		iZoneID = operation::getInstance()->gtStation.iZoneID;
-	}
-	else
-	{
-		iZoneID = 1;
-	}
-
-	operation::getInstance()->writelog("Download tariff_setup for group " + std::to_string(iGrpID) + ", zone " + std::to_string(iZoneID), "DB");
-	sqlStmt = "";
-	sqlStmt = "SELECT * FROM tariff_setup";
-	if (iGrpID > 0)
-	{
-		sqlStmt = sqlStmt + " WHERE group_id=" + std::to_string(iGrpID) + " AND Zone_id=" + std::to_string(iZoneID);
-	}
-
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("Download tariff_setup failed.", "DB");
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		for (int j = 0; j < selResult.size(); j++)
-		{
-			tariff_struct tariff;
-			tariff.tariff_id = selResult[j].GetDataItem(0);
-			tariff.day_index = selResult[j].GetDataItem(4);
-			tariff.day_type = selResult[j].GetDataItem(5);
-
-			int idx = 6;
-			for (int k = 0; k < 9; k++)
-			{
-				tariff.start_time[k] = selResult[j].GetDataItem(idx++);
-				tariff.end_time[k] = selResult[j].GetDataItem(idx++);
-				tariff.rate_type[k] = selResult[j].GetDataItem(idx++);
-				tariff.charge_time_block[k] = selResult[j].GetDataItem(idx++);
-				tariff.charge_rate[k] = selResult[j].GetDataItem(idx++);
-				tariff.grace_time[k] = selResult[j].GetDataItem(idx++);
-				tariff.first_free[k] = selResult[j].GetDataItem(idx++);
-				tariff.first_add[k] = selResult[j].GetDataItem(idx++);
-				tariff.second_free[k] = selResult[j].GetDataItem(idx++);
-				tariff.second_add[k] = selResult[j].GetDataItem(idx++);
-				tariff.third_free[k] = selResult[j].GetDataItem(idx++);
-				tariff.third_add[k] = selResult[j].GetDataItem(idx++);
-				tariff.allowance[k] = selResult[j].GetDataItem(idx++);
-				tariff.min_charge[k] = selResult[j].GetDataItem(idx++);
-				tariff.max_charge[k] = selResult[j].GetDataItem(idx++);
-			}
-			tariff.zone_cutoff = selResult[j].GetDataItem(idx++);
-			tariff.day_cutoff = selResult[j].GetDataItem(idx++);
-			tariff.whole_day_max = selResult[j].GetDataItem(idx++);
-			tariff.whole_day_min = selResult[j].GetDataItem(idx++);
-
-            w = writetariffsetup2local(tariff);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-		}
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading tariff_setup Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-    if (iCheckStatus == 1)
+    if (!data)
     {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadTariff'";
-        
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadTariff fetched=1 failed.", "DB");
-        }
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
     }
 
-    if (selResult.size() < 1)
+    const std::string transId = data->tProcess.gsTransID;
+
+    // =========================================================
+    // Prepare entry data
+    // =========================================================
+    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+
+    // TK_SerialNo is integer type in DB.
+    // Ensure the value contains a valid integer.
+    if (tEntry.sSerialNo.empty())
     {
-        // no record
-        ret = -1;
+        tEntry.sSerialNo = "0";
     }
     else
     {
-        ret = downloadCount;
+        try
+        {
+            (void)std::stoi(tEntry.sSerialNo);
+        }
+        catch (const std::exception&)
+        {
+            tEntry.sSerialNo = "0";
+        }
     }
 
-	return ret;
-}
-
-int db::writetariffsetup2local(tariff_struct& tariff)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
+    // Keep Operation-owned tEntry synchronized.
+    if (!updateOperationEntry(
+            [&](tEntryTrans_Struct& entry)
+            {
+                entry.sEntryTime = tEntry.sEntryTime;
+                entry.sSerialNo = tEntry.sSerialNo;
+            }))
     {
-        sqlStmt = "INSERT INTO tariff_setup";
-        sqlStmt = sqlStmt + " (tariff_id, day_index";
-        sqlStmt = sqlStmt + ", start_time1, end_time1, rate_type1, charge_time_block1";
-        sqlStmt = sqlStmt + ", charge_rate1, grace_time1, min_charge1, max_charge1";
-        sqlStmt = sqlStmt + ", first_free1, first_add1, second_free1, second_add1";
-        sqlStmt = sqlStmt + ", third_free1, third_add1, allowance1";
-        sqlStmt = sqlStmt + ", start_time2, end_time2, rate_type2, charge_time_block2";
-        sqlStmt = sqlStmt + ", charge_rate2, grace_time2, min_charge2, max_charge2";
-        sqlStmt = sqlStmt + ", first_free2, first_add2, second_free2, second_add2";
-        sqlStmt = sqlStmt + ", third_free2, third_add2, allowance2";
-        sqlStmt = sqlStmt + ", start_time3, end_time3, rate_type3, charge_time_block3";
-        sqlStmt = sqlStmt + ", charge_rate3, grace_time3, min_charge3, max_charge3";
-        sqlStmt = sqlStmt + ", first_free3, first_add3, second_free3, second_add3";
-        sqlStmt = sqlStmt + ", third_free3, third_add3, allowance3";
-        sqlStmt = sqlStmt + ", start_time4, end_time4, rate_type4, charge_time_block4";
-        sqlStmt = sqlStmt + ", charge_rate4, grace_time4, min_charge4, max_charge4";
-        sqlStmt = sqlStmt + ", first_free4, first_add4, second_free4, second_add4";
-        sqlStmt = sqlStmt + ", third_free4, third_add4, allowance4";
-        sqlStmt = sqlStmt + ", start_time5, end_time5, rate_type5, charge_time_block5";
-        sqlStmt = sqlStmt + ", charge_rate5, grace_time5, min_charge5, max_charge5";
-        sqlStmt = sqlStmt + ", first_free5, first_add5, second_free5, second_add5";
-        sqlStmt = sqlStmt + ", third_free5, third_add5, allowance5";
-        sqlStmt = sqlStmt + ", start_time6, end_time6, rate_type6, charge_time_block6";
-        sqlStmt = sqlStmt + ", charge_rate6, grace_time6, min_charge6, max_charge6";
-        sqlStmt = sqlStmt + ", first_free6, first_add6, second_free6, second_add6";
-        sqlStmt = sqlStmt + ", third_free6, third_add6, allowance6";
-        sqlStmt = sqlStmt + ", start_time7, end_time7, rate_type7, charge_time_block7";
-        sqlStmt = sqlStmt + ", charge_rate7, grace_time7, min_charge7, max_charge7";
-        sqlStmt = sqlStmt + ", first_free7, first_add7, second_free7, second_add7";
-        sqlStmt = sqlStmt + ", third_free7, third_add7, allowance7";
-        sqlStmt = sqlStmt + ", start_time8, end_time8, rate_type8, charge_time_block8";
-        sqlStmt = sqlStmt + ", charge_rate8, grace_time8, min_charge8, max_charge8";
-        sqlStmt = sqlStmt + ", first_free8, first_add8, second_free8, second_add8";
-        sqlStmt = sqlStmt + ", third_free8, third_add8, allowance8";
-        sqlStmt = sqlStmt + ", start_time9, end_time9, rate_type9, charge_time_block9";
-        sqlStmt = sqlStmt + ", charge_rate9, grace_time9, min_charge9, max_charge9";
-        sqlStmt = sqlStmt + ", first_free9, first_add9, second_free9, second_add9";
-        sqlStmt = sqlStmt + ", third_free9, third_add9, allowance9";
-        sqlStmt = sqlStmt + ", zone_cutoff, day_cutoff, whole_day_max, whole_day_min, day_type";
-        sqlStmt = sqlStmt + ")";
-        sqlStmt = sqlStmt + " VALUES (" + tariff.tariff_id;
-        sqlStmt = sqlStmt + ", " + tariff.day_index;
+        logDbMessage("Unable to update Operation entry data.", "DB");
+    }
 
-        for (int i = 0; i < 9; i ++)
+    // =========================================================
+    // Determine LPR number
+    // =========================================================
+    if (!tEntry.sLPN[0].empty() ||
+        !tEntry.sLPN[1].empty())
+    {
+        if (tEntry.iTransType == 7 ||
+            tEntry.iTransType == 8 ||
+            tEntry.iTransType == 22)
         {
-            sqlStmt = sqlStmt + ", '" + tariff.start_time[i] + "'";
-            sqlStmt = sqlStmt + ", '" + tariff.end_time[i] + "'";
-            sqlStmt = sqlStmt + ", " + tariff.rate_type[i];
-            sqlStmt = sqlStmt + ", " + tariff.charge_time_block[i];
-            sqlStmt = sqlStmt + ", '" + tariff.charge_rate[i] + "'";
-            sqlStmt = sqlStmt + ", " + tariff.grace_time[i];
-			sqlStmt = sqlStmt + ", '" + tariff.min_charge[i] + "'";
-            sqlStmt = sqlStmt + ", '" + tariff.max_charge[i] + "'";
-            sqlStmt = sqlStmt + ", " + tariff.first_free[i];
-            sqlStmt = sqlStmt + ", '" + tariff.first_add[i] + "'";
-            sqlStmt = sqlStmt + ", " + tariff.second_free[i];
-            sqlStmt = sqlStmt + ", '" + tariff.second_add[i] + "'";
-            sqlStmt = sqlStmt + ", " + tariff.third_free[i];
-            sqlStmt = sqlStmt + ", '" + tariff.third_add[i] + "'";
-            sqlStmt = sqlStmt + ", " + tariff.allowance[i];
-        }
-
-        sqlStmt = sqlStmt + ", " + tariff.zone_cutoff;
-        sqlStmt = sqlStmt + ", " + tariff.day_cutoff;
-        sqlStmt = sqlStmt + ", '" + tariff.whole_day_max + "'";
-        sqlStmt = sqlStmt + ", '" + tariff.whole_day_min + "'";
-        sqlStmt = sqlStmt + ", '" + tariff.day_type + "'";
-        sqlStmt = sqlStmt + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert tariff setup to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+            lprNo = tEntry.sLPN[1];
         }
         else
         {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::downloadtarifftypeinfo()
-{
-    int ret = -1;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    r = localdb->SQLExecutNoneQuery("DELETE FROM tariff_type_info");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete tariff_type_info from local failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
-    operation::getInstance()->writelog("Download tariff_type_info.", "DB");
-    r = centraldb->SQLSelect("SELECT * FROM tariff_type_info", &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Download tariff_type_info failed.", "DB");
-        return ret;
-    
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            tariff_type_info_struct tariff_type;
-            tariff_type.tariff_type = selResult[j].GetDataItem(0);
-            tariff_type.start_time = selResult[j].GetDataItem(1);
-            tariff_type.end_time = selResult[j].GetDataItem(2);
-
-            w = writetarifftypeinfo2local(tariff_type);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");   // Set the underlying string to an empty string
-        dbss.clear();   // Clear the state of the stream
-        dbss << "Downloading tariff_type_info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writetarifftypeinfo2local(tariff_type_info_struct& tariff_type)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO tariff_type_info";
-        sqlStmt = sqlStmt + " (tariff_type, start_time, end_time)";
-        sqlStmt = sqlStmt + " VALUES (" + tariff_type.tariff_type;
-        sqlStmt = sqlStmt + ", '" + tariff_type.start_time + "'";
-        sqlStmt = sqlStmt + ", '" + tariff_type.end_time + "'";
-        sqlStmt = sqlStmt + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert tariff type info to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-
-
-int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
-{
-    int ret = -1;
-    std::vector<ReaderItem> tResult;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    if (iCheckStatus == 1)
-    {
-        // Check x tariff is downloaded or not
-        sqlStmt = "SELECT name FROM parameter_mst ";
-        sqlStmt = sqlStmt + "WHERE name = 'DownloadXTariff' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-
-        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
-            return ret;
-        }
-        else if (tResult.size() == 0)
-        {
-            m_remote_db_err_flag.store(0);
-            operation::getInstance()->writelog("X_Tariff download already.", "DB");
-            return -3;
+            lprNo = tEntry.sLPN[0];
         }
     }
 
-    r = localdb->SQLExecutNoneQuery("DELETE FROM X_Tariff");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete X_Tariff from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
-    operation::getInstance()->writelog("Download X_Tariff for group: " + std::to_string(iGrpID) + ", site: " + std::to_string(iSiteID), "DB");
-    sqlStmt = "";
-    sqlStmt = "SELECT * FROM X_Tariff";
-    sqlStmt = sqlStmt + " WHERE group_id=" + std::to_string(iGrpID) + " AND site_id=" + std::to_string(iSiteID);
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Download X_Tariff failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            x_tariff_struct x_tariff;
-            x_tariff.day_index = selResult[j].GetDataItem(2);
-            x_tariff.auto0 = selResult[j].GetDataItem(3);
-            x_tariff.fee0 = selResult[j].GetDataItem(4);
-            x_tariff.time1 = selResult[j].GetDataItem(5);
-            x_tariff.auto1 = selResult[j].GetDataItem(6);
-            x_tariff.fee1 = selResult[j].GetDataItem(7);
-            x_tariff.time2 = selResult[j].GetDataItem(8);
-            x_tariff.auto2 = selResult[j].GetDataItem(9);
-            x_tariff.fee2 = selResult[j].GetDataItem(10);
-            x_tariff.time3 = selResult[j].GetDataItem(11);
-            x_tariff.auto3 = selResult[j].GetDataItem(12);
-            x_tariff.fee3 = selResult[j].GetDataItem(13);
-            x_tariff.time4 = selResult[j].GetDataItem(14);
-            x_tariff.auto4 = selResult[j].GetDataItem(15);
-            x_tariff.fee4 = selResult[j].GetDataItem(16);
-
-            w = writextariff2local(x_tariff);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-        dbss.clear();   // Clear the state of the stream
-        dbss << "Downloading x_tariff Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (iCheckStatus == 1)
-    {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadXTariff'";
-        
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadXTariff fetched=1 failed.", "DB");
-        }
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writextariff2local(x_tariff_struct& x_tariff)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO X_Tariff";
-        sqlStmt = sqlStmt + "(day_index, auto0, fee0, time1, auto1, fee1";
-        sqlStmt = sqlStmt + ", time2, auto2, fee2, time3, auto3, fee3, time4, auto4, fee4";
-        sqlStmt = sqlStmt + ")";
-        sqlStmt = sqlStmt + " VALUES ('" + x_tariff.day_index + "'";
-        sqlStmt = sqlStmt + ", " + x_tariff.auto0;
-        sqlStmt = sqlStmt + ", " + x_tariff.fee0;
-        sqlStmt = sqlStmt + ", '" + x_tariff.time1 + "'";
-        sqlStmt = sqlStmt + ", " + x_tariff.auto1;
-        sqlStmt = sqlStmt + ", " + x_tariff.fee1;
-        sqlStmt = sqlStmt + ", '" + x_tariff.time2 + "'";
-        sqlStmt = sqlStmt + ", " + x_tariff.auto2;
-        sqlStmt = sqlStmt + ", " + x_tariff.fee2;
-        sqlStmt = sqlStmt + ", '" + x_tariff.time3 + "'";
-        sqlStmt = sqlStmt + ", " + x_tariff.auto3;
-        sqlStmt = sqlStmt + ", " + x_tariff.fee3;
-        sqlStmt = sqlStmt + ", '" + x_tariff.time4 + "'";
-        sqlStmt = sqlStmt + ", " + x_tariff.auto4;
-        sqlStmt = sqlStmt + ", " + x_tariff.fee4;
-        sqlStmt = sqlStmt + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert X_Tariff to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::downloadholidaymst(int iCheckStatus)
-{
-    int ret = -1;
-    std::vector<ReaderItem> tResult;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    if (iCheckStatus == 1)
-    {
-        // Check Whether holiday mst is downloaded or not
-        sqlStmt = "SELECT name FROM parameter_mst ";
-        sqlStmt = sqlStmt + "WHERE name='DownloadHoliday' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-        
-        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
-            return ret;
-        }
-        else if (tResult.size() == 0)
-        {
-            m_remote_db_err_flag.store(0);
-            operation::getInstance()->writelog("holiday_mst download already.", "DB");
-            return -3;
-        }
-    }
-
-    operation::getInstance()->writelog("Download holiday_mst.", "DB");
-    sqlStmt = "";
-    sqlStmt = "SELECT holiday_date, descrip";
-    sqlStmt = sqlStmt + " FROM holiday_mst ";
-    sqlStmt = sqlStmt + "WHERE holiday_date > GETDATE() - 30";
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Download holiday_mst failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-
-    if (selResult.size() > 0)
-    {
-       	ClearHoliday();
-
-	    for (int j = 0; j < selResult.size(); j++)
-        {
-            w = writeholidaymst2local(selResult[j].GetDataItem(0), selResult[j].GetDataItem(1));
-
-            if (w == 0)
-            {
-                downloadCount++;
-			}
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading holiday_mst Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (iCheckStatus == 1)
-    {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadHoliday'";
-
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadHoliday fetched=1 failed.", "DB");
-        }
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writeholidaymst2local(std::string holiday_date, std::string descrip)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO holiday_mst";
-        sqlStmt = sqlStmt + " (holiday_date, descrip)";
-        sqlStmt = sqlStmt + " VALUES ('" + holiday_date + "'";
-        sqlStmt = sqlStmt + ", '" + descrip + "')";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert holiday to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::download3tariffinfo()
-{
-    int ret = -1;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    r = localdb->SQLExecutNoneQuery("DELETE FROM 3Tariff_Info");
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Delete 3Tariff_Info from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int zone_id = operation::getInstance()->gtStation.iZoneID;
-    operation::getInstance()->writelog("Download 3Tariff_Info.", "DB");
-    sqlStmt = "";
-    sqlStmt = "SELECT * FROM [3Tariff_Info]";
-    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Download 3Tariff_Info failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            tariff_info_struct tariff_info;
-            tariff_info.rate_type = selResult[j].GetDataItem(1);
-            tariff_info.day_type = selResult[j].GetDataItem(2);
-            tariff_info.time_from = selResult[j].GetDataItem(3);
-            tariff_info.time_till = selResult[j].GetDataItem(4);
-            tariff_info.t3_start = selResult[j].GetDataItem(5);
-            tariff_info.t3_block = selResult[j].GetDataItem(6);
-            tariff_info.t3_rate = selResult[j].GetDataItem(7);
-
-            w = write3tariffinfo2local(tariff_info);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading 3Tariff_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::write3tariffinfo2local(tariff_info_struct& tariff_info)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO 3Tariff_Info";
-        sqlStmt = sqlStmt + " (Rate_Type, Day_Type, Time_From, Time_Till, T3_Start, T3_Block, T3_Rate)";
-        sqlStmt = sqlStmt + " VALUES(" + tariff_info.rate_type;
-        sqlStmt = sqlStmt + ", '" + tariff_info.day_type + "'";
-        sqlStmt = sqlStmt + ", '" + tariff_info.time_from + "'";
-        sqlStmt = sqlStmt + ", '" + tariff_info.time_till + "'";
-        sqlStmt = sqlStmt + ", " + tariff_info.t3_start;
-        sqlStmt = sqlStmt + ", " + tariff_info.t3_block;
-        sqlStmt = sqlStmt + ", " + tariff_info.t3_rate + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert 3Tariff_Info to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::downloadratefreeinfo(int iCheckStatus)
-{
-    int ret = -1;
-    std::vector<ReaderItem> tResult;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    if (iCheckStatus == 1)
-    {
-        // Check Whether rate free info is downloaded or not
-        sqlStmt = "SELECT name FROM parameter_mst";
-        sqlStmt = sqlStmt + " WHERE name='DownloadRateFreeInfo' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-
-        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
-            return ret;
-        }
-        else if (tResult.size() == 0)
-        {
-            m_remote_db_err_flag.store(0);
-            operation::getInstance()->writelog("Rate_Free_Info download already.", "DB");
-            return -3;
-        }
-    }
-
-    r = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Free_Info");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete Rate_Free_Info from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
-    int zone_id = operation::getInstance()->gtStation.iZoneID;
-    operation::getInstance()->writelog("Download Rate_Free_Info.", "DB");
-    sqlStmt = "";
-    sqlStmt = "SELECT Rate_Type, Day_Type, Init_Free, Free_Beg, Free_End, Free_Time FROM Rate_Free_Info";
-    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Download Rate_Free_Info failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            rate_free_info_struct rate_free_info;
-            rate_free_info.rate_type = selResult[j].GetDataItem(0);
-            rate_free_info.day_type = selResult[j].GetDataItem(1);
-            rate_free_info.init_free = selResult[j].GetDataItem(2);
-            rate_free_info.free_beg = selResult[j].GetDataItem(3);
-            rate_free_info.free_end = selResult[j].GetDataItem(4);
-            rate_free_info.free_time = selResult[j].GetDataItem(5);
-
-            w = writeratefreeinfo2local(rate_free_info);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Rate_Free_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (iCheckStatus == 1)
-    {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadRateFreeInfo'";
-
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadRateFreeInfo fetched = 1 failed.", "DB");
-        }
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writeratefreeinfo2local(rate_free_info_struct& rate_free_info)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO Rate_Free_Info";
-        sqlStmt = sqlStmt + " (Rate_Type, Day_Type, Init_Free, Free_Beg, Free_End, Free_Time)";
-        sqlStmt = sqlStmt + " VALUES (" + rate_free_info.rate_type;
-        sqlStmt = sqlStmt + ", '" + rate_free_info.day_type + "'";
-        sqlStmt = sqlStmt + ", " + rate_free_info.init_free;
-        sqlStmt = sqlStmt + ", '" + rate_free_info.free_beg + "'";
-        sqlStmt = sqlStmt + ", '" + rate_free_info.free_end + "'";
-        sqlStmt = sqlStmt + ", " + rate_free_info.free_time + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert Rate_Free_Info to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::downloadspecialdaymst(int iCheckStatus)
-{
-    int ret = -1;
-    std::vector<ReaderItem> tResult;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    if (iCheckStatus == 1)
-    {
-        // Check Whether special day mst is downloaded or not
-        sqlStmt = "SELECT name FROM parameter_mst";
-        sqlStmt = sqlStmt + " WHERE name='DownloadSpecialDay' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-
-        r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
-            return ret;
-        }
-        else if (tResult.size() == 0)
-        {
-            m_remote_db_err_flag.store(0);
-            operation::getInstance()->writelog("Special_Day_mst download already.", "DB");
-            return -3;
-        }
-    }
-
-    r = localdb->SQLExecutNoneQuery("DELETE FROM Special_Day_mst");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete Special_Day_mst from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
-    int zone_id = operation::getInstance()->gtStation.iZoneID;
-    operation::getInstance()->writelog("Download Special_Day_mst.", "DB");
-    sqlStmt = "";
-    sqlStmt = "SELECT convert(char(10),Special_Date,103), Rate_Type, Day_Code FROM Special_Day_mst";
-    sqlStmt = sqlStmt + " WHERE Special_Date > getdate()-1 AND (";
-	sqlStmt = sqlStmt + " Zone_ID='" + std::to_string(zone_id) + "'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
-	sqlStmt = sqlStmt + ")";
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Download Special_Day_mst failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            w = writespecialday2local(selResult[j].GetDataItem(0), selResult[j].GetDataItem(1), selResult[j].GetDataItem(2));
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Special_Day_mst Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (iCheckStatus == 1)
-    {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadSpecialDay'";
-
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadSpecialDay fetched=1 failed.", "DB");
-        }
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writespecialday2local(std::string special_date, std::string rate_type, std::string day_code)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO Special_Day_mst";
-        sqlStmt = sqlStmt + " (Special_Date, Rate_Type, Day_Code)";
-        sqlStmt = sqlStmt + " VALUES('" + special_date + "'";
-        sqlStmt = sqlStmt + ", " + rate_type;
-        sqlStmt = sqlStmt + ", '" + day_code + "')";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str("");
-            dbss.clear();
-            dbss << "Insert Special_Day_mst to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::downloadratetypeinfo(int iCheckStatus)
-{
-    int ret = -1;
-    std::vector<ReaderItem> tResult;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    if (iCheckStatus == 1)
-    {
-        // Check Whether rate type infor is downloaded or not
-        sqlStmt = "SELECT name FROM parameter_mst";
-        sqlStmt = sqlStmt + " WHERE name='DownloadRateTypeInfo' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-
-        r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Download Rate_Type_Info failed.", "DB");
-            return ret;
-        }
-        else if (selResult.size() == 0)
-        {
-            m_remote_db_err_flag.store(0);
-            operation::getInstance()->writelog("Rate_Type_Info download already.", "DB");
-            return -3;
-        }
-    }
-
-    r = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Type_Info");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete Rate_Type_Info from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
-    int zone_id = operation::getInstance()->gtStation.iZoneID;
-    operation::getInstance()->writelog("Download Rate_Type_Info.", "DB");
-    sqlStmt = "";
-    sqlStmt = "SELECT Rate_Type, Has_Holiday, Has_Holiday_Eve, Has_Special_Day, Has_Init_Free, Has_3Tariff, Has_Zone_Max FROM Rate_Type_Info";
-    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Donwload Rate_Type_Info failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            rate_type_info_struct rate_type_info;
-            rate_type_info.rate_type = selResult[j].GetDataItem(0);
-            rate_type_info.has_holiday = selResult[j].GetDataItem(1);
-            rate_type_info.has_holiday_eve = selResult[j].GetDataItem(2);
-            rate_type_info.has_special_day = selResult[j].GetDataItem(3);
-            rate_type_info.has_init_free = selResult[j].GetDataItem(4);
-            rate_type_info.has_3tariff = selResult[j].GetDataItem(5);
-            rate_type_info.has_zone_max = selResult[j].GetDataItem(6);
-            //rate_type_info.has_firstentry_rate = selResult[j].GetDataItem(7);
-
-            w = writeratetypeinfo2local(rate_type_info);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Rate_Type_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (iCheckStatus == 1)
-    {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadRateTypeInfo'";
-
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadRateTypeInfo fetched = 1 failed.", "DB");
-        }
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writeratetypeinfo2local(rate_type_info_struct rate_type_info)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO Rate_Type_Info";
-        sqlStmt = sqlStmt + " (Rate_Type, Has_Holiday, Has_Holiday_Eve, Has_Special_Day, Has_Init_Free, Has_3Tariff, Has_Zone_Max)";
-        sqlStmt = sqlStmt + " VALUES(" + rate_type_info.rate_type;
-        sqlStmt = sqlStmt + ", " + rate_type_info.has_holiday;
-        sqlStmt = sqlStmt + ", " + rate_type_info.has_holiday_eve;
-        sqlStmt = sqlStmt + ", " + rate_type_info.has_special_day;
-        sqlStmt = sqlStmt + ", " + rate_type_info.has_init_free;
-        sqlStmt = sqlStmt + ", " + rate_type_info.has_3tariff;
-        sqlStmt = sqlStmt + ", " + rate_type_info.has_zone_max;
-        sqlStmt = sqlStmt + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str();
-            dbss.clear();
-            dbss << "Insert Rate_Type_Info to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-int db::downloadratemaxinfo(int iCheckStatus)
-{
-    int ret = -1;
-    std::vector<ReaderItem> tResult;
-    std::vector<ReaderItem> selResult;
-    std::string sqlStmt;
-    std::stringstream dbss;
-    int r = -1;
-    int w = -1;
-
-    if (iCheckStatus == 1)
-    {
-        // Check Whether rate max info is downloaded or not
-        sqlStmt = "SELECT name FROM parameter_mst";
-        sqlStmt = sqlStmt + " WHERE name='DownloadRateMaxInfo' AND s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=0";
-
-        r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Download Rate_Max_Info failed.", "DB");
-            return ret;
-        }
-        else if (selResult.size() == 0)
-        {
-            m_remote_db_err_flag.store(0);
-            operation::getInstance()->writelog("Rate_Max_Info download already.", "DB");
-            return -3;
-        }
-    }
-
-    r = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Max_Info");
-    if (r != 0)
-    {
-        m_local_db_err_flag = 1;
-        operation::getInstance()->writelog("Delete Rate_Max_Info from local failed.", "DB");
-        return -1;
-    }
-    else
-    {
-        m_local_db_err_flag = 0;
-    }
-
-    int zone_id = operation::getInstance()->gtStation.iZoneID;
-    operation::getInstance()->writelog("Download Rate_Max_Info.", "DB");
-    sqlStmt = "";
-    sqlStmt = "Select Rate_Type, Day_Type, Start_Time, End_Time, Max_Fee FROM Rate_Max_Info";
-    sqlStmt = sqlStmt + " WHERE Zone_ID='" + std::to_string(zone_id) + "'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '" + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + ",%'";
-    sqlStmt = sqlStmt + " OR Zone_ID LIKE '%," + std::to_string(zone_id) + "'";
-
-    r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-    if (r != 0)
-    {
-        m_remote_db_err_flag.store(1);
-        operation::getInstance()->writelog("Donwload Rate_Max_Info failed.", "DB");
-        return ret;
-    }
-    else
-    {
-        m_remote_db_err_flag.store(0);
-    }
-
-    int downloadCount = 0;
-    if (selResult.size() > 0)
-    {
-        for (int j = 0; j < selResult.size(); j++)
-        {
-            rate_max_info_struct rate_max_info;
-            rate_max_info.rate_type = selResult[j].GetDataItem(0);
-            rate_max_info.day_type = selResult[j].GetDataItem(1);
-            rate_max_info.start_time = selResult[j].GetDataItem(2);
-            rate_max_info.end_time = selResult[j].GetDataItem(3);
-            rate_max_info.max_fee = selResult[j].GetDataItem(4);
-
-            w = writeratemaxinfo2local(rate_max_info);
-
-            if (w == 0)
-            {
-                downloadCount++;
-            }
-        }
-
-        dbss.str("");  // Set the underlying string to an empty string
-    	dbss.clear();   // Clear the state of the stream
-		dbss << "Downloading Rate_Max_Info Records: End, Total Record :" << selResult.size() << " ,Downloaded Record :" << downloadCount;
-    	Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-    }
-
-    if (iCheckStatus == 1)
-    {
-        sqlStmt = "";
-        sqlStmt = "UPDATE parameter_mst set s" + std::to_string(operation::getInstance()->gtStation.iSID) + "_fetched=1";
-        sqlStmt = sqlStmt + " WHERE name='DownloadRateMaxInfo'";
-
-        r = centraldb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_remote_db_err_flag.store(1);
-            operation::getInstance()->writelog("Set DownloadRateMaxInfo fetched = 1 failed.", "DB");
-        }
-    }
-
-    if (selResult.size() < 1)
-    {
-        ret = -1;
-    }
-    else
-    {
-        ret = downloadCount;
-    }
-
-    return ret;
-}
-
-int db::writeratemaxinfo2local(rate_max_info_struct rate_max_info)
-{
-    int r = -1;
-    std::string sqlStmt;
-    std::stringstream dbss;
-
-    try
-    {
-        sqlStmt = "INSERT INTO Rate_Max_Info";
-        sqlStmt = sqlStmt + " (Rate_Type, Day_Type, Start_Time, End_Time, Max_Fee)";
-        sqlStmt = sqlStmt + " VALUES(" + rate_max_info.rate_type;
-        sqlStmt = sqlStmt + ", '" + rate_max_info.day_type + "'";
-        sqlStmt = sqlStmt + ", '" + rate_max_info.start_time + "'";
-        sqlStmt = sqlStmt + ", '" + rate_max_info.end_time + "'";
-        sqlStmt = sqlStmt + ", " + rate_max_info.max_fee;
-        sqlStmt = sqlStmt + ")";
-
-        r = localdb->SQLExecutNoneQuery(sqlStmt);
-        if (r != 0)
-        {
-            m_local_db_err_flag = 1;
-            dbss.str();
-            dbss.clear();
-            dbss << "Insert Rate_Type_Info to local failed.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        }
-        else
-        {
-            m_local_db_err_flag = 0;
-        }
-    }
-    catch (const std::exception& e)
-    {
-        r = -1;
-        dbss.str("");
-        dbss.clear();
-        dbss << "DB: local db error in writing rec: " << std::string(e.what());
-        Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-        m_local_db_err_flag = 1;
-    }
-
-    return r;
-}
-
-DBError db::loadstationsetup()
-{
-	vector<ReaderItem> selResult;
-	int r = -1;
-	int giStnid;
-	giStnid = operation::getInstance()->gtStation.iSID;
-
-	r = localdb->SQLSelect("SELECT * FROM Station_Setup WHERE StationId = '" + std::to_string(giStnid) + "'", &selResult, false);
-
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("get station set up fail.", "DB");
-		return iLocalFail;
-	}
-
-	if (selResult.size() > 0)
-	{            
-		//Set configuration
-		operation::getInstance()->gtStation.iSID = std::stoi(selResult[0].GetDataItem(0));
-		operation::getInstance()->gtStation.sName = selResult[0].GetDataItem(1);
-		switch (std::stoi(selResult[0].GetDataItem(2)))
-		{
-		case 1:
-			operation::getInstance()->gtStation.iType = tientry;
-			break;
-		case 2:
-			operation::getInstance()->gtStation.iType = tiExit;
-			break;
-		default:
-			break;
-		};
-		operation::getInstance()->gtStation.iStatus = std::stoi(selResult[0].GetDataItem(3));
-		operation::getInstance()->gtStation.sPCName = selResult[0].GetDataItem(4);
-		operation::getInstance()->gtStation.iCHUPort = std::stoi(selResult[0].GetDataItem(5));
-		operation::getInstance()->gtStation.iAntID = std::stoi(selResult[0].GetDataItem(6));
-		operation::getInstance()->gtStation.iZoneID = std::stoi(selResult[0].GetDataItem(7));
-		operation::getInstance()->gtStation.iIsVirtual = std::stoi(selResult[0].GetDataItem(8));
-		switch(std::stoi(selResult[0].GetDataItem(9)))
-		{
-		case 0:
-			operation::getInstance()->gtStation.iSubType = iNormal;
-			break;
-		case 1:
-			operation::getInstance()->gtStation.iSubType = iXwithVENoPay;
-			break;
-		case 2:
-			operation::getInstance()->gtStation.iSubType = iXwithVEPay;
-			break;
-		default:
-			break;
-		};
-		operation::getInstance()->gtStation.iVirtualID = std::stoi(selResult[0].GetDataItem(10));
-		operation::getInstance()->tProcess.gbloadedStnSetup = true;
-		return iDBSuccess;
-	}
-
-	return iNoData; 
-};
-
-int db::downloadTR()
-{
-	int ret = -1;
-	int r = -1;
-	int w = -1;
-	std::vector<ReaderItem> tResult;
-	std::vector<ReaderItem> selResult;
-	std::string sqlStmt;
-	std::stringstream dbss;
-	int tr_type;
-	int line_no;
-	int enabled;
-	std::string line_text;
-	std::string line_var;
-	int line_font;
-	int line_align;
-
-	sqlStmt = "SELECT COUNT(*) from TR_mst ";
-	sqlStmt = sqlStmt + "where TRType = 1 or TRType = 2 or TRType = 6 or TRType = 11 or TRType = 12";
-
-	r = centraldb->SQLSelect(sqlStmt, &tResult, false);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download TR fail.", "DB");
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-		dbss.str("");
-		dbss.clear();
-		dbss << "Total " << std::string(tResult[0].GetDataItem(0)) << " TR type to be download.";
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	sqlStmt = "";
-	sqlStmt.clear();
-	sqlStmt = "SELECT TRType, Line_no, Enabled, LineText, LineVar, LineFont, LineAlign from TR_mst ";
-	sqlStmt = sqlStmt + "where TRType = 1 or TRType = 2 or TRType = 6 or TRType = 11 or TRType = 12";
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		operation::getInstance()->writelog("download TR faile.", "DB");
-		return ret;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
-
-	int downloadCount = 0;
-	if (selResult.size() > 0)
-	{
-		dbss.str("");
-		dbss.clear();
-		dbss << "Downloading TR " << std::to_string(selResult.size()) << " Records: Started";
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-
-		for (int j = 0; j < selResult.size(); j++)
-		{
-			tr_type = std::stoi(selResult[j].GetDataItem(0));
-			line_no = std::stoi(selResult[j].GetDataItem(1));
-			enabled = std::stoi(selResult[j].GetDataItem(2));
-			line_text = selResult[j].GetDataItem(3);
-			line_var = selResult[j].GetDataItem(4);
-			line_font = std::stoi(selResult[j].GetDataItem(5));
-			line_align = std::stoi(selResult[j].GetDataItem(6));
-
-			w = writetr2local(tr_type, line_no, enabled, line_text, line_var, line_font, line_align);
-
-			if (w == 0)
-			{
-				downloadCount++;
-				m_remote_db_err_flag.store(0);
-			}
-		}
-		dbss.str("");
-		dbss.clear();
-		dbss << "Downloading TR Records, End, Total Record :" << selResult.size() << " , Downloaded Record :" << downloadCount;
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-	}
-
-	ret = downloadCount;
-
-	return ret;
-}
-
-int db::writetr2local(int tr_type, int line_no, int enabled, std::string line_text, std::string line_var, int line_font, int line_align)
-{
-	int r = -1;
-	int debug = 0;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	std::stringstream dbss;
-
-	try
-	{
-		r = localdb->SQLSelect("SELECT * FROM TR_mst where TRType =" + std::to_string(tr_type) + " and Line_no = " + std::to_string(line_no), &selResult, false);
-		if (r != 0)
-		{
-			m_local_db_err_flag = 1;
-			operation::getInstance()->writelog("Update local TR failed.", "DB");
-			return r;
-		}
-		else
-		{
-			m_local_db_err_flag = 0;
-		}
-
-		if (selResult.size() > 0)
-		{
-			// Update param records
-			std::string sqlStmt = "UPDATE TR_mst SET ";
-			sqlStmt += "TRType = " + std::to_string(tr_type) + ", ";
-			sqlStmt += "Line_no = " + std::to_string(line_no) + ", ";
-			sqlStmt += "Enabled = " + std::to_string(enabled) + ", ";
-			sqlStmt += "LineText = '" + line_text + "', ";
-			sqlStmt += "LineVar = '" + line_var + "', ";
-			sqlStmt += "LineFont = " + std::to_string(line_font) + ", ";
-			sqlStmt += "LineAlign = " + std::to_string(line_align) + " ";
-			sqlStmt += "WHERE TRType = " + std::to_string(tr_type) + " AND ";
-			sqlStmt += "Line_no = " + std::to_string(line_no);
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-			if (r != 0)
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");
-				dbss.clear();
-				dbss << "update local TR failed.";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else
-			{
-				m_local_db_err_flag = 0;
-			}
-		}
-		else
-		{
-			sqlStmt = "INSERT INTO TR_mst";
-			sqlStmt = sqlStmt + " (TRType, Line_no, Enabled, LineText, LineVar, LineFont, LineAlign)";
-			sqlStmt = sqlStmt + " VALUES (" + std::to_string(tr_type);
-			sqlStmt = sqlStmt + "," + std::to_string(line_no);
-			sqlStmt = sqlStmt + "," + std::to_string(enabled);
-			sqlStmt = sqlStmt + ",'" + line_text + "'";
-			sqlStmt = sqlStmt + ",'" + line_var + "'";
-			sqlStmt = sqlStmt + "," + std::to_string(line_font);
-			sqlStmt = sqlStmt + "," + std::to_string(line_align) + ")";
-
-			r = localdb->SQLExecutNoneQuery(sqlStmt);
-			if (r != 0)
-			{
-				m_local_db_err_flag = 1;
-				dbss.str("");
-				dbss.clear();
-				dbss << "insert TR to local failed";
-				Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-			}
-			else
-			{
-				m_local_db_err_flag = 0;
-			}
-		}
-	}
-	catch (const std::exception & e)
-	{
-		r = -1;
-		dbss.str("");
-		dbss.clear();
-		dbss << "DB: local db error in writing rec: " << std::string(e.what());
-		Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-		m_local_db_err_flag = 1;
-	}
-
-	return r;
-}
-
-DBError db::loadZoneEntriesfromLocal()
-{
-	vector<ReaderItem> selResult;
-	int r = -1;
-	int giStnZoneid;
-	int j = 0;
-	giStnZoneid = operation::getInstance()->gtStation.iZoneID;
-
-	r = localdb->SQLSelect("SELECT StationID FROM Station_Setup WHERE StationType = 1 and ZoneID = '" + std::to_string(giStnZoneid) + "'", &selResult, false);
-
-	if (r != 0)
-	{
-		//m_log->WriteAndPrint("Get Station Setup: fail");
-		return iLocalFail;
-	}
-
-	if (selResult.size() > 0)
-	{            
-			operation::getInstance()->tParas.gsZoneEntries = ",";
-			
-			for(j=0;j<selResult.size();j++){
-				
-			 operation::getInstance()->tParas.gsZoneEntries =  operation::getInstance()->tParas.gsZoneEntries + selResult[j].GetDataItem(0) + ",";
-
-			}
-		operation::getInstance()->writelog("Load ZoneEntries from Local: " + operation::getInstance()->tParas.gsZoneEntries , "DB");
-		return iDBSuccess;
-	}
-
-	return iNoData; 
-};
-
-DBError db::loadParam()
-{
-	int r = -1;
-	vector<ReaderItem> selResult;
-	//------
-	loadZoneEntriesfromLocal();
-	//------
-	loadparamfromCentral();
-
-	operation::getInstance()->tParas.giTariffFeeMode = 0;   // for tesing, please help to load late 
-	//------
-	r = localdb->SQLSelect("SELECT ParamName, ParamValue FROM Param_mst", &selResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load parameter failed.", "DB");
-		return iLocalFail;
-	}
-
-	if (selResult.size() > 0)
-	{
-		for (auto &readerItem : selResult)
-		{
-			if (readerItem.getDataSize() == 2)
-			{
-				try
-				{
-					if (readerItem.GetDataItem(0) == "CommPortAntenna")
-					{
-						operation::getInstance()->tParas.giCommPortAntenna = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "commportlcsc")
-					{
-						operation::getInstance()->tParas.giCommPortLCSC = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "commportprinter")
-					{
-						operation::getInstance()->tParas.giCommPortPrinter = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "EPS")
-					{
-						operation::getInstance()->tParas.giEPS = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "carparkcode")
-					{
-						operation::getInstance()->tParas.gscarparkcode = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "locallcsc")
-					{
-						operation::getInstance()->tParas.gsLocalLCSC = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "remotelcsc")
-					{
-						operation::getInstance()->tParas.gsRemoteLCSC = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "remotelcscback")
-					{
-						operation::getInstance()->tParas.gsRemoteLCSCBack = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "CSCRcdfFolder")
-					{
-						operation::getInstance()->tParas.gsCSCRcdfFolder = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "CSCRcdackFolder")
-					{
-						operation::getInstance()->tParas.gsCSCRcdackFolder = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "CPOID")
-					{
-						operation::getInstance()->tParas.gsCPOID = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "CPID")
-					{
-						operation::getInstance()->tParas.gsCPID = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "CommPortLED")
-					{
-						operation::getInstance()->tParas.giCommPortLED = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "HasMCycle")
-					{
-						operation::getInstance()->tParas.giHasMCycle = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "TicketSiteID")
-					{
-						operation::getInstance()->tParas.giTicketSiteID = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "DataKeepDays")
-					{
-						operation::getInstance()->tParas.giDataKeepDays = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "BarrierPulse")
-					{
-						operation::getInstance()->tParas.gsBarrierPulse = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "AntMaxRetry")
-					{
-						operation::getInstance()->tParas.giAntMaxRetry = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "AntMinOKTimes")
-					{
-						operation::getInstance()->tParas.giAntMinOKTimes = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "AntInqTO")
-					{
-						operation::getInstance()->tParas.giAntInqTO = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "AntiIURepetition")
-					{
-						operation::getInstance()->tParas.gbAntiIURepetition = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-					}
-
-					if (readerItem.GetDataItem(0) == "commportled401")
-					{
-						operation::getInstance()->tParas.giCommportLED401 = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "commportreader")
-					{
-						operation::getInstance()->tParas.giCommPortKDEReader = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "CommPortCPT")
-					{
-						operation::getInstance()->tParas.giCommPortUPOS = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "IsHDBSite")
-					{
-						operation::getInstance()->tParas.giIsHDBSite = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "allowedholdertype")
-					{
-						operation::getInstance()->tParas.gsAllowedHolderType = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "LEDMaxChar")
-					{
-						operation::getInstance()->tParas.giLEDMaxChar = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "AlwaysTryOnline")
-					{
-						operation::getInstance()->tParas.gbAlwaysTryOnline = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-					}
-
-					if (readerItem.GetDataItem(0) == "AutoDebitNoEntry")
-					{
-						operation::getInstance()->tParas.gbAutoDebitNoEntry = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-					}
-
-					if (readerItem.GetDataItem(0) == "LoopAHangTime")
-					{
-						operation::getInstance()->tParas.giLoopAHangTime = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "OperationTO")
-					{
-						operation::getInstance()->tParas.giOperationTO = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "FullAction")
-					{
-						operation::getInstance()->tParas.giFullAction = static_cast<eFullAction>(std::stoi(readerItem.GetDataItem(1)));
-					}
-
-					if (readerItem.GetDataItem(0) == "barrieropentoolongtime")
-					{
-						operation::getInstance()->tParas.giBarrierOpenTooLongTime = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "bitbarrierarmbroken")
-					{
-						operation::getInstance()->tParas.giBitBarrierArmBroken = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "mccontrolaction")
-					{
-						operation::getInstance()->tParas.giMCControlAction = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "LogBackFolder")
-					{
-						operation::getInstance()->tParas.gsLogBackFolder = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "LogKeepDays")
-					{
-						operation::getInstance()->tParas.giLogKeepDays = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "DBBackupFolder")
-					{
-						operation::getInstance()->tParas.gsDBBackupFolder = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "maxsendofflineno")
-					{
-						operation::getInstance()->tParas.giMaxSendOfflineNo = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "maxlocaldbsize")
-					{
-						operation::getInstance()->tParas.glMaxLocalDBSize = std::stol(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "MaxTransInterval")
-					{
-						operation::getInstance()->tParas.giMaxTransInterval = std::stol(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "NoIURetry")
-					{
-						operation::getInstance()->tParas.giNoIURetry = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "MaxDiffIU")
-					{
-						operation::getInstance()->tParas.giMaxDiffIU = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "LockBarrier")
-					{
-						operation::getInstance()->tParas.gbLockBarrier = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-					}
-
-					if (readerItem.GetDataItem(0) == "commportled2")
-					{
-						operation::getInstance()->tParas.giCommPortLED2 = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "CHUIP")
-					{
-						operation::getInstance()->tParas.gsCHUIP = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "Site")
-					{
-						operation::getInstance()->tParas.gsSite = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "Address")
-					{
-						operation::getInstance()->tParas.gsAddress = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "TryTimes4NE")
-					{
-						operation::getInstance()->tParas.giTryTimes4NE = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "processreversedcmd")
-					{
-						operation::getInstance()->tParas.giProcessReversedCMD = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "hasthreewheelmc")
-					{
-						operation::getInstance()->tParas.giHasThreeWheelMC = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "MaxDebitDays")
-					{
-						operation::getInstance()->tParas.giMaxDebitDays = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "FirstHourMode")
-					{
-						operation::getInstance()->tParas.giFirstHourMode = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "PEAllowance")
-					{
-						operation::getInstance()->tParas.giPEAllowance = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "TariffFeeMode")
-					{
-						operation::getInstance()->tParas.giTariffFeeMode = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "TariffGTmode")
-					{
-						operation::getInstance()->tParas.giTariffGTMode = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "Hr2PEAllowance")
-					{
-						operation::getInstance()->tParas.giHr2PEAllowance = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "SeasonCharge")
-					{
-						operation::getInstance()->tParas.giSeasonCharge = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "ShowSeasonExpireDays")
-					{
-						operation::getInstance()->tParas.giShowSeasonExpireDays = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "ShowExpiredTime")
-					{
-						operation::getInstance()->tParas.giShowExpiredTime = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "MCyclePerDay")
-					{
-						operation::getInstance()->tParas.giMCyclePerDay = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "V3TransType")
-					{
-						operation::getInstance()->tParas.giV3TransType = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "V4TransType")
-					{
-						operation::getInstance()->tParas.giV4TransType = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "V5TransType")
-					{
-						operation::getInstance()->tParas.giV5TransType = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "FirstHour")
-					{
-						operation::getInstance()->tParas.giFirstHour = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "HasHolidayEve")
-					{
-						operation::getInstance()->tParas.giHasHolidayEve = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "HasRedemption")
-					{
-						operation::getInstance()->tParas.gbHasRedemption = (std::stoi(readerItem.GetDataItem(1)) == 1) ? true : false;
-					}
-
-					if (readerItem.GetDataItem(0) == "Company")
-					{
-						operation::getInstance()->tParas.gsCompany = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "GSTNo")
-					{
-						operation::getInstance()->tParas.gsGSTNo = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "Tel")
-					{
-						operation::getInstance()->tParas.gsTel = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "ZIP")
-					{
-						operation::getInstance()->tParas.gsZIP = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "GSTRate")
-					{
-						operation::getInstance()->tParas.gfGSTRate = std::stof(readerItem.GetDataItem(1))/100.00f;
-						if (operation::getInstance()->tParas.gfGSTRate == 0)  operation::getInstance()->tParas.gfGSTRate = 0.09;
-					}
-
-					if (readerItem.GetDataItem(0) == "CHUCnTO")
-					{
-						operation::getInstance()->tParas.giCHUCnTO = std::stof(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "HdRec")
-					{
-						operation::getInstance()->tParas.gsHdRec = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "HdTk")
-					{
-						operation::getInstance()->tParas.gsHdTk = readerItem.GetDataItem(1);
-					}
-
-					if (readerItem.GetDataItem(0) == "needcard4complimentary")
-					{
-						operation::getInstance()->tParas.giNeedCard4Complimentary = std::stoi(readerItem.GetDataItem(1));
-					}
-
-					if (readerItem.GetDataItem(0) == "ExitTicketRedemption")
-					{
-						operation::getInstance()->tParas.giExitTicketRedemption = std::stoi(readerItem.GetDataItem(1));
-					}
-				}
-				catch (const std::invalid_argument &e)
-				{
-					std::stringstream ss;
-					ss << "Invalid argument for key '" << readerItem.GetDataItem(0)
-						<< "' with value '" << readerItem.GetDataItem(1) << "': " << e.what();
-					Logger::getInstance()->FnLog(ss.str(), "", "DB");
-				}
-				catch (const std::out_of_range &e)
-				{
-					std::stringstream ss;
-					ss << "Out of range for key '" << readerItem.GetDataItem(0)
-						<< "' with value '" << readerItem.GetDataItem(1) << "': " << e.what();
-					Logger::getInstance()->FnLog(ss.str(), "", "DB");
-				}
-				catch (const std::exception &e)
-				{
-					std::stringstream ss;
-					ss << "Error processing key '" << readerItem.GetDataItem(0)
-						<< "': " << e.what();
-					Logger::getInstance()->FnLog(ss.str(), "", "DB");
-				}
-			}
-		}
-		operation::getInstance()->tProcess.gbloadedParam = true;
-        return iDBSuccess;
-	}
-
-	return iNoData;
-}
-
-DBError db::loadparamfromCentral()
-{
-	int r;
-	vector<ReaderItem> tResult;
-
-	operation::getInstance()->writelog ("Load parameter from Centaral DB", "DB");
-	
-	r = centraldb->SQLSelect("SELECT group_id,site_id FROM site_setup", &tResult, true);
-	if (r != 0)
-	{
-		return iCentralFail;
-	}
-
-
-	if (tResult.size()>0)
-	{
-		operation::getInstance()->tParas.giGroupID = std::stoi(tResult[0].GetDataItem(0));
-		operation::getInstance()->tParas.giSite = std::stoi(tResult[0].GetDataItem(1));
-		operation::getInstance()->writelog ("Load Group ID: " + std::to_string(operation:: getInstance()->tParas.giGroupID), "DB");
-		operation::getInstance()->writelog ("Load Site ID: " + std::to_string(operation:: getInstance()->tParas.giSite), "DB");
-	}
-	
-	r = centraldb->SQLSelect("SELECT entry_station,total_lots FROM counter_definition where zone_id = " + to_string(operation::getInstance()->gtStation.iZoneID) , &tResult, true);
-	if (r != 0)
-	{
-		return iCentralFail;
-	}
-
-	if (tResult.size()>0)
-	{
-		operation::getInstance()->tParas.gsZoneEntries = "," + tResult[0].GetDataItem(0) + ",";
-		operation::getInstance()->writelog ("Load zone for entry: " + operation:: getInstance()->tParas.gsZoneEntries, "DB");
-		operation::getInstance()->gtStation.iZoneLots = std::stoi(tResult[0].GetDataItem(1));
-		operation::getInstance()->writelog ("Load Zone Total lots: " + std::to_string(operation:: getInstance()->gtStation.iZoneLots), "DB");
-	}
-
-	r = centraldb->SQLSelect("SELECT MAX(receipt_no) FROM exit_trans where station_id  = " + to_string(operation::getInstance()->gtStation.iSID) + " and receipt_no <> '' " , &tResult, true);
-	if (r != 0)
-	{
-		return iCentralFail;
-	}
-
-	if (tResult.size() > 0 && std::string(tResult[0].GetDataItem(0)) != "" && std::string(tResult[0].GetDataItem(0)) != "NULL" )
-	{
-		int l; 
-		string A;
-		long k;
-		A = std::to_string(operation::getInstance()->gtStation.iSID);
-		l = tResult[0].GetDataItem(0).length() - A.length();
-		A = tResult[0].GetDataItem(0).substr(0,l);
-
-		operation::getInstance()->writelog ("Load Last Receipt No: " + A, "DB");
-		try
-		{
-		    operation::getInstance()->tProcess.glLastSerialNo = std::stol(A);
-		}
-		catch (const std::exception& e)
-		{
-			operation::getInstance()->writelog ("Exception: " + std::string(e.what()), "DB");
-		}
-	
-		return iDBSuccess;
-	} else
-	{
-		operation::getInstance()->writelog ("Load Last Receipt No: NULL", "DB");
-	}
-
-	return iNoData;
-
-}
-
-DBError db::loadvehicletype()
-{
-	int r = -1;
-	vector<ReaderItem> selResult;
-
-	r = localdb->SQLSelect("SELECT IUCode, TransType FROM Vehicle_type", &selResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load Trans Type failed.", "DB");
-		return iLocalFail;
-	}
-
-	if (selResult.size() > 0)
-	{
-		for (auto &readerItem : selResult)
-		{
-			if (readerItem.getDataSize() == 2)
-			{
-				operation::getInstance()->tVType.push_back({std::stoi(readerItem.GetDataItem(0)), std::stoi(readerItem.GetDataItem(1))});
-			}
-		}
-		operation::getInstance()->tProcess.gbloadedVehtype = true;
-		return iDBSuccess;
-	}
-	return iNoData;
-}
-
-int db::FnGetVehicleType(std::string IUCode)
-{
-	int ret = 1;
-
-	for (auto &item : operation::getInstance()->tVType)
-	{
-		if (item.iIUCode == std::stoi(IUCode))
-		{
-			ret = item.iType;
-			break;
-		}
-	}
-
-	return ret;
-}
-
-DBError db::loadEntrymessage(std::vector<ReaderItem>& selResult)
-{
-	if (selResult.size()>0)
-	{
-		for (auto &readerItem : selResult)
-		{
-			if (readerItem.getDataSize() == 2)
-			{
-				if (readerItem.GetDataItem(0) == "AltDefaultLED")
-				{
-					operation::getInstance()->tMsg.Msg_AltDefaultLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_AltDefaultLED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "AltDefaultLED2")
-				{
-					operation::getInstance()->tMsg.Msg_AltDefaultLED2[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_AltDefaultLED2[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "AltDefaultLED3")
-				{
-					operation::getInstance()->tMsg.Msg_AltDefaultLED3[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_AltDefaultLED3[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "AltDefaultLED4")
-				{
-					operation::getInstance()->tMsg.Msg_AltDefaultLED4[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_AltDefaultLED4[1] = readerItem.GetDataItem(1);
-				}
-
-
-				if (readerItem.GetDataItem(0) == "authorizedvehicle")
-				{
-					operation::getInstance()->tMsg.Msg_authorizedvehicle[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_authorizedvehicle[1] = readerItem.GetDataItem(1);
-				}
-
-
-				if (readerItem.GetDataItem(0) == "CardReadingError")
-				{
-					operation::getInstance()->tMsg.Msg_CardReadingError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_CardReadingError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardReadingError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_CardReadingError[1].clear();
-						operation::getInstance()->tMsg.Msg_CardReadingError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-			
-				if (readerItem.GetDataItem(0) == "CardTaken")
-				{
-					operation::getInstance()->tMsg.Msg_CardTaken[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_CardTaken[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardTaken")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_CardTaken[1].clear();
-						operation::getInstance()->tMsg.Msg_CardTaken[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "CarFullLED")
-				{
-					operation::getInstance()->tMsg.Msg_CarFullLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_CarFullLED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "CarParkFull2LED")
-				{
-					operation::getInstance()->tMsg.Msg_CarParkFull2LED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_CarParkFull2LED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "DBError")
-				{
-					operation::getInstance()->tMsg.Msg_DBError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_DBError[1] = readerItem.GetDataItem(1);
-				}
-
-
-				if (readerItem.GetDataItem(0) == "DefaultIU")
-				{
-					operation::getInstance()->tMsg.Msg_DefaultIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_DefaultIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDefaultIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_DefaultIU[1].clear();
-						operation::getInstance()->tMsg.Msg_DefaultIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "DefaultLED")
-				{
-					operation::getInstance()->tMsg.Msg_DefaultLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_DefaultLED[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDefaultLED")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_DefaultLED[1].clear();
-						operation::getInstance()->tMsg.Msg_DefaultLED[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "DefaultLED2")
-				{
-					operation::getInstance()->tMsg.Msg_DefaultLED2[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_DefaultLED2[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDefaultLED2")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_DefaultLED2[1].clear();
-						operation::getInstance()->tMsg.Msg_DefaultLED2[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "DefaultMsg2LED")
-				{
-					operation::getInstance()->tMsg.Msg_DefaultMsg2LED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_DefaultMsg2LED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "DefaultMsgLED")
-				{
-					operation::getInstance()->tMsg.Msg_DefaultMsgLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_DefaultMsgLED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "EenhancedMCParking")
-				{
-					operation::getInstance()->tMsg.Msg_EenhancedMCParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_EenhancedMCParking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "ESeasonWithinAllowance")
-				{
-					operation::getInstance()->tMsg.Msg_ESeasonWithinAllowance[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ESeasonWithinAllowance[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CESeasonWithinAllowance")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ESeasonWithinAllowance[1].clear();
-						operation::getInstance()->tMsg.Msg_ESeasonWithinAllowance[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ESPT3Parking")
-				{
-					operation::getInstance()->tMsg.Msg_ESPT3Parking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ESPT3Parking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "EVIPHolderParking")
-				{
-					operation::getInstance()->tMsg.Msg_EVIPHolderParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_EVIPHolderParking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "ExpiringSeason")
-				{
-					operation::getInstance()->tMsg.Msg_ExpiringSeason[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ExpiringSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CExpiringSeason")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ExpiringSeason[1].clear();
-						operation::getInstance()->tMsg.Msg_ExpiringSeason[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "FullLED")
-				{
-					operation::getInstance()->tMsg.Msg_FullLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_FullLED[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CFullLED")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_FullLED[1].clear();
-						operation::getInstance()->tMsg.Msg_FullLED[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "Idle")
-				{
-					operation::getInstance()->tMsg.Msg_Idle[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_Idle[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CIdle")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_Idle[1].clear();
-						operation::getInstance()->tMsg.Msg_Idle[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "InsertCashcard")
-				{
-					operation::getInstance()->tMsg.Msg_InsertCashcard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_InsertCashcard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CInsertCashcard")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_InsertCashcard[1].clear();
-						operation::getInstance()->tMsg.Msg_InsertCashcard[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "IUProblem")
-				{
-					operation::getInstance()->tMsg.Msg_IUProblem[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_IUProblem[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CIUProblem")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_IUProblem[1].clear();
-						operation::getInstance()->tMsg.Msg_IUProblem[1] = readerItem.GetDataItem(1);
-					}
-				}
-				
-				if (readerItem.GetDataItem(0) == "LockStation")
-				{
-					operation::getInstance()->tMsg.Msg_LockStation[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_LockStation[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CLockStation")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_LockStation[1].clear();
-						operation::getInstance()->tMsg.Msg_LockStation[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "LoopA")
-				{
-					operation::getInstance()->tMsg.Msg_LoopA[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_LoopA[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CLoopA")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_LoopA[1].clear();
-						operation::getInstance()->tMsg.Msg_LoopA[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "LoopAFull")
-				{
-					operation::getInstance()->tMsg.Msg_LoopAFull[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_LoopAFull[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CLoopAFull")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_LoopAFull[1].clear();
-						operation::getInstance()->tMsg.Msg_LoopAFull[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "LorryFullLED")
-				{
-					operation::getInstance()->tMsg.Msg_LorryFullLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_LorryFullLED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "LotAdjustmentMsg")
-				{
-					operation::getInstance()->tMsg.Msg_LotAdjustmentMsg[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_LotAdjustmentMsg[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "LowBal")
-				{
-					operation::getInstance()->tMsg.Msg_LowBal[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_LowBal[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CLowBal")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_LowBal[1].clear();
-						operation::getInstance()->tMsg.Msg_LowBal[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "NoIU")
-				{
-					operation::getInstance()->tMsg.Msg_NoIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_NoIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CNoIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_NoIU[1].clear();
-						operation::getInstance()->tMsg.Msg_NoIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "NoNightParking2LED")
-				{
-					operation::getInstance()->tMsg.Msg_NoNightParking2LED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_NoNightParking2LED[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "Offline")
-				{
-					operation::getInstance()->tMsg.Msg_Offline[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_Offline[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "COffline")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_Offline[1].clear();
-						operation::getInstance()->tMsg.Msg_Offline[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "PrinterError")
-				{
-					operation::getInstance()->tMsg.Msg_PrinterError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_PrinterError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CPrinterError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_PrinterError[1].clear();
-						operation::getInstance()->tMsg.Msg_PrinterError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "PrintingReceipt")
-				{
-					operation::getInstance()->tMsg.Msg_PrintingReceipt[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_PrintingReceipt[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CPrintingReceipt")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_PrintingReceipt[1].clear();
-						operation::getInstance()->tMsg.Msg_PrintingReceipt[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "Processing")
-				{
-					operation::getInstance()->tMsg.Msg_Processing[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_Processing[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CProcessing")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_Processing[1].clear();
-						operation::getInstance()->tMsg.Msg_Processing[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ReaderCommError")
-				{
-					operation::getInstance()->tMsg.Msg_ReaderCommError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ReaderCommError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CReaderCommError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ReaderCommError[1].clear();
-						operation::getInstance()->tMsg.Msg_ReaderCommError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ReaderError")
-				{
-					operation::getInstance()->tMsg.Msg_ReaderError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ReaderError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CReaderError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ReaderError[1].clear();
-						operation::getInstance()->tMsg.Msg_ReaderError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SameLastIU")
-				{
-					operation::getInstance()->tMsg.Msg_SameLastIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SameLastIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSameLastIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SameLastIU[1].clear();
-						operation::getInstance()->tMsg.Msg_SameLastIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ScanEntryTicket")
-				{
-					operation::getInstance()->tMsg.Msg_ScanEntryTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ScanEntryTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CScanEntryTicket")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ScanEntryTicket[1].clear();
-						operation::getInstance()->tMsg.Msg_ScanEntryTicket[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ScanValTicket")
-				{
-					operation::getInstance()->tMsg.Msg_ScanValTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ScanValTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CScanValTicket")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ScanValTicket[1].clear();
-						operation::getInstance()->tMsg.Msg_ScanValTicket[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonAsHourly")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonAsHourly[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonAsHourly[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonAsHourly")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonAsHourly[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonAsHourly[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonBlocked")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonBlocked[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonBlocked[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonBlocked")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonBlocked[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonBlocked[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonExpired")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonExpired[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonExpired[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonExpired")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonExpired[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonExpired[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonInvalid")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonInvalid[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonInvalid[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonInvalid")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonInvalid[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonInvalid[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonMultiFound")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonMultiFound[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonMultiFound[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonMultiFound")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonMultiFound[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonMultiFound[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonNotFound")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonNotFound[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonNotFound[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonNotFound")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonNotFound[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonNotFound[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonNotStart")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonNotStart[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonNotStart[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonNotStart")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonNotStart[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonNotStart[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonNotValid")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonNotValid[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonNotValid[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonNotValid")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonNotValid[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonNotValid[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonOnly")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonOnly[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonOnly[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonOnly")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonOnly[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonOnly[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonPassback")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonPassback[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonPassback[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonPassback")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonPassback[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonPassback[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				
-				if (readerItem.GetDataItem(0) == "SeasonTerminated")
-				{
-					operation::getInstance()->tMsg.Msg_SeasonTerminated[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SeasonTerminated[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonTerminated")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SeasonTerminated[1].clear();
-						operation::getInstance()->tMsg.Msg_SeasonTerminated[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				
-				if (readerItem.GetDataItem(0) == "SystemError")
-				{
-					operation::getInstance()->tMsg.Msg_SystemError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_SystemError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSystemError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_SystemError[1].clear();
-						operation::getInstance()->tMsg.Msg_SystemError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ValidSeason")
-				{
-					operation::getInstance()->tMsg.Msg_ValidSeason[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_ValidSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CValidSeason")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_ValidSeason[1].clear();
-						operation::getInstance()->tMsg.Msg_ValidSeason[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "VVIP")
-				{
-					operation::getInstance()->tMsg.Msg_VVIP[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_VVIP[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CVVIP")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_VVIP[1].clear();
-						operation::getInstance()->tMsg.Msg_VVIP[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "WholeDayParking")
-				{
-					operation::getInstance()->tMsg.Msg_WholeDayParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_WholeDayParking[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CWholeDayParking")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_WholeDayParking[1].clear();
-						operation::getInstance()->tMsg.Msg_WholeDayParking[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "WithIU")
-				{
-					operation::getInstance()->tMsg.Msg_WithIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_WithIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CWithIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.Msg_WithIU[1].clear();
-						operation::getInstance()->tMsg.Msg_WithIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "BlackList")
-				{
-					operation::getInstance()->tMsg.MsgBlackList[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.MsgBlackList[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CBlackList")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tMsg.MsgBlackList[1].clear();
-						operation::getInstance()->tMsg.MsgBlackList[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "E1enhancedMCParking")
-				{
-					operation::getInstance()->tMsg.Msg_E1enhancedMCParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tMsg.Msg_E1enhancedMCParking[1] = readerItem.GetDataItem(1);
-				}
-			}
-		}
-		operation::getInstance()->tProcess.gbloadedLEDMsg = true;
-		return iDBSuccess;
-	}
-	return iNoData;
-}
-
-DBError db::loadmessage()
-{
-	int r = -1;
-	DBError retErr;
-	vector<ReaderItem> ledSelResult;
-	vector<ReaderItem> lcdSelResult;
-
-	r = localdb->SQLSelect("select msg_id, msg_body from message_mst", &ledSelResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load LED message failed.", "DB");
-		return iLocalFail;
-	}
-
-	retErr = loadEntrymessage(ledSelResult);
-	if (retErr == DBError::iNoData)
-	{
-		return retErr;
-	}
-
-	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status >= 10", &lcdSelResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load LCD message failed.", "DB");
-		return iLocalFail;
-	}
-
-	retErr = loadEntrymessage(lcdSelResult);
-	if (retErr == DBError::iNoData)
-	{
-		return retErr;
-	}
-
-	return retErr;
-}
-
-DBError db::loadExitLcdAndLedMessage(std::vector<ReaderItem>& selResult)
-{
-	if (selResult.size() > 0)
-	{
-		for (auto &readerItem : selResult)
-		{
-			if (readerItem.getDataSize() == 2)
-			{
-				if (readerItem.GetDataItem(0) == "BlackList")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_BlackList[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_BlackList[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CBlackList")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_BlackList[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_BlackList[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "CardError")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_CardError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_CardError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_CardError[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_CardError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "CardIn")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_CardIn[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_CardIn[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCardIn")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_CardIn[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_CardIn[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "Comp2Val")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_Comp2Val[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_Comp2Val[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CComp2Val")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_Comp2Val[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_Comp2Val[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "CompExpired")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_CompExpired[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_CompExpired[1] = readerItem.GetDataItem(1);
-				}  
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CCompExpired")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_CompExpired[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_CompExpired[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "Complimentary")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_Complimentary[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_Complimentary[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CComplimentary")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_Complimentary[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_Complimentary[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "DebitFail")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_DebitFail[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_DebitFail[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDebitFail")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_DebitFail[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_DebitFail[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "DebitNak")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_DebitNak[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_DebitNak[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CDebitNak")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_DebitNak[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_DebitNak[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "EntryDebit")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_EntryDebit[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_EntryDebit[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CEntryDebit")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_EntryDebit[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_EntryDebit[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "ExpCard")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_ExpCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_ExpCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CExpCard")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_ExpCard[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_ExpCard[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "FleetCard")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_FleetCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_FleetCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CFleetCard")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_FleetCard[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_FleetCard[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "FreeParking")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_FreeParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_FreeParking[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CFreeParking")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_FreeParking[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_FreeParking[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "GracePeriod")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_GracePeriod[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CGracePeriod")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_GracePeriod[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "InvalidTicket")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CInvalidTicket")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_InvalidTicket[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "WrongTicket")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_WrongTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_WrongTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CWrongTicket")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_WrongTicket[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_WrongTicket[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "RedemptionExpired")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CRedemptionExpired")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_RedemptionExpired[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "IUProblem")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_IUProblem[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_IUProblem[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CIUProblem")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_IUProblem[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_IUProblem[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "MasterSeason")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_MasterSeason[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_MasterSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CMasterSeason")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_MasterSeason[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_MasterSeason[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "NoEntry")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_NoEntry[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_NoEntry[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CNoEntry")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_NoEntry[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_NoEntry[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "PrinterError")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_PrinterError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_PrinterError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CPrinterError")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_PrinterError[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_PrinterError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "RedemptionTicket")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CRedemptionTicket")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_RedemptionTicket[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonBlocked")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonBlocked")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonBlocked[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonExpired")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonExpired")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonExpired[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonInvalid")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonInvalid")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonInvalid[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonNotStart")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonNotStart")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonNotStart[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonOnly")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonOnly")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonOnly[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonPassback")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonPassback")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonPassback[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonRegNoIU")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonRegNoIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonRegNoIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonRegOK")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonRegOK")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonRegOK[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SeasonTerminated")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSeasonTerminated")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SeasonTerminated[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "SystemError")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_SystemError[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_SystemError[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CSystemErrord")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_SystemError[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_SystemError[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "TakeCard")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_TakeCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_TakeCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTakeCard")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_TakeCard[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_TakeCard[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "TicketExpired")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_TicketExpired[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_TicketExpired[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTicketExpired")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_TicketExpired[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_TicketExpired[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "TicketNotFound")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CTicketNotFound")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_TicketNotFound[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "UsedTicket")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_UsedTicket[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_UsedTicket[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CUsedTicket")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_UsedTicket[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_UsedTicket[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "WrongCard")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_WrongCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_WrongCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CWrongCard")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_WrongCard[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_WrongCard[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XCardAgain")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XCardAgain[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XCardAgain[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXCardAgain")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XCardAgain[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XCardAgain[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XCardTaken")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XCardTaken[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XCardTaken[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXCardTaken")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XCardTaken[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XCardTaken[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XDefaultIU")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXDefaultIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XDefaultIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XDefaultLED")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXDefaultLED")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XDefaultLED2")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXDefaultLED2")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XDefaultLED2[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XExpiringSeason")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXExpiringSeason")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XExpiringSeason[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XIdle")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XIdle[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XIdle[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXIdle")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XIdle[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XIdle[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XLoopA")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XLoopA[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XLoopA[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXLoopA")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XLoopA[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XLoopA[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XLowBal")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XLowBal[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XLowBal[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXLowBal")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XLowBal[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XLowBal[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XNoCard")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XNoCard[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XNoCard[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXNoCard")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XNoCard[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XNoCard[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XNoCHU")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XNoCHU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XNoCHU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXNoCHU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XNoCHU[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XNoCHU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XNoIU")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XNoIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XNoIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXNoIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XNoIU[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XNoIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XSameLastIU")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXSameLastIU")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XSameLastIU[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XSeasonWithinAllowance")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXSeasonWithinAllowance")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XSeasonWithinAllowance[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "XValidSeason")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XValidSeason[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XValidSeason[1] = readerItem.GetDataItem(1);
-				}
-
-				// Update LCD Message
-				if (readerItem.GetDataItem(0) == "CXValidSeason")
-				{
-					if ((!readerItem.GetDataItem(1).empty()) && (boost::algorithm::to_lower_copy(readerItem.GetDataItem(1)) != "null"))
-					{
-						operation::getInstance()->tExitMsg.MsgExit_XValidSeason[1].clear();
-						operation::getInstance()->tExitMsg.MsgExit_XValidSeason[1] = readerItem.GetDataItem(1);
-					}
-				}
-
-				if (readerItem.GetDataItem(0) == "X1enhancedMCParking")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_X1enhancedMCParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_X1enhancedMCParking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "XenhancedMCParking")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XenhancedMCParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XenhancedMCParking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "XSPT3Parking")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XSPT3Parking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XSPT3Parking[1] = readerItem.GetDataItem(1);
-				}
-
-				if (readerItem.GetDataItem(0) == "XVIPHolderParking")
-				{
-					operation::getInstance()->tExitMsg.MsgExit_XVIPHolderParking[0] = readerItem.GetDataItem(1);
-					operation::getInstance()->tExitMsg.MsgExit_XVIPHolderParking[1] = readerItem.GetDataItem(1);
-				}
-			}
-		}
-		operation::getInstance()->tProcess.gbloadedLEDExitMsg = true;
-		return iDBSuccess;
-	}
-
-	return iNoData;
-}
-
-DBError db::loadExitmessage()
-{
-	int r = -1;
-	DBError retErr;
-	vector<ReaderItem> exitLedSelResult;
-	vector<ReaderItem> exitLcdSelResult;
-
-	r = localdb->SQLSelect("select msg_id, msg_body from message_mst", &exitLedSelResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load Exit LED message failed.", "DB");
-		return iLocalFail;
-	}
-
-	retErr = loadExitLcdAndLedMessage(exitLedSelResult);
-	if (retErr == DBError::iNoData)
-	{
-		return retErr;
-	}
-
-	r = localdb->SQLSelect("select msg_id, msg_body from message_mst where m_status >= 10", &exitLcdSelResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load Exit LCD message failed.", "DB");
-		return iLocalFail;
-	}
-
-	retErr = loadExitLcdAndLedMessage(exitLcdSelResult);
-	if (retErr == DBError::iNoData)
-	{
-		return retErr;
-	}
-
-	return retErr;
-}
-
-DBError db::loadTR(int iType)
-{
-	int r = -1;
-	DBError retErr;
-	vector<ReaderItem> trSelResult;
-	std::string sqlStmt;
-	//----
-	iType = 2;
-	//----
-	sqlStmt = "SELECT LineText, LineVar, LineFont, LineAlign from TR_mst";
-	sqlStmt = sqlStmt + " WHERE TRType=" + std::to_string(iType) + " AND Enabled = 1 ORDER BY Line_no";
-
-	r = localdb->SQLSelect(sqlStmt, &trSelResult, true);
-	if (r != 0)
-	{
-		operation::getInstance()->writelog("load LTR failed.", "DB");
-		return iLocalFail;
-	}
-
-	if (trSelResult.size() > 0)
-	{
-		int i = 0;
-		for (int j = 0; j < trSelResult.size(); j++)
-		{
-			struct tTR_struc tr;
-			tr.gsTR0 = trSelResult[j].GetDataItem(0);
-			tr.gsTR1 = trSelResult[j].GetDataItem(1);
-			tr.giTRF = std::stoi(trSelResult[j].GetDataItem(2));
-			tr.giTRA = std::stoi(trSelResult[j].GetDataItem(3));
-			operation::getInstance()->tTR.push_back(tr);
-			i++;
-		}
-		operation::getInstance()->writelog("Load " + std::to_string(i) + " Ticket/Receipt Format.", "DB");
-		return iDBSuccess;
-	}
-	else
-	{
-		operation::getInstance()->writelog("No Ticket/Receipt to load.", "DB");
-	}
-
-	return iNoData;
-}
-
-string  db::GetPartialSeasonMsg(int iTransType)
-{
-    int r = -1;
-	vector<ReaderItem> tResult;
-
-	r = centraldb->SQLSelect("SELECT Description FROM trans_type where trans_type =" + std::to_string(iTransType), &tResult, true);
-	if (r != 0)
-	{
-		return "";
-	}
-
-	if (tResult.size()>0)
-	{
-		return std::string (tResult[0].GetDataItem(0));
-	}
-	return "";
-}
-
-void db::moveOfflineTransToCentral()
-{
-	time_t vfdate,vtdate;
-	CE_Time vfdt,vtdt;
-	int r=-1;// success flag
-	std::string tableNm="";
-	tEntryTrans_Struct ter;
-	tExitTrans_Struct tex;
-	int s=-1;
-	int s1=-1;
-	Ctrl_Type ctrl;
-	vector<ReaderItem> selResult;
-	vector<ReaderItem> tResult;
-	std::string sqlStmt;
-	int j;
-	int d=-1;
-	int k;
-
-	operation::getInstance()->tProcess.offline_status=0;
-	
-	if(operation::getInstance()->gtStation.iType==tientry)
-	{
-		r = localdb->SQLSelect("SELECT count(iu_tk_no) FROM Entry_Trans",&tResult,false);
-		if(r!=0) {
-			m_local_db_err_flag=1;
-			operation::getInstance()->writelog("move offline data fail.","DB");
-			return;
-		}
-		else 
-		{
-			m_local_db_err_flag=0;
-			k=std::stoi(tResult[0].GetDataItem(0));
-			if (k>0){
-				operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Entry trans to be upload.","DB");
-				operation::getInstance()->tProcess.offline_status=1;
-			}
-		}
-	}
-	else if(operation::getInstance()->gtStation.iType==tiExit)
-	{
-		
-		r= localdb->SQLSelect("SELECT count(iu_tk_no) FROM Exit_Trans",&tResult,false);
-		if(r!=0) m_local_db_err_flag=1;
-		else 
-		{
-			m_local_db_err_flag=0;
-			k=std::stoi(tResult[0].GetDataItem(0));
-			if(k > 0){
-				operation::getInstance()->writelog("Total " + std::string (tResult[0].GetDataItem(0)) + " Enxit trans to be upload.", "DB");
-			  	operation::getInstance()->tProcess.offline_status=1;
-			}
-		}
-	}
-	
-	if (operation::getInstance()->tProcess.offline_status ==0) {return;}
-
-	try {
-		if(operation::getInstance()->gtStation.iType==tientry)
-		{
-			tableNm="Entry_Trans";
-			ctrl=s_Entry;
-			std::string dtFormat= std::string(1, '"')+ "%Y-%m-%d %H:%i:%s" + std::string(1, '"') ;
-			sqlStmt= "SELECT Station_ID,Entry_Time,iu_tk_No,";
-			sqlStmt=sqlStmt + "trans_type,Status";
-			sqlStmt=sqlStmt + ",TK_SerialNo";
-			sqlStmt=sqlStmt + ",Card_Type";
-			sqlStmt=sqlStmt + ",card_no,paid_amt,parking_fee";
-			sqlStmt=sqlStmt +  ",gst_amt";
-			sqlStmt = sqlStmt + ",lpn,VCC";
-			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Entry_Time desc";
-		}
-		else if(operation::getInstance()->gtStation.iType==tiExit)
-		{
-			tableNm="Exit_Trans";
-			ctrl=s_Exit;
-			std::string dtFormat= std::string(1, '"')+ "%Y-%m-%d %H:%i:%s" + std::string(1, '"') ;
-
-			sqlStmt= "SELECT Station_ID,Exit_Time,iu_tk_No,";
-			sqlStmt=sqlStmt + "card_mc_no,trans_type,status,";
-			sqlStmt=sqlStmt + "parked_time,Parking_Fee,Paid_Amt,Receipt_No,";
-			sqlStmt=sqlStmt + "Redeem_amt,Redeem_time,Redeem_no";
-			sqlStmt=sqlStmt +  ",gst_amt,chu_debit_code,Card_Type,Top_Up_Amt";
-			sqlStmt = sqlStmt + ",lpn,Entry_ID, entry_time,VCC,EEPDSerialNo,EEPTransRoute,EEPPaymentResult,EEPPaymentTime";
-			
-			sqlStmt= sqlStmt+ " FROM " + tableNm  + " ORDER by Exit_Time desc";
-		}
-		
-		r = localdb->SQLSelect(sqlStmt,&selResult,true);
-		if(r!=0) m_local_db_err_flag=1;
-		else  m_local_db_err_flag=0;
-
-		if (selResult.size()>0){
-			operation::getInstance()->writelog("uploading  " + std::to_string (selResult.size()) + " Records: Started", "DB");
-			for(j=0;j<selResult.size();j++){
-				
-				if(operation::getInstance()->gtStation.iType==tientry)
-				{
-					ter.esid=selResult[j].GetDataItem(0);
-					ter.sEntryTime=selResult[j].GetDataItem(1);
-					ter.sIUTKNo=selResult[j].GetDataItem(2);
-					ter.iTransType=std::stoi(selResult[j].GetDataItem(3));
-					ter.iStatus=std::stoi(selResult[j].GetDataItem(4));
-					ter.sSerialNo=selResult[j].GetDataItem(5);
-					ter.iCardType=std::stoi(selResult[j].GetDataItem(6));
-					ter.sCardNo=selResult[j].GetDataItem(7);
-					ter.sPaidAmt=std::stof(selResult[j].GetDataItem(8));
-					ter.sFee=std::stof(selResult[j].GetDataItem(9));
-					ter.sGSTAmt=std::stof(selResult[j].GetDataItem(10));
-					ter.sLPN[0] = selResult[j].GetDataItem(11);
-					ter.VCC = selResult[j].GetDataItem(12);
-					
-					s=insertTransToCentralEntryTransTmp(ter);
-				}
-				else if(operation::getInstance()->gtStation.iType==tiExit) 
-				{
-					tex.xsid=selResult[j].GetDataItem(0);
-					tex.sExitTime=selResult[j].GetDataItem(1);
-					tex.sIUNo=selResult[j].GetDataItem(2);
-					tex.sCardNo=selResult[j].GetDataItem(3);
-					tex.iTransType=std::stoi(selResult[j].GetDataItem(4));
-					tex.iStatus=std::stoi(selResult[j].GetDataItem(5));
-					tex.lParkedTime=std::stoi(selResult[j].GetDataItem(6));
-					tex.sFee=std::stof(selResult[j].GetDataItem(7));
-					tex.sPaidAmt=std::stof(selResult[j].GetDataItem(8));
-					tex.sReceiptNo=selResult[j].GetDataItem(9);
-					tex.sRedeemAmt=std::stof(selResult[j].GetDataItem(10));
-					tex.iRedeemTime=std::stoi(selResult[j].GetDataItem(11));
-					tex.sRedeemNo=selResult[j].GetDataItem(12);
-					tex.sGSTAmt=std::stof(selResult[j].GetDataItem(13));
-					tex.sCHUDebitCode=selResult[j].GetDataItem(14);
-					tex.iCardType=std::stoi(selResult[j].GetDataItem(15));
-					tex.sTopupAmt=std::stof(selResult[j].GetDataItem(16));
-					tex.sLPN[0] = selResult[j].GetDataItem(17);
-					tex.iEntryID = std::stoi(selResult[j].GetDataItem(18));
-					if (tex.iEntryID < 1) tex.sEntryTime = "";
-					else tex.sEntryTime = selResult[j].GetDataItem(19);
-					//------------
-					tex.VCC = selResult[j].GetDataItem(20);
-					tex.sDSerialNo = selResult[j].GetDataItem(21);
-					tex.iEEPTransRoute = std::stoi(selResult[j].GetDataItem(22));
-					tex.iEEPPaymentResult = std::stoi(selResult[j].GetDataItem(23));
-					tex.sEEPpaymentTime = selResult[j].GetDataItem(24);
-					
-					s=insertTransToCentralExitTransTmp(tex);
-					
-				}
-				
-				//insert record into central DB
-
-				if (s==0)
-				{
-			
-					if(operation::getInstance()->gtStation.iType==tientry){
-						d=deleteLocalTrans (ter.sIUTKNo,ter.sEntryTime,ctrl);
-					}
-					else{
-						s1=DeleteBeforeInsertMT(tex);     //cater for offline entry record but already exit, 20260629
-						s1=insert2movementtrans(tex);
-						d=deleteLocalTrans (tex.sIUNo,tex.sExitTime,ctrl);
-					}
-					if (d==0) m_local_db_err_flag=0;
-					else m_local_db_err_flag=1;
-
-
-					//-----------------------
-					m_remote_db_err_flag.store(0);
-				}
-				else m_remote_db_err_flag.store(1);   
-			}
-			operation::getInstance()->writelog("uploading trans Records: End","DB");
-		}       
-	}
-	catch (const std::exception &e)
-	{
-		r=-1;// success flag
-		// cout << "ERROR: " << err << endl;
-		operation::getInstance()->writelog("DB: moveOfflineTransToCentral error: " + std::string(e.what()),"DB");
-		m_local_db_err_flag=1;
-	} 
-
-}
-
-int db::insertTransToCentralEntryTransTmp(tEntryTrans_Struct ter)
-{
-
-	int r=0;
-	CE_Time dt;
-	string sqstr="";
-	string tbName="";
-	tbName="Entry_Trans_tmp";
-	
-	//operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Started","DB");
-
-	// insert into Central trans tmp table
-	sqstr="INSERT INTO " + tbName +" (Station_ID,Entry_Time,IU_Tk_No,trans_type,status,TK_Serialno,Card_Type";
-	sqstr=sqstr + ",card_no,paid_amt,parking_fee,VCC";        
-	sqstr=sqstr + ",gst_amt,lpn";
-	sqstr=sqstr + ") Values ('" + ter.esid+ "',convert(datetime,'" + ter.sEntryTime+ "',120),'" + ter.sIUTKNo;
-	sqstr = sqstr +  "','" + std::to_string(ter.iTransType);
-	sqstr = sqstr + "','" + std::to_string(ter.iStatus) + "','" + ter.sSerialNo;
-	sqstr = sqstr + "','" + std::to_string(ter.iCardType);
-	sqstr = sqstr + "','" + ter.sCardNo + "','" + std::to_string(ter.sPaidAmt) + "','" + std::to_string(ter.sFee);
-	sqstr = sqstr + "','" + ter.VCC;
-	sqstr = sqstr + "','" + std::to_string(ter.sGSTAmt)+"','"+ter.sLPN[0]+"'";
-	sqstr = sqstr +  ")";
-
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-
-	//operation::getInstance()->writelog(sqstr,"DB");
-	
-	if (r==0) operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime   + " INTO "+ tbName +" : Success","DB");
-	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " + ter.sIUTKNo +" and EntryTime="+ ter.sEntryTime  + " INTO "+ tbName +" : Fail","DB");
-
-
-	if(r!=0) m_remote_db_err_flag.store(1);
-	else m_remote_db_err_flag.store(0);
-
-	return r;
-}
-
-
-int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& tex)
-{
-
-	int r=0;
-	CE_Time dt;
-	string sqstr="";
-	string tbName="";
-	tbName="Exit_Trans_tmp";
-	
-	
-	operation::getInstance()->writelog("Central DB: INSERT IUNo= " + tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName +" : Started","DB");
-
-	// insert into Central trans tmp table
-	sqstr="INSERT INTO " + tbName +" (Station_ID,Exit_Time,IU_Tk_No,card_mc_no,trans_type,parked_time,parking_fee,paid_amt,receipt_no,status";
-	sqstr=sqstr + ",redeem_amt,redeem_time,redeem_no";        
-	sqstr=sqstr + ",gst_amt,chu_debit_code,card_type,top_up_amt";
-	sqstr=sqstr + ",lpn,VCC,EEPDSerialNo,EEPTransRoute,EEPPaymentResult,EEPPaymentTime";
-	sqstr=sqstr + ") Values ('" + tex.xsid+ "',convert(datetime,'" + tex.sExitTime+ "',120),'" + tex.sIUNo;
-	sqstr = sqstr +  "','" +tex.sCardNo+  "','" +std::to_string(tex.iTransType);
-	sqstr = sqstr +  "','" +std::to_string(tex.lParkedTime) + "','"+ std::to_string(tex.sFee);
-	sqstr = sqstr +  "','" +std::to_string(tex.sPaidAmt) + "','"+tex.sReceiptNo +  "','" + std::to_string(tex.iStatus);
-	sqstr = sqstr +  "','" +std::to_string(tex.sRedeemAmt) + "','"+std::to_string(tex.iRedeemTime) + "','"+tex.sRedeemNo;
-	sqstr = sqstr +  "','" +std::to_string(tex.sGSTAmt) + "','"+tex.sCHUDebitCode + "','"+std::to_string(tex.iCardType);
-	sqstr = sqstr +  "','" +std::to_string(tex.sTopupAmt)+"'";
-	sqstr = sqstr +  ",'" +tex.sLPN[0]+"'";
-	sqstr = sqstr +  ",'" +tex.VCC+"'";
-	sqstr = sqstr +  ",'" +tex.sDSerialNo+"'";
-	sqstr = sqstr +  ",'" +std::to_string(tex.iEEPTransRoute);
-	sqstr = sqstr +  "','"+ std::to_string(tex.iEEPPaymentResult);
-	sqstr = sqstr +  "',convert(datetime,'" + tex.sEEPpaymentTime+ "',120)";
-	sqstr = sqstr +  ")";
-
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-	
-	if (r==0) operation::getInstance()->writelog("Central DB: INSERT IUNo= " + tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName +" : Success","DB");
-	else operation::getInstance()->writelog("Central DB: INSERT IUNo= " +  tex.sIUNo +" and ExitTime="+ tex.sExitTime  + " INTO "+ tbName  +" : Fail","DB");
-
-
-	if(r!=0) m_remote_db_err_flag.store(1);
-	else m_remote_db_err_flag.store(0);
-
-	return r;
-}
-
-int db:: deleteLocalTrans(string iuno,string trantime,Ctrl_Type ctrl)
-{
-
-	std::string sqlStmt;
-	std::string tbName="";
-	vector<ReaderItem> selResult;
-	int r=-1;// success flag
-
-	try {
-
-		switch (ctrl)
-		{
-		case s_Entry:
-			tbName="Entry_Trans";
-			//operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Entry_Trans: Started","DB");
-			sqlStmt="Delete from " +tbName +" WHERE iu_tk_no='"+ iuno + "' AND Entry_Time='" + trantime  +"'" ;
-			break;
-		case s_Exit:
-			tbName="Exit_Trans";
-			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Exit_Trans: Started","DB");
-			sqlStmt="Delete from " +tbName +" WHERE iu_tk_no='"+ iuno + "' AND exit_time='" + trantime  +"'" ;
-			break;
-
-		}
-		
-		r= localdb->SQLExecutNoneQuery(sqlStmt);
-		//----------------------------------------------
-
-		if(r==0)
-		{
-			m_local_db_err_flag=0;
-			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From " + tbName + ": Success","DB");
-		}
-
-		else
-		{
-			m_local_db_err_flag=1;
-			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From " + tbName + ": Fail","DB");
-		}
-		
-		
-
-	}
-	catch (const std::exception &e) //const mysqlx::Error &err
-	{
-		
-		switch (ctrl)
-		{
-		case s_Entry:
-			
-			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Entry_Trans: Fail","DB");
-			break;
-		case s_Exit:
-			
-			operation::getInstance()->writelog("Local DB: Delete IUNo= " +iuno + " AND TrxTime="  + trantime + " From Exit_Trans: Fail","DB");
-			break;
-
-		}
-		
-		operation::getInstance()->writelog("Local DB: deleteLocalTrans error: " + std::string(e.what()),"DB"); 
-		r=-1;
-		m_local_db_err_flag=1;
-	} 
-	return r;
-}
-
-int db::clearseason()
-{
-	std::string tableNm="season_mst";
-	
-	std::string sqlStmt;
-	
-	int r=-1;// success flag
-	try {
-
-		sqlStmt="truncate table " + tableNm;
-
-		r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-		if(r==0) m_local_db_err_flag=0;
-		else m_local_db_err_flag=1;
-	}
-	catch (const std::exception &e)
-	{
-		operation::getInstance()->writelog("DB: local db error in clearing: " + std::string(e.what()),"DB");
-		r=-1;
-		m_local_db_err_flag=1;
-	} 
-	return r;
-}
-
-int db::IsBlackListIU(string sIU)
-{
-	int r = -1;
-	vector<ReaderItem> tResult;
-
-	r = centraldb->SQLSelect("SELECT type FROM BlackList where status = 0 and CAN = '" + sIU + "'", &tResult, true);
-	if (r != 0)
-	{
-		return -1;
-	}
-
-	if (tResult.size()>0)
-	{
-		return std::stoi(tResult[0].GetDataItem(0));
-	}
-	return -1;
-
-}
-
-int db::AddRemoteControl(string sTID,string sAction, string sRemarks) 
-{
-
-	int r=0;
-	CE_Time dt;
-	string sqstr="";
-	string tbName="";
-	tbName="remote_control_history";
-	
-	// insert into Central trans tmp table
-	sqstr="INSERT INTO " + tbName +" (station_id,action_dt,action_name,operator,remarks)";
-	sqstr=sqstr + " Values ('" + sTID + "',getdate(),'" + sAction + "','auto','" +sRemarks + "')";
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-
-//	operation::getInstance()->writelog(sqstr,"DB");
-	
-	if (r==0) {
-		operation::getInstance()->writelog("Success insert: " + sAction,"DB");
-		m_remote_db_err_flag.store(0);
-	}
-	else {
-		operation::getInstance()->writelog("fail to insert: " + sAction,"DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return r;
-}
-
-int db::AddSysEvent(string sEvent,int iEventType, string sOccurTime) 
-{
-
-	int r=0;
-	CE_Time dt;
-	string sqstr="";
-	string tbName="";
-	tbName="sys_event_log";
-	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
-
-	if (sOccurTime.empty())
-	{
-		sOccurTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-	}
-	
-	// insert into Central trans tmp table
-	if (iEventType > 0) {
-		sqstr="Insert into sys_event_log (station_id,event,event_type,event_time)";
-		sqstr=sqstr + " Values ('" + giStationID + "','" + sEvent + "'," + std::to_string(iEventType) + ",'" + sOccurTime + "')" ;
-
-	}else{
-		sqstr="Insert into sys_event_log (station_id,event)";
-		sqstr=sqstr + " Values ('" + giStationID + "','" + sEvent + "')";
-	}
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-
-	
-	if (r==0) {
-		operation::getInstance()->writelog("Success insert sys event log: " + sEvent,"DB");
-		m_remote_db_err_flag.store(0);
-	}
-	else {
-		operation::getInstance()->writelog("fail to insert sys event log: " + sEvent,"DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return r;
-}
-
-int db::UpdateSysEvent(string sEvent,int iEventType, string sOccurTime) 
-{
-	int r=0;
-	string sqstr="";
-	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
-
-	// insert into Central trans tmp table
-
-	sqstr = "UPDATE sys_event_log set recoved_time = '"+ sOccurTime + "' WHERE station_id = "+ giStationID ;
-	sqstr = sqstr +  " and event_type = " + std::to_string(iEventType) + " and recoved_time  is NULL";
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-
-	if (r==0) 
-	{
-		if (centraldb->NumberOfRowsAffected > 0){
-			operation::getInstance()->writelog("Success update recoved time","DB");
-		}else
-		{
-			operation::getInstance()->writelog("No event for update recoved time","DB");
-			
-		}
-	}
-	else {
-		operation::getInstance()->writelog("fail to update event recoved time","DB");
-		m_remote_db_err_flag.store(1);
-		
-	}
-	return r;
-}
-
-bool db::HasAlertNotification()
-{
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> tResult;
-
-	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
-
-	sqlStmt = "SELECT * from sys_event_log where recoved_time is NULL and station_id = " + giStationID ;
-	
-	r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-	//------
-	if (r != 0) return true;
-
-	if (tResult.size()>0) return true;
-
-	return false;
-}
-
-int db::FnGetDatabaseErrorFlag()
-{
-	return m_remote_db_err_flag;
-}
-
-int db::HouseKeeping()
-{
-	std::string sqlStmt;
-	int r=-1;// success flag
-	//-------
-	clearexpiredseason();
-	//---------
-	if(operation::getInstance()->gtStation.iType==tientry)
-	{
-		try {
-			sqlStmt="Delete FROM Entry_Trans WHERE send_status = true or TIMESTAMPDIFF(HOUR, entry_time, NOW()) >=" + std::to_string(operation::getInstance()->tParas.giDataKeepDays *24);
-
-			r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if(r==0) m_local_db_err_flag=0;
-			else m_local_db_err_flag=1;
-		}
-		catch (const std::exception &e)
-		{	
-			operation::getInstance()->writelog("DB: local db error in housekeeping(Entry_Trans): " + std::string(e.what()),"DB");
-			r=-1;
-			m_local_db_err_flag=1;
-		} 
-	}else{
-
-		try {
-			sqlStmt="Delete FROM Exit_Trans WHERE send_status = true or TIMESTAMPDIFF(HOUR, exit_time, NOW()) >= " + std::to_string(operation::getInstance()->tParas.giDataKeepDays *24);
-
-			r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if(r==0) m_local_db_err_flag=0;
-			else m_local_db_err_flag=1;
-		}
-		catch (const std::exception &e)
-		{	
-			operation::getInstance()->writelog("DB: local db error in housekeeping(Exit_Trans): " + std::string(e.what()),"DB");
-			r=-1;
-			m_local_db_err_flag=1;
-		} 
-
-		try {
-			sqlStmt="Delete FROM Entry_Trans WHERE TIMESTAMPDIFF(HOUR, entry_time, NOW()) >= " + std::to_string(operation::getInstance()->tParas.giDataKeepDays *24);
-
-			r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-			if(r==0) m_local_db_err_flag=0;
-			else m_local_db_err_flag=1;
-		}
-		catch (const std::exception &e)
-		{	
-			operation::getInstance()->writelog("DB: local db error in housekeeping(XEntry_Trans): " + std::string(e.what()),"DB");
-			r=-1;
-			m_local_db_err_flag=1;
-		} 
-
-	}
-	return 0;
-}
-
-int db::clearexpiredseason()
-{
-	std::string tableNm="season_mst";
-	
-	std::string sqlStmt;
-	
-	int r=-1;// success flag
-	try {
-
-		sqlStmt="Delete FROM season_mst WHERE TIMESTAMPDIFF(HOUR, date_to, NOW()) >= 30*24";
-
-		r=localdb->SQLExecutNoneQuery(sqlStmt);
-
-		if(r==0) m_local_db_err_flag=0;
-		else m_local_db_err_flag=1;
-	}
-	catch (const std::exception &e)
-	{
-		operation::getInstance()->writelog("DB: local db error in clearing: " + std::string(e.what()),"DB");
-		r=-1;
-		m_local_db_err_flag=1;
-	} 
-	return r;
-}
-
-int db::updateEntryTrans(string lpn, string sTransID) 
-{
-
-	int r=0;
-	string sqstr="";
-
-	// insert into Central trans tmp table
-
-	sqstr="UPDATE Entry_trans_tmp set lpn = '"+ lpn + "' WHERE entry_lpn_sid = '"+ sTransID + "'";
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-
-	if (r==0) 
-	{
-		if (centraldb->NumberOfRowsAffected > 0){
-			operation::getInstance()->writelog("Success update LPR to Entry_Trans_Tmp","DB");
-		}else
-		{
-			sqstr="UPDATE Entry_trans set lpn = '"+ lpn + "' WHERE entry_lpn_sid = '"+ sTransID + "'";
-			r = centraldb->SQLExecutNoneQuery(sqstr);
-
-			if (r==0) {
-				if (centraldb->NumberOfRowsAffected > 0)
-				{
-					operation::getInstance()->writelog("Success update LPR to Entry_Trans","DB");
-					m_remote_db_err_flag.store(0);
-				} else operation::getInstance()->writelog("No TransID for update","DB");
-			} else
-			{
-			operation::getInstance()->writelog("fail to update LPR to Entry_trans","DB");
-		 	m_remote_db_err_flag.store(1);
-			}
-		}
-	}
-	else {
-		operation::getInstance()->writelog("fail to update LPR to Entry_trans_Tmp","DB");
-		m_remote_db_err_flag.store(1);
-		
-	}
-	return r;
-}
-
-int db::updateExitTrans(string lpn, string sTransID) 
-{
-
-	int r=0;
-	string sqstr="";
-
-	// insert into Central trans tmp table
-
-	sqstr="UPDATE Exit_trans_tmp set lpn = '"+ lpn + "' WHERE exit_lpn_sid = '"+ sTransID + "'";
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-
-	if (r==0) 
-	{
-		if (centraldb->NumberOfRowsAffected > 0){
-			operation::getInstance()->writelog("Success update LPR to Exit_Trans_Tmp","DB");
-		}else
-		{
-			sqstr="UPDATE exit_trans set lpn = '"+ lpn + "' WHERE exit_lpn_sid = '"+ sTransID + "'";
-			r = centraldb->SQLExecutNoneQuery(sqstr);
-
-			if (r==0) {
-				if (centraldb->NumberOfRowsAffected > 0)
-				{
-					operation::getInstance()->writelog("Success update LPR to Exit_Trans","DB");
-					m_remote_db_err_flag.store(0);
-				} else operation::getInstance()->writelog("No TransID for update","DB");
-			} else
-			{
-			operation::getInstance()->writelog("fail to update LPR to Exit_trans","DB");
-		 	m_remote_db_err_flag.store(1);
-			}
-		}
-	}
-	else {
-		operation::getInstance()->writelog("fail to update LPR to Exit_trans_Tmp","DB");
-		m_remote_db_err_flag.store(1);
-		
-	}
-	return r;
-}
-
-DBError db::insertexittrans(tExitTrans_Struct& tExit)
-{
-    std::string sqlStmt;
-    int r;
-    std::stringstream dbss;
-
-	std::string gsTransID;
-	gsTransID = operation::getInstance()->tProcess.gsTransID;
-	//---------Add commentMore actions
-	tExit.sFee = operation::getInstance()->GfeeFormat(tExit.sFee);
-	tExit.sPaidAmt = operation::getInstance()->GfeeFormat(tExit.sPaidAmt);
-	tExit.sRedeemAmt = operation::getInstance()->GfeeFormat(tExit.sRedeemAmt);
-	tExit.sGSTAmt = operation::getInstance()->GfeeFormat(tExit.sGSTAmt);
-
-    if (centraldb->IsConnected() != -1)
+    // =========================================================
+    // Try Central DB
+    // =========================================================
+    if (centraldb->IsConnected() != 1)
     {
         centraldb->Disconnect();
+
         if (centraldb->Connect() != 0)
         {
-            dbss << "Unable to connect to central DB while inserting exit_trans table.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
-            operation::getInstance()->tProcess.giSystemOnline = 1;
+            logDbMessage("Insert Entry_Trans to Central: fail1", "DB");
+
+            if (!updateOperationProcess(
+                    [](tProcess_Struct& process)
+                    {
+                        process.giSystemOnline = 1;
+                    }))
+            {
+                logDbMessage("Unable to update Operation shared data.", "DB");
+            }
+
             goto processLocal;
         }
     }
 
-    operation::getInstance()->tProcess.giSystemOnline = 0;
-	// Fix the overflow in central DB
-	// parked_time (smallint) in central DB
-	if (tExit.lParkedTime >= 32000)
-	{
-		tExit.lParkedTime = 32000;
-	}
-
-    sqlStmt = "INSERT INTO exit_trans_tmp (station_id, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
-    sqlStmt = sqlStmt + ", parking_fee, paid_amt, receipt_no, status, redeem_amt, redeem_time, redeem_no";
-    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, card_type, top_up_amt, uposbatchno, feefrom, lpn, exit_lpn_SID";
-	sqlStmt = sqlStmt + ", EEPDSerialNo, EEPTransRoute, EEPPaymentResult,VCC";
-	//------
-	if (tExit.iEEPPaymentResult == 1 || tExit.iEEPPaymentResult ==2 ) sqlStmt = sqlStmt + ", EEPPaymentTime";
-	//------
-    sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
-    sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.sCardNo + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iTransType);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.lParkedTime);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sFee);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sPaidAmt);
-    sqlStmt = sqlStmt + ", '" + tExit.sReceiptNo + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iStatus);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sRedeemAmt);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iRedeemTime);
-    sqlStmt = sqlStmt + ", '" + tExit.sRedeemNo + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sGSTAmt);
-    sqlStmt = sqlStmt + ", '" + tExit.sCHUDebitCode + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iCardType);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sTopupAmt);
-    sqlStmt = sqlStmt + ", '" + tExit.uposbatchno + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.feefrom + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
-	sqlStmt = sqlStmt + ", '" + gsTransID + "'";
-	sqlStmt = sqlStmt + ", '" + tExit.sDSerialNo+ "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iEEPTransRoute);
-	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEEPPaymentResult);
-	sqlStmt = sqlStmt + ",'" + tExit.VCC + "'";
-	//------
-	if (tExit.iEEPPaymentResult == 1 || tExit.iEEPPaymentResult == 2) sqlStmt = sqlStmt + ", '" + tExit.sEEPpaymentTime + "'";
-	//------
-    sqlStmt = sqlStmt + ")";
-
-    r = centraldb->SQLExecutNoneQuery(sqlStmt);
-    if (r != 0)
+    if (!updateOperationProcess(
+            [](tProcess_Struct& process)
+            {
+                process.giSystemOnline = 0;
+            }))
     {
-        Logger::getInstance()->FnLog(sqlStmt, "", "DB");
-        Logger::getInstance()->FnLog("Insert exit_trans to Central: fail.", "", "DB");
+        logDbMessage("Unable to update Operation shared data.", "DB");
+    }
+
+    sqlStmt =
+        "INSERT INTO Entry_Trans_tmp "
+        "("
+        "Station_ID,"
+        "Entry_Time,"
+        "IU_Tk_No,"
+        "trans_type,"
+        "status,"
+        "TK_Serialno,"
+        "Card_Type,"
+        "card_no,"
+        "paid_amt,"
+        "parking_fee,"
+        "VCC,"
+        "gst_amt,"
+        "entry_lpn_SID";
+
+    if (!lprNo.empty())
+    {
+        sqlStmt += ",lpn";
+    }
+
+    sqlStmt +=
+        ") VALUES ('" +
+        tEntry.esid +
+        "',convert(datetime,'" +
+        tEntry.sEntryTime +
+        "',120),'" +
+        tEntry.sIUTKNo +
+        "','" +
+        std::to_string(tEntry.iTransType) +
+        "','" +
+        std::to_string(tEntry.iStatus) +
+        "','" +
+        tEntry.sSerialNo +
+        "','" +
+        std::to_string(tEntry.iCardType) +
+        "','" +
+        tEntry.sCardNo +
+        "','" +
+        std::to_string(tEntry.sPaidAmt) +
+        "','" +
+        std::to_string(tEntry.sFee) +
+        "','" +
+        tEntry.VCC +
+        "','" +
+        std::to_string(tEntry.sGSTAmt) +
+        "','" +
+        transId +
+        "'";
+
+    if (!lprNo.empty())
+    {
+        sqlStmt += ",'" + lprNo + "'";
+    }
+
+    sqlStmt += ")";
+
+    if (centraldb->SQLExecutNoneQuery(sqlStmt) != 0)
+    {
+        logDbMessage(sqlStmt, "DB");
+        logDbMessage("Insert Entry_Trans to Central: fail.", "DB");
+
         return iCentralFail;
     }
-    else
-    {
-        Logger::getInstance()->FnLog("Insert exit_trans to Central: success.", "", "DB");
-        return iCentralSuccess;
-    }
+
+    logDbMessage("Insert Entry_Trans to Central: success", "DB");
+
+    return iDBSuccess;
+
 
 processLocal:
 
+    // =========================================================
+    // Local DB fallback
+    // =========================================================
     if (localdb->IsConnected() != 1)
     {
         localdb->Disconnect();
+
         if (localdb->Connect() != 0)
         {
-            dbss.str("");
-            dbss.clear();
-            dbss << "Unable to connect to local DB while inserting Exit_Trans table.";
-            Logger::getInstance()->FnLog(dbss.str(), "", "DB");
+            logDbMessage("Insert Entry_Trans to Local: fail1", "DB");
+
             return iLocalFail;
         }
     }
 
-    sqlStmt = "INSERT INTO Exit_Trans (Station_ID, exit_time, iu_tk_no, card_mc_no, trans_type, parked_time";
-    sqlStmt = sqlStmt + ", Parking_Fee, Paid_Amt, Receipt_No, Status, Redeem_amt, Redeem_time, Redeem_no";
-    sqlStmt = sqlStmt + ", gst_amt, chu_debit_code, Card_Type, Top_Up_Amt, uposbatchno, feefrom, lpn, Entry_ID,entry_time, exit_lpn_SID";
-	sqlStmt = sqlStmt + ", EEPDSerialNo, EEPTransRoute, EEPPaymentResult, EEPPaymentTime, VCC";
-    sqlStmt = sqlStmt + ") VALUES (" + tExit.xsid;
-    sqlStmt = sqlStmt + ", '" + tExit.sExitTime + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.sIUNo + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.sCardNo + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iTransType);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.lParkedTime);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sFee);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sPaidAmt);
-    sqlStmt = sqlStmt + ", '" + tExit.sReceiptNo + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iStatus);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sRedeemAmt);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iRedeemTime);
-    sqlStmt = sqlStmt + ", '" + tExit.sRedeemNo + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sGSTAmt);
-    sqlStmt = sqlStmt + ", '" + tExit.sCHUDebitCode + "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iCardType);
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.sTopupAmt);
-    sqlStmt = sqlStmt + ", '" + tExit.uposbatchno + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.feefrom + "'";
-    sqlStmt = sqlStmt + ", '" + tExit.lpn + "'";
-	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEntryID) ;
-	sqlStmt = sqlStmt + ", '" + tExit.sEntryTime + "'";
-	sqlStmt = sqlStmt + ", '" + gsTransID + "'";
-	sqlStmt = sqlStmt + ", '" + tExit.sDSerialNo+ "'";
-    sqlStmt = sqlStmt + ", " + std::to_string(tExit.iEEPTransRoute);
-	sqlStmt = sqlStmt + "," + std::to_string(tExit.iEEPPaymentResult);
-	sqlStmt = sqlStmt + ", '" + tExit.sEEPpaymentTime + "'";
-	sqlStmt = sqlStmt + ", '" + tExit.VCC + "'";
-    sqlStmt = sqlStmt + ")";
+    sqlStmt =
+        "INSERT INTO Entry_Trans "
+        "("
+        "Station_id,"
+        "Entry_Time,"
+        "iu_tk_no,"
+        "trans_type,"
+        "status,"
+        "TK_SerialNo,"
+        "Card_Type,"
+        "card_no,"
+        "paid_amt,"
+        "parking_fee,"
+        "gst_amt,"
+        "entry_lpn_SID,"
+        "lpn"
+        ") VALUES ('" +
+        tEntry.esid +
+        "','" +
+        tEntry.sEntryTime +
+        "','" +
+        tEntry.sIUTKNo +
+        "','" +
+        std::to_string(tEntry.iTransType) +
+        "','" +
+        std::to_string(tEntry.iStatus) +
+        "','" +
+        tEntry.sSerialNo +
+        "','" +
+        std::to_string(tEntry.iCardType) +
+        "','" +
+        tEntry.sCardNo +
+        "','" +
+        std::to_string(tEntry.sPaidAmt) +
+        "','" +
+        std::to_string(tEntry.sFee) +
+        "','" +
+        std::to_string(tEntry.sGSTAmt) +
+        "','" +
+        transId +
+        "','" +
+        lprNo +
+        "')";
 
-    r = localdb->SQLExecutNoneQuery(sqlStmt);
-    if (r != 0)
+    if (localdb->SQLExecutNoneQuery(sqlStmt) != 0)
     {
-        Logger::getInstance()->FnLog(sqlStmt, "", "DB");
-        Logger::getInstance()->FnLog("Insert Exit_Trans to local: fail.", "", "DB");
+        logDbMessage(sqlStmt, "DB");
+        logDbMessage("Insert Entry_Trans to Local: fail", "DB");
+
         return iLocalFail;
     }
-    else
+
+    logDbMessage("Insert Entry_Trans to Local: success", "DB");
+
+    if (!updateOperationProcess(
+            [](tProcess_Struct& process)
+            {
+                ++process.glNoofOfflineData;
+            }))
     {
-        Logger::getInstance()->FnLog("Insert Exit_Trans to Local: success", "", "DB");
-        operation::getInstance()->tProcess.glNoofOfflineData = operation::getInstance()->tProcess.glNoofOfflineData + 1;
-        return iLocalSuccess;
+        logDbMessage("Unable to update Operation shared data.", "DB");
+    }
+
+    return iDBSuccess;
+}
+
+void db::synccentraltime()
+{
+    // =========================================================
+    // Ensure Central DB connection
+    // =========================================================
+    if (centraldb->IsConnected() != 1)
+    {
+        centraldb->Disconnect();
+
+        if (centraldb->Connect() != 0)
+        {
+            return;
+        }
+    }
+
+    // =========================================================
+    // Retrieve Central DB time
+    // =========================================================
+    const std::string sqlStmt = "SELECT GETDATE() AS CurrentTime";
+
+    std::vector<ReaderItem> result;
+
+    const int ret = centraldb->SQLSelect(sqlStmt, &result, false);
+
+    if (ret != 0)
+    {
+        logDbMessage("Unable to retrieve Central DB time", "DB");
+
+        m_remote_db_err_flag.store(1);
+        return;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (result.empty())
+    {
+        return;
+    }
+
+    // =========================================================
+    // Parse Central DB time
+    // =========================================================
+    const std::string dateTime = result.front().GetDataItem(0);
+
+    logDbMessage("Central DB time: " + dateTime, "DB");
+
+    std::tm tmTime{};
+
+    std::istringstream timeStream(dateTime);
+
+    timeStream >> std::get_time(&tmTime, "%Y-%m-%d %H:%M:%S");
+
+    if (timeStream.fail())
+    {
+        logDbMessage("Failed to parse the time string.", "DB");
+
+        return;
+    }
+
+    // =========================================================
+    // Convert to epoch time
+    // =========================================================
+    const std::time_t epochTime = std::mktime(&tmTime);
+
+    timeval newTime{};
+    newTime.tv_sec = epochTime;
+    newTime.tv_usec = 0;
+
+    // =========================================================
+    // Update system time
+    // =========================================================
+    if (settimeofday(&newTime, nullptr) != 0)
+    {
+        logDbMessage("Error setting time.", "DB");
+
+        return;
+    }
+
+    logDbMessage("Time set successfully.", "DB");
+
+    // =========================================================
+    // Sync system time to hardware clock
+    // =========================================================
+    if (std::system("hwclock --systohc") != 0)
+    {
+        logDbMessage("Sync error.", "DB");
+
+        return;
+    }
+
+    logDbMessage("Sync successfully.", "DB");
+}
+
+int db::downloadseason()
+{
+    constexpr int kBatchSize = 10;
+
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check number of seasons pending download
+    // =========================================================
+    const std::string countSql =
+        "SELECT SUM(A) FROM ("
+        "SELECT count(season_no) AS A "
+        "FROM season_mst "
+        "WHERE " +
+        fetchedColumn +
+        " = 0 "
+        ") AS B";
+
+    std::vector<ReaderItem> countResult;
+
+    const int countRet = centraldb->SQLSelect(countSql, &countResult, false);
+
+    if (countRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+        return -1;
+    }
+
+    if (countResult.empty())
+    {
+        return -1;
+    }
+
+    const std::string pendingCount = countResult.front().GetDataItem(0);
+
+    int totalPending = 0;
+
+    try
+    {
+        totalPending = std::stoi(pendingCount);
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage(std::string("Invalid season download count: ") + e.what(), "DB");
+
+        return -1;
+    }
+
+    if (totalPending == 0)
+    {
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    logDbMessage("Total: " + pendingCount + " Seasons to be download.", "DB");
+
+    // =========================================================
+    // Retrieve next batch
+    // =========================================================
+    const std::string selectSql =
+        "SELECT TOP " +
+        std::to_string(kBatchSize) +
+        " * FROM season_mst "
+        "WHERE " +
+        fetchedColumn +
+        " = 0";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Process downloaded records
+    // =========================================================
+    if (!result.empty())
+    {
+        logDbMessage("Downloading " + std::to_string(result.size()) + " Records: Started", "DB");
+
+        for (const auto& row : result)
+        {
+            tseason_struct season{};
+
+            season.season_no = row.GetDataItem(1);
+            season.SeasonType = row.GetDataItem(2);
+            season.s_status = row.GetDataItem(3);
+            season.date_from = row.GetDataItem(4);
+            season.date_to = row.GetDataItem(5);
+            season.holder_type = row.GetDataItem(6);
+            season.vehicle_no = row.GetDataItem(8);
+            season.rate_type = row.GetDataItem(58);
+            season.pay_to = row.GetDataItem(66);
+            season.pay_date = row.GetDataItem(67);
+            season.multi_season_no = row.GetDataItem(72);
+            season.zone_id = row.GetDataItem(77);
+            season.redeem_time = row.GetDataItem(78);
+            season.redeem_amt = row.GetDataItem(79);
+            season.sub_zone_id = row.GetDataItem(80);
+
+            ++season_update_count;
+
+            // =================================================
+            // Write season to Local DB
+            // =================================================
+            const int writeRet = writeseason2local(season);
+
+            if (writeRet != 0)
+            {
+                continue;
+            }
+
+            logDbMessage("Download season: " + season.season_no, "DB");
+
+            // =================================================
+            // Mark Central DB record as fetched
+            // =================================================
+            const std::string updateSql =
+                "UPDATE season_mst SET " +
+                fetchedColumn +
+                " = '1' "
+                "WHERE season_no = '" +
+                season.season_no +
+                "'";
+
+            const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+            if (updateRet != 0)
+            {
+                m_remote_db_err_flag.store(2);
+
+                logDbMessage("Update central season status failed.", "DB");
+
+                continue;
+            }
+
+            ++downloadCount;
+
+            m_remote_db_err_flag.store(0);
+        }
+
+        logDbMessage(
+            "Downloading Records: End, Total Record :" +
+                std::to_string(result.size()) +
+                " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // Less than one complete batch means all pending records
+    // from this download cycle have been processed.
+    if (result.size() < kBatchSize)
+    {
+        season_update_flag = 0;
+    }
+
+    return downloadCount;
+}
+
+int db::writeseason2local(tseason_struct& v)
+{
+    try
+    {
+        // =====================================================
+        // Check whether season already exists
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const std::string checkSql =
+            "SELECT season_type "
+            "FROM season_mst "
+            "WHERE season_no = '" + v.season_no + "'";
+
+        int ret = localdb->SQLSelect(checkSql, &result, false);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Check local season failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        // =====================================================
+        // Existing season -> UPDATE
+        // =====================================================
+        if (!result.empty())
+        {
+            v.found = 1;
+
+            const std::string sqlStmt =
+                "UPDATE season_mst SET "
+                "season_no = '" + v.season_no + "', "
+                "season_type = '" + v.SeasonType + "', "
+                "s_status = '" + v.s_status + "', "
+                "date_from = '" + v.date_from + "', "
+                "date_to = '" + v.date_to + "', "
+                "vehicle_no = '" + v.vehicle_no + "', "
+                "rate_type = '" + v.rate_type + "', "
+                "pay_to = '" + v.pay_to + "', "
+                "pay_date = '" + v.pay_date + "', "
+                "multi_season_no = '" + v.multi_season_no + "', "
+                "zone_id = '" + v.zone_id + "', "
+                "redeem_amt = '" + v.redeem_amt + "', "
+                "redeem_time = '" + v.redeem_time + "', "
+                "holder_type = '" + v.holder_type + "', "
+                "sub_zone_id = '" + v.sub_zone_id + "' "
+                "WHERE season_no = '" + v.season_no + "'";
+
+            ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
+
+                logDbMessage("Update local season failed.", "DB");
+
+                return ret;
+            }
+
+            m_local_db_err_flag = 0;
+
+            return ret;
+        }
+
+        // =====================================================
+        // New season -> INSERT
+        // =====================================================
+        v.found = 0;
+
+        const std::string sqlStmt =
+            "INSERT INTO season_mst "
+            "("
+            "season_no, "
+            "season_type, "
+            "s_status, "
+            "date_from, "
+            "date_to, "
+            "vehicle_no, "
+            "rate_type, "
+            "pay_to, "
+            "pay_date, "
+            "multi_season_no, "
+            "zone_id, "
+            "redeem_amt, "
+            "redeem_time, "
+            "holder_type, "
+            "sub_zone_id"
+            ") VALUES ('" +
+            v.season_no + "', '" +
+            v.SeasonType + "', '" +
+            v.s_status + "', '" +
+            v.date_from + "', '" +
+            v.date_to + "', '" +
+            v.vehicle_no + "', '" +
+            v.rate_type + "', '" +
+            v.pay_to + "', '" +
+            v.pay_date + "', '" +
+            v.multi_season_no + "', '" +
+            v.zone_id + "', '" +
+            v.redeem_amt + "', '" +
+            v.redeem_time + "', '" +
+            v.holder_type + "', '" +
+            v.sub_zone_id + "')";
+
+        ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage(sqlStmt, "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        logDbMessage("Insert season to local success.", "DB");
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing season record: ") + e.what(), "DB");
+
+        return -1;
     }
 }
 
-int db::updateExitReceiptNo(string sReceiptNo, string StnID) 
+int db::downloadvehicletype()
 {
+    // =========================================================
+    // Get total vehicle type count
+    // =========================================================
+    const std::string countSql =
+        "SELECT SUM(A) FROM ("
+        "SELECT COUNT(IUCode) AS A "
+        "FROM Vehicle_type"
+        ") AS B";
 
-	int r=0;
-	string sqstr="";
+    std::vector<ReaderItem> countResult;
 
-	// insert into Central trans tmp table
+    const int countRet = centraldb->SQLSelect(countSql, &countResult, false);
 
-	sqstr="UPDATE Exit_trans_tmp set receipt_no = '"+ sReceiptNo + "' WHERE station_id = '"+ StnID + "' and Exit_time = '"+ operation::getInstance()->tExit.sExitTime + "'";
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
+    if (countRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
 
-	if (r==0) 
-	{
-		if (centraldb->NumberOfRowsAffected > 0){
-			operation::getInstance()->writelog("Success update Receipt No to Exit_Trans_Tmp","DB");
-		}else
-		{
-			sqstr="UPDATE exit_trans set receipt_no = '"+ sReceiptNo + "' WHERE station_id = '"+ StnID + "' and Exit_time = '"+ operation::getInstance()->tExit.sExitTime + "'";
-			r = centraldb->SQLExecutNoneQuery(sqstr);
+        logDbMessage("Download vehicle type fail.", "DB");
 
-			if (r==0) {
-				if (centraldb->NumberOfRowsAffected > 0)
-				{
-					operation::getInstance()->writelog("Success update Receipt No to Exit_Trans","DB");
-					m_remote_db_err_flag.store(0);
-				} else operation::getInstance()->writelog("No Receipt for update","DB");
-			} else
-			{
-			operation::getInstance()->writelog("fail to update Receipt to Exit_trans","DB");
-		 	m_remote_db_err_flag.store(1);
-			}
-		}
-	}
-	else {
-		operation::getInstance()->writelog("fail to update Receipt to Exit_trans_Tmp","DB");
-		m_remote_db_err_flag.store(1);
-		
-	}
-	return r;
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (countResult.empty())
+    {
+        logDbMessage("Unable to retrieve vehicle type count.", "DB");
+
+        return -1;
+    }
+
+    logDbMessage("Total " + countResult.front().GetDataItem(0) + " vehicle type to be download.", "DB");
+
+    // =========================================================
+    // Download vehicle type records
+    // =========================================================
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect("SELECT * FROM Vehicle_type", &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    if (!result.empty())
+    {
+        logDbMessage("Downloading " + std::to_string(result.size()) + " Records: Started", "DB");
+
+        for (const auto& row : result)
+        {
+            const std::string iuCode = row.GetDataItem(1);
+            const std::string iuType = row.GetDataItem(2);
+
+            const int writeRet = writevehicletype2local(iuCode, iuType);
+
+            if (writeRet == 0)
+            {
+                ++downloadCount;
+            }
+        }
+
+        logDbMessage(
+            "Downloading vehicle type Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    return downloadCount;
+}
+
+int db::writevehicletype2local(const std::string& iuCode, const std::string& iuType)
+{
+    try
+    {
+        // =====================================================
+        // Check whether vehicle type already exists
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const std::string checkSql =
+            "SELECT IUCode "
+            "FROM Vehicle_type "
+            "WHERE IUCode = '" + iuCode + "'";
+
+        int ret = localdb->SQLSelect(checkSql, &result, false);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Update vehicle type to local fail.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        // =====================================================
+        // Existing record -> UPDATE
+        // =====================================================
+        if (!result.empty())
+        {
+            const std::string sqlStmt =
+                "UPDATE Vehicle_type "
+                "SET TransType = '" + iuType + "' "
+                "WHERE IUCode = '" + iuCode + "'";
+
+            ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
+
+                logDbMessage("Update local vehicle type failed.", "DB");
+
+                return ret;
+            }
+
+            m_local_db_err_flag = 0;
+
+            return ret;
+        }
+
+        // =====================================================
+        // New record -> INSERT
+        // =====================================================
+        const std::string sqlStmt =
+            "INSERT INTO Vehicle_type "
+            "(IUCode, TransType) "
+            "VALUES ('" +
+            iuCode + "', '" +
+            iuType + "')";
+
+        ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert vehicle type to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing vehicle type: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadledmessage()
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Get total pending message count
+    // =========================================================
+    const std::string countSql =
+        "SELECT SUM(A) FROM ("
+        "SELECT COUNT(msg_id) AS A "
+        "FROM message_mst "
+        "WHERE " +
+        fetchedColumn +
+        " = 0"
+        ") AS B";
+
+    std::vector<ReaderItem> countResult;
+
+    const int countRet = centraldb->SQLSelect(countSql, &countResult, false);
+
+    if (countRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download LED message fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (countResult.empty())
+    {
+        logDbMessage("Unable to retrieve LED message count.", "DB");
+
+        return -1;
+    }
+
+    logDbMessage("Total " + countResult.front().GetDataItem(0) + " message to be download.", "DB");
+
+    // =========================================================
+    // Download pending messages
+    // =========================================================
+    const std::string selectSql =
+        "SELECT * FROM message_mst "
+        "WHERE " +
+        fetchedColumn +
+        " = 0";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download LED message fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    if (!result.empty())
+    {
+        logDbMessage("Downloading message " + std::to_string(result.size()) + " Records: Started", "DB");
+
+        for (const auto& row : result)
+        {
+            const std::string msgId = row.GetDataItem(0);
+            const std::string msgBody = row.GetDataItem(2);
+            const std::string msgStatus = row.GetDataItem(3);
+
+            const int writeRet = writeledmessage2local(msgId, msgBody, msgStatus);
+
+            if (writeRet != 0)
+            {
+                continue;
+            }
+
+            // =================================================
+            // Mark Central DB message as fetched
+            // =================================================
+            const std::string updateSql =
+                "UPDATE message_mst SET " +
+                fetchedColumn +
+                " = '1' "
+                "WHERE msg_id = '" +
+                msgId +
+                "'";
+
+            const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+            if (updateRet != 0)
+            {
+                m_remote_db_err_flag.store(2);
+
+                logDbMessage("Update central message status failed.", "DB");
+
+                continue;
+            }
+
+            ++downloadCount;
+            m_remote_db_err_flag.store(0);
+        }
+
+        logDbMessage(
+            "Downloading Msg Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    return downloadCount;
+}
+
+int db::writeledmessage2local(const std::string& msgId, const std::string& msgBody, const std::string& msgStatus)
+{
+    try
+    {
+        // =====================================================
+        // Check whether message already exists
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const std::string checkSql =
+            "SELECT msg_id "
+            "FROM message_mst "
+            "WHERE msg_id = '" + msgId + "'";
+
+        int ret = localdb->SQLSelect(checkSql, &result, false);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Update local LED message failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        // =====================================================
+        // Existing message -> UPDATE
+        // =====================================================
+        if (!result.empty())
+        {
+            const std::string sqlStmt =
+                "UPDATE message_mst SET "
+                "msg_body = '" + msgBody + "', "
+                "m_status = '" + msgStatus + "' "
+                "WHERE msg_id = '" + msgId + "'";
+
+            ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
+
+                logDbMessage("Update local message failed.", "DB");
+
+                return ret;
+            }
+
+            m_local_db_err_flag = 0;
+
+            return ret;
+        }
+
+        // =====================================================
+        // New message -> INSERT
+        // =====================================================
+        const std::string sqlStmt =
+            "INSERT INTO message_mst "
+            "(msg_id, msg_body, m_status) "
+            "VALUES ('" +
+            msgId + "', '" +
+            msgBody + "', '" +
+            msgStatus + "')";
+
+        ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert message to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing LED message: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadparameter()
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Get total pending parameter count
+    // =========================================================
+    const std::string countSql =
+        "SELECT SUM(A) FROM ("
+        "SELECT COUNT(name) AS A "
+        "FROM parameter_mst "
+        "WHERE " +
+        fetchedColumn +
+        " = 0 "
+        "AND for_station = 1"
+        ") AS B";
+
+    std::vector<ReaderItem> countResult;
+
+    const int countRet = centraldb->SQLSelect(countSql, &countResult, false);
+
+    if (countRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download parameter fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (countResult.empty())
+    {
+        logDbMessage("Unable to retrieve parameter count.", "DB");
+
+        return -1;
+    }
+
+    logDbMessage("Total " + countResult.front().GetDataItem(0) + " parameter to be download.", "DB");
+
+    // =========================================================
+    // Download pending parameters
+    // =========================================================
+    const std::string selectSql =
+        "SELECT * FROM parameter_mst "
+        "WHERE " +
+        fetchedColumn +
+        " = 0 "
+        "AND for_station = 1";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Update parameter failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // No pending parameter
+    // =========================================================
+    if (result.empty())
+    {
+        param_update_flag = 0;
+        return downloadCount;
+    }
+
+    logDbMessage("Downloading parameter " + std::to_string(result.size()) + " Records: Started", "DB");
+
+    // Station-specific parameter value column.
+    const std::size_t valueColumn = static_cast<std::size_t>(49 + stationId);
+
+    // =========================================================
+    // Process parameters
+    // =========================================================
+    for (const auto& row : result)
+    {
+        const std::string paramName = row.GetDataItem(0);
+        const std::string paramValue = row.GetDataItem(valueColumn);
+
+        logDbMessage(paramName + " = " + paramValue, "DB");
+
+        ++param_update_count;
+
+        const int writeRet = writeparameter2local(paramName, paramValue);
+
+        if (writeRet != 0)
+        {
+            continue;
+        }
+
+        // =====================================================
+        // Mark Central DB parameter as fetched
+        // =====================================================
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = '1' "
+            "WHERE name = '" +
+            paramName +
+            "'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(2);
+
+            logDbMessage("Update central parameter status failed.", "DB");
+
+            continue;
+        }
+
+        ++downloadCount;
+        m_remote_db_err_flag.store(0);
+    }
+
+    logDbMessage(
+        "Downloading Parameter Records: End, "
+        "Total Record :" +
+            std::to_string(result.size()) +
+        " ,Downloaded Record :" +
+            std::to_string(downloadCount),
+        "DB");
+
+    return downloadCount;
+}
+
+int db::writeparameter2local(const std::string& name, const std::string& value)
+{
+    try
+    {
+        // =====================================================
+        // Check whether parameter already exists
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const std::string checkSql =
+            "SELECT ParamName "
+            "FROM Param_mst "
+            "WHERE ParamName = '" + name + "'";
+
+        int ret = localdb->SQLSelect(checkSql, &result, false);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Update parameter fail.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        // =====================================================
+        // Existing parameter -> UPDATE
+        // =====================================================
+        if (!result.empty())
+        {
+            const std::string sqlStmt =
+                "UPDATE Param_mst "
+                "SET ParamValue = '" + value + "' "
+                "WHERE ParamName = '" + name + "'";
+
+            ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
+
+                logDbMessage("Update parameter to local failed.", "DB");
+
+                return ret;
+            }
+
+            m_local_db_err_flag = 0;
+
+            return ret;
+        }
+
+        // =====================================================
+        // New parameter -> INSERT
+        // =====================================================
+        const std::string sqlStmt =
+            "INSERT INTO Param_mst "
+            "(ParamName, ParamValue) "
+            "VALUES ('" +
+            name + "', '" +
+            value + "')";
+
+        ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert parameter to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing parameter: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadstationsetup()
+{
+    // =========================================================
+    // Get total station setup count
+    // =========================================================
+    const std::string countSql =
+        "SELECT SUM(A) FROM ("
+        "SELECT COUNT(station_id) AS A "
+        "FROM station_setup"
+        ") AS B";
+
+    std::vector<ReaderItem> countResult;
+
+    const int countRet = centraldb->SQLSelect(countSql, &countResult, false);
+
+    if (countRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download station setup fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (countResult.empty())
+    {
+        logDbMessage("Unable to retrieve station setup count.", "DB");
+
+        return -1;
+    }
+
+    logDbMessage("Total " + countResult.front().GetDataItem(0) + " station setup to be download.", "DB");
+
+    // =========================================================
+    // Download station setup records
+    // =========================================================
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect("SELECT * FROM station_setup", &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download station setup fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    if (!result.empty())
+    {
+        for (const auto& row : result)
+        {
+            tstation_struct station{};
+
+            station.iGroupID = std::stoi(row.GetDataItem(0));
+            station.iSID = std::stoi(row.GetDataItem(2));
+            station.sName = row.GetDataItem(3);
+            station.sPCName = row.GetDataItem(4);
+
+            switch (std::stoi(row.GetDataItem(5)))
+            {
+                case 1:
+                    station.iType = tientry;
+                    break;
+
+                case 2:
+                    station.iType = tiExit;
+                    break;
+
+                default:
+                    break;
+            }
+
+            station.iStatus = std::stoi(row.GetDataItem(6));
+            station.iCHUPort = std::stoi(row.GetDataItem(17));
+            station.iAntID = std::stoi(row.GetDataItem(18));
+            station.iZoneID = std::stoi(row.GetDataItem(19));
+            station.iIsVirtual = std::stoi(row.GetDataItem(20));
+            station.iVirtualID = std::stoi(row.GetDataItem(21));
+
+            switch (std::stoi(row.GetDataItem(22)))
+            {
+                case 0:
+                    station.iSubType = iNormal;
+                    break;
+
+                case 1:
+                    station.iSubType = iXwithVENoPay;
+                    break;
+
+                case 2:
+                    station.iSubType = iXwithVEPay;
+                    break;
+
+                default:
+                    break;
+            }
+
+            const int writeRet = writestationsetup2local(station);
+
+            if (writeRet == 0)
+            {
+                ++downloadCount;
+            }
+        }
+
+        logDbMessage(
+            "Downloading Station Setup Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    return downloadCount;
+}
+
+int db::writestationsetup2local(const tstation_struct& v)
+{
+    try
+    {
+        const std::string stationId = std::to_string(v.iSID);
+
+        // =====================================================
+        // Check whether station already exists
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const std::string checkSql =
+            "SELECT StationType "
+            "FROM Station_Setup "
+            "WHERE StationID = '" + stationId + "'";
+
+        int ret = localdb->SQLSelect(checkSql, &result, false);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Update station setup fail.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        // =====================================================
+        // Existing station -> UPDATE
+        // =====================================================
+        if (!result.empty())
+        {
+            const std::string sqlStmt =
+                "UPDATE Station_Setup SET "
+                "StationID = '" + stationId + "', "
+                "StationName = '" + v.sName + "', "
+                "StationType = '" + std::to_string(v.iType) + "', "
+                "Status = '" + std::to_string(v.iStatus) + "', "
+                "PCName = '" + v.sPCName + "', "
+                "CHUPort = '" + std::to_string(v.iCHUPort) + "', "
+                "AntID = '" + std::to_string(v.iAntID) + "', "
+                "ZoneID = '" + std::to_string(v.iZoneID) + "', "
+                "IsVirtual = '" + std::to_string(v.iIsVirtual) + "', "
+                "SubType = '" + std::to_string(v.iSubType) + "', "
+                "VirtualID = '" + std::to_string(v.iVirtualID) + "' "
+                "WHERE StationID = '" + stationId + "'";
+
+            ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
+
+                logDbMessage("Update local station setup failed.", "DB");
+
+                return ret;
+            }
+
+            m_local_db_err_flag = 0;
+
+            return ret;
+        }
+
+        // =====================================================
+        // New station -> INSERT
+        // =====================================================
+        const std::string sqlStmt =
+            "INSERT INTO Station_Setup "
+            "("
+            "StationID, "
+            "StationName, "
+            "StationType, "
+            "Status, "
+            "PCName, "
+            "CHUPort, "
+            "AntID, "
+            "ZoneID, "
+            "IsVirtual, "
+            "SubType, "
+            "VirtualID"
+            ") VALUES ('" +
+            stationId + "', '" +
+            v.sName + "', '" +
+            std::to_string(v.iType) + "', '" +
+            std::to_string(v.iStatus) + "', '" +
+            v.sPCName + "', '" +
+            std::to_string(v.iCHUPort) + "', '" +
+            std::to_string(v.iAntID) + "', '" +
+            std::to_string(v.iZoneID) + "', '" +
+            std::to_string(v.iIsVirtual) + "', '" +
+            std::to_string(v.iSubType) + "', '" +
+            std::to_string(v.iVirtualID) + "')";
+
+        ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert station setup to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing station setup: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadtariffsetup(int iGrpID, int iSiteID, int iCheckStatus)
+{
+    (void)iSiteID; // Currently unused
+
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether tariff download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadTariff' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download tariff_setup failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("Tariff already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Clear existing local tariff
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM tariff_setup");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete tariff_setup from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Determine zone
+    // =========================================================
+    const int zoneId = (data->gtStation.iZoneID > 0) ? data->gtStation.iZoneID : 1;
+
+    logDbMessage(
+        "Download tariff_setup for group " +
+            std::to_string(iGrpID) +
+        ", zone " +
+            std::to_string(zoneId),
+        "DB");
+
+    // =========================================================
+    // Download tariff setup
+    // =========================================================
+    std::string selectSql = "SELECT * FROM tariff_setup";
+
+    if (iGrpID > 0)
+    {
+        selectSql +=
+            " WHERE group_id = " +
+            std::to_string(iGrpID) +
+            " AND Zone_id = " +
+            std::to_string(zoneId);
+    }
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download tariff_setup failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write tariffs to local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        tariff_struct tariff;
+
+        tariff.tariff_id = row.GetDataItem(0);
+        tariff.day_index = row.GetDataItem(4);
+        tariff.day_type = row.GetDataItem(5);
+
+        int index = 6;
+
+        for (int i = 0; i < 9; ++i)
+        {
+            tariff.start_time[i] = row.GetDataItem(index++);
+            tariff.end_time[i] = row.GetDataItem(index++);
+            tariff.rate_type[i] = row.GetDataItem(index++);
+            tariff.charge_time_block[i] = row.GetDataItem(index++);
+            tariff.charge_rate[i] = row.GetDataItem(index++);
+            tariff.grace_time[i] = row.GetDataItem(index++);
+            tariff.first_free[i] = row.GetDataItem(index++);
+            tariff.first_add[i] = row.GetDataItem(index++);
+            tariff.second_free[i] = row.GetDataItem(index++);
+            tariff.second_add[i] = row.GetDataItem(index++);
+            tariff.third_free[i] = row.GetDataItem(index++);
+            tariff.third_add[i] = row.GetDataItem(index++);
+            tariff.allowance[i] = row.GetDataItem(index++);
+            tariff.min_charge[i] = row.GetDataItem(index++);
+            tariff.max_charge[i] = row.GetDataItem(index++);
+        }
+
+        tariff.zone_cutoff = row.GetDataItem(index++);
+        tariff.day_cutoff = row.GetDataItem(index++);
+        tariff.whole_day_max = row.GetDataItem(index++);
+        tariff.whole_day_min = row.GetDataItem(index++);
+
+        const int writeRet = writetariffsetup2local(tariff);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    if (!result.empty())
+    {
+        logDbMessage(
+            "Downloading tariff_setup Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadTariff as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadTariff'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadTariff fetched=1 failed.", "DB");
+        }
+    }
+
+    // Original behavior:
+    // no tariff record -> -1
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writetariffsetup2local(const tariff_struct& tariff)
+{
+    constexpr int kTariffPeriods = 9;
+
+    try
+    {
+        // =====================================================
+        // Build column list
+        // =====================================================
+        std::string sqlStmt =
+            "INSERT INTO tariff_setup "
+            "(tariff_id, day_index";
+
+        for (int i = 1; i <= kTariffPeriods; ++i)
+        {
+            const std::string index =
+                std::to_string(i);
+
+            sqlStmt +=
+                ", start_time" + index +
+                ", end_time" + index +
+                ", rate_type" + index +
+                ", charge_time_block" + index +
+                ", charge_rate" + index +
+                ", grace_time" + index +
+                ", min_charge" + index +
+                ", max_charge" + index +
+                ", first_free" + index +
+                ", first_add" + index +
+                ", second_free" + index +
+                ", second_add" + index +
+                ", third_free" + index +
+                ", third_add" + index +
+                ", allowance" + index;
+        }
+
+        sqlStmt +=
+            ", zone_cutoff"
+            ", day_cutoff"
+            ", whole_day_max"
+            ", whole_day_min"
+            ", day_type"
+            ") VALUES (" +
+            tariff.tariff_id +
+            ", " +
+            tariff.day_index;
+
+        // =====================================================
+        // Build tariff period values
+        // =====================================================
+        for (int i = 0; i < kTariffPeriods; ++i)
+        {
+            sqlStmt +=
+                ", '" + tariff.start_time[i] + "'" +
+                ", '" + tariff.end_time[i] + "'" +
+                ", " + tariff.rate_type[i] +
+                ", " + tariff.charge_time_block[i] +
+                ", '" + tariff.charge_rate[i] + "'" +
+                ", " + tariff.grace_time[i] +
+                ", '" + tariff.min_charge[i] + "'" +
+                ", '" + tariff.max_charge[i] + "'" +
+                ", " + tariff.first_free[i] +
+                ", '" + tariff.first_add[i] + "'" +
+                ", " + tariff.second_free[i] +
+                ", '" + tariff.second_add[i] + "'" +
+                ", " + tariff.third_free[i] +
+                ", '" + tariff.third_add[i] + "'" +
+                ", " + tariff.allowance[i];
+        }
+
+        sqlStmt +=
+            ", " + tariff.zone_cutoff +
+            ", " + tariff.day_cutoff +
+            ", '" + tariff.whole_day_max + "'" +
+            ", '" + tariff.whole_day_min + "'" +
+            ", '" + tariff.day_type + "'" +
+            ")";
+
+        // =====================================================
+        // Insert into local DB
+        // =====================================================
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert tariff setup to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing tariff setup: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadtarifftypeinfo()
+{
+    // =========================================================
+    // Clear existing local tariff type info
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM tariff_type_info");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete tariff_type_info from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Download tariff type info from Central DB
+    // =========================================================
+    logDbMessage("Download tariff_type_info.", "DB");
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect("SELECT * FROM tariff_type_info", &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download tariff_type_info failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    // Original behavior:
+    // no record -> return -1
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write tariff type info to Local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        tariff_type_info_struct tariffType;
+
+        tariffType.tariff_type = row.GetDataItem(0);
+        tariffType.start_time = row.GetDataItem(1);
+        tariffType.end_time = row.GetDataItem(2);
+
+        const int writeRet = writetarifftypeinfo2local(tariffType);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    logDbMessage(
+        "Downloading tariff_type_info Records: End, "
+        "Total Record :" +
+            std::to_string(result.size()) +
+        " ,Downloaded Record :" +
+            std::to_string(downloadCount),
+        "DB");
+
+    return downloadCount;
+}
+
+int db::writetarifftypeinfo2local(const tariff_type_info_struct& tariffType)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO tariff_type_info "
+            "(tariff_type, start_time, end_time) "
+            "VALUES (" +
+            tariffType.tariff_type + ", '" +
+            tariffType.start_time + "', '" +
+            tariffType.end_time + "')";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert tariff type info to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing tariff type info: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadxtariff(int iGrpID, int iSiteID, int iCheckStatus)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether X_Tariff download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadXTariff' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download X_Tariff failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("X_Tariff already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Clear existing local X_Tariff
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM X_Tariff");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete X_Tariff from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Download X_Tariff from Central DB
+    // =========================================================
+    logDbMessage(
+        "Download X_Tariff for group: " +
+            std::to_string(iGrpID) +
+        ", site: " +
+            std::to_string(iSiteID),
+        "DB");
+
+    const std::string selectSql =
+        "SELECT * FROM X_Tariff "
+        "WHERE group_id = " +
+        std::to_string(iGrpID) +
+        " AND site_id = " +
+        std::to_string(iSiteID);
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download X_Tariff failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write X_Tariff to Local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        x_tariff_struct xTariff;
+
+        xTariff.day_index = row.GetDataItem(2);
+        xTariff.auto0 = row.GetDataItem(3);
+        xTariff.fee0 = row.GetDataItem(4);
+        xTariff.time1 = row.GetDataItem(5);
+        xTariff.auto1 = row.GetDataItem(6);
+        xTariff.fee1 = row.GetDataItem(7);
+        xTariff.time2 = row.GetDataItem(8);
+        xTariff.auto2 = row.GetDataItem(9);
+        xTariff.fee2 = row.GetDataItem(10);
+        xTariff.time3 = row.GetDataItem(11);
+        xTariff.auto3 = row.GetDataItem(12);
+        xTariff.fee3 = row.GetDataItem(13);
+        xTariff.time4 = row.GetDataItem(14);
+        xTariff.auto4 = row.GetDataItem(15);
+        xTariff.fee4 = row.GetDataItem(16);
+
+        const int writeRet = writextariff2local(xTariff);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    if (!result.empty())
+    {
+        logDbMessage(
+            "Downloading x_tariff Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadXTariff as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadXTariff'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadXTariff fetched=1 failed.", "DB");
+        }
+    }
+
+    // Original behavior:
+    // no X_Tariff record -> -1
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writextariff2local(const x_tariff_struct& xTariff)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO X_Tariff "
+            "(day_index, auto0, fee0, "
+            "time1, auto1, fee1, "
+            "time2, auto2, fee2, "
+            "time3, auto3, fee3, "
+            "time4, auto4, fee4) "
+            "VALUES ('" +
+            xTariff.day_index + "', " +
+            xTariff.auto0 + ", " +
+            xTariff.fee0 + ", '" +
+            xTariff.time1 + "', " +
+            xTariff.auto1 + ", " +
+            xTariff.fee1 + ", '" +
+            xTariff.time2 + "', " +
+            xTariff.auto2 + ", " +
+            xTariff.fee2 + ", '" +
+            xTariff.time3 + "', " +
+            xTariff.auto3 + ", " +
+            xTariff.fee3 + ", '" +
+            xTariff.time4 + "', " +
+            xTariff.auto4 + ", " +
+            xTariff.fee4 +
+            ")";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert X_Tariff to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing X_Tariff: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadholidaymst(int iCheckStatus)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether holiday download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadHoliday' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download holiday_mst failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("holiday_mst already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Download holiday records
+    // =========================================================
+    logDbMessage("Download holiday_mst.", "DB");
+
+    const std::string selectSql =
+        "SELECT holiday_date, descrip "
+        "FROM holiday_mst "
+        "WHERE holiday_date > GETDATE() - 30";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download holiday_mst failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Replace local holiday records
+    // =========================================================
+    if (!result.empty())
+    {
+        ClearHoliday();
+
+        for (const auto& row : result)
+        {
+            const std::string holidayDate = row.GetDataItem(0);
+            const std::string description = row.GetDataItem(1);
+
+            const int writeRet = writeholidaymst2local(holidayDate, description);
+
+            if (writeRet == 0)
+            {
+                ++downloadCount;
+            }
+        }
+
+        logDbMessage(
+            "Downloading holiday_mst Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadHoliday as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadHoliday'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadHoliday fetched=1 failed.", "DB");
+        }
+    }
+
+    // Original behavior:
+    // no holiday record -> return -1
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writeholidaymst2local(const std::string& holidayDate, const std::string& description)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO holiday_mst "
+            "(holiday_date, descrip) "
+            "VALUES ('" +
+            holidayDate + "', '" +
+            description + "')";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert holiday to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing holiday record: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::download3tariffinfo()
+{
+    // =========================================================
+    // Clear existing local 3Tariff_Info
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM 3Tariff_Info");
+
+    if (deleteRet != 0)
+    {
+        // Preserve original behavior
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Delete 3Tariff_Info from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    // =========================================================
+    // Get station information
+    // =========================================================
+    const auto data =
+        operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int zoneId = data->gtStation.iZoneID;
+
+    const std::string zone = std::to_string(zoneId);
+
+    logDbMessage("Download 3Tariff_Info.", "DB");
+
+    // =========================================================
+    // Download tariff info for current zone
+    // =========================================================
+    const std::string selectSql =
+        "SELECT * FROM [3Tariff_Info] "
+        "WHERE Zone_ID = '" + zone + "' "
+        "OR Zone_ID LIKE '" + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + "'";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download 3Tariff_Info failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    // Original behavior:
+    // no record -> return -1
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write records to local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        tariff_info_struct tariffInfo;
+
+        tariffInfo.rate_type = row.GetDataItem(1);
+        tariffInfo.day_type = row.GetDataItem(2);
+        tariffInfo.time_from = row.GetDataItem(3);
+        tariffInfo.time_till = row.GetDataItem(4);
+        tariffInfo.t3_start = row.GetDataItem(5);
+        tariffInfo.t3_block = row.GetDataItem(6);
+        tariffInfo.t3_rate = row.GetDataItem(7);
+
+        const int writeRet = write3tariffinfo2local(tariffInfo);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    logDbMessage(
+        "Downloading 3Tariff_Info Records: End, "
+        "Total Record :" +
+            std::to_string(result.size()) +
+        " ,Downloaded Record :" +
+            std::to_string(downloadCount),
+        "DB");
+
+    return downloadCount;
+}
+
+int db::write3tariffinfo2local(const tariff_info_struct& tariffInfo)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO 3Tariff_Info "
+            "(Rate_Type, Day_Type, Time_From, Time_Till, "
+            "T3_Start, T3_Block, T3_Rate) "
+            "VALUES (" +
+            tariffInfo.rate_type + ", '" +
+            tariffInfo.day_type + "', '" +
+            tariffInfo.time_from + "', '" +
+            tariffInfo.time_till + "', " +
+            tariffInfo.t3_start + ", " +
+            tariffInfo.t3_block + ", " +
+            tariffInfo.t3_rate + ")";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert 3Tariff_Info to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing 3Tariff_Info: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadratefreeinfo(int iCheckStatus)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const int zoneId = data->gtStation.iZoneID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether Rate_Free_Info download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadRateFreeInfo' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download Rate_Free_Info failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("Rate_Free_Info already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Clear existing local Rate_Free_Info
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Free_Info");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete Rate_Free_Info from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Download Rate_Free_Info for current zone
+    // =========================================================
+    logDbMessage("Download Rate_Free_Info.", "DB");
+
+    const std::string zone = std::to_string(zoneId);
+
+    const std::string selectSql =
+        "SELECT Rate_Type, Day_Type, Init_Free, "
+        "Free_Beg, Free_End, Free_Time "
+        "FROM Rate_Free_Info "
+        "WHERE Zone_ID = '" + zone + "' "
+        "OR Zone_ID LIKE '" + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + "'";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download Rate_Free_Info failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write records to Local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        rate_free_info_struct rateFreeInfo;
+
+        rateFreeInfo.rate_type = row.GetDataItem(0);
+        rateFreeInfo.day_type = row.GetDataItem(1);
+        rateFreeInfo.init_free = row.GetDataItem(2);
+        rateFreeInfo.free_beg = row.GetDataItem(3);
+        rateFreeInfo.free_end = row.GetDataItem(4);
+        rateFreeInfo.free_time = row.GetDataItem(5);
+
+        const int writeRet = writeratefreeinfo2local(rateFreeInfo);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    if (!result.empty())
+    {
+        logDbMessage(
+            "Downloading Rate_Free_Info Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadRateFreeInfo as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadRateFreeInfo'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadRateFreeInfo fetched = 1 failed.", "DB");
+        }
+    }
+
+    // Preserve original behavior
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writeratefreeinfo2local(const rate_free_info_struct& rateFreeInfo)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO Rate_Free_Info "
+            "(Rate_Type, Day_Type, Init_Free, Free_Beg, Free_End, Free_Time) "
+            "VALUES (" +
+            rateFreeInfo.rate_type + ", '" +
+            rateFreeInfo.day_type + "', " +
+            rateFreeInfo.init_free + ", '" +
+            rateFreeInfo.free_beg + "', '" +
+            rateFreeInfo.free_end + "', " +
+            rateFreeInfo.free_time + ")";
+
+        const int ret = localdb->SQLExecutNoneQuery( sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert Rate_Free_Info to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing Rate_Free_Info: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadspecialdaymst(int iCheckStatus)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const int zoneId = data->gtStation.iZoneID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether Special_Day_mst download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadSpecialDay' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download Special_Day_mst failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("Special_Day_mst already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Clear existing local Special_Day_mst
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM Special_Day_mst");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete Special_Day_mst from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Download special day records for current zone
+    // =========================================================
+    logDbMessage("Download Special_Day_mst.", "DB");
+
+    const std::string zone = std::to_string(zoneId);
+
+    const std::string selectSql =
+        "SELECT "
+        "CONVERT(char(10), Special_Date, 103), "
+        "Rate_Type, "
+        "Day_Code "
+        "FROM Special_Day_mst "
+        "WHERE Special_Date > GETDATE() - 1 "
+        "AND ("
+        "Zone_ID = '" + zone + "' "
+        "OR Zone_ID LIKE '" + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + "'"
+        ")";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download Special_Day_mst failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write records to Local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        const std::string specialDate = row.GetDataItem(0);
+        const std::string rateType = row.GetDataItem(1);
+        const std::string dayCode = row.GetDataItem(2);
+
+        const int writeRet = writespecialday2local(specialDate, rateType, dayCode);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    if (!result.empty())
+    {
+        logDbMessage(
+            "Downloading Special_Day_mst Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadSpecialDay as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadSpecialDay'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadSpecialDay fetched=1 failed.", "DB");
+        }
+    }
+
+    // Preserve original behavior
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writespecialday2local(const std::string& specialDate, const std::string& rateType, const std::string& dayCode)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO Special_Day_mst "
+            "(Special_Date, Rate_Type, Day_Code) "
+            "VALUES ('" +
+            specialDate + "', " +
+            rateType + ", '" +
+            dayCode + "')";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert Special_Day_mst to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing Special_Day_mst: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadratetypeinfo(int iCheckStatus)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const int zoneId = data->gtStation.iZoneID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether Rate_Type_Info download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadRateTypeInfo' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download Rate_Type_Info failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("Rate_Type_Info already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Clear existing local Rate_Type_Info
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery( "DELETE FROM Rate_Type_Info");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete Rate_Type_Info from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Download Rate_Type_Info for current zone
+    // =========================================================
+    logDbMessage("Download Rate_Type_Info.", "DB");
+
+    const std::string zone = std::to_string(zoneId);
+
+    const std::string selectSql =
+        "SELECT "
+        "Rate_Type, "
+        "Has_Holiday, "
+        "Has_Holiday_Eve, "
+        "Has_Special_Day, "
+        "Has_Init_Free, "
+        "Has_3Tariff, "
+        "Has_Zone_Max "
+        "FROM Rate_Type_Info "
+        "WHERE Zone_ID = '" + zone + "' "
+        "OR Zone_ID LIKE '" + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + "'";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download Rate_Type_Info failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write records to Local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        rate_type_info_struct rateTypeInfo;
+
+        rateTypeInfo.rate_type = row.GetDataItem(0);
+        rateTypeInfo.has_holiday = row.GetDataItem(1);
+        rateTypeInfo.has_holiday_eve = row.GetDataItem(2);
+        rateTypeInfo.has_special_day = row.GetDataItem(3);
+        rateTypeInfo.has_init_free = row.GetDataItem(4);
+        rateTypeInfo.has_3tariff = row.GetDataItem(5);
+        rateTypeInfo.has_zone_max = row.GetDataItem(6);
+
+        const int writeRet = writeratetypeinfo2local(rateTypeInfo);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    if (!result.empty())
+    {
+        logDbMessage(
+            "Downloading Rate_Type_Info Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadRateTypeInfo as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadRateTypeInfo'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadRateTypeInfo fetched = 1 failed.", "DB");
+        }
+    }
+
+    // Preserve original behavior
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writeratetypeinfo2local(const rate_type_info_struct& rateTypeInfo)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO Rate_Type_Info "
+            "(Rate_Type, Has_Holiday, Has_Holiday_Eve, "
+            "Has_Special_Day, Has_Init_Free, Has_3Tariff, Has_Zone_Max) "
+            "VALUES (" +
+            rateTypeInfo.rate_type + ", " +
+            rateTypeInfo.has_holiday + ", " +
+            rateTypeInfo.has_holiday_eve + ", " +
+            rateTypeInfo.has_special_day + ", " +
+            rateTypeInfo.has_init_free + ", " +
+            rateTypeInfo.has_3tariff + ", " +
+            rateTypeInfo.has_zone_max + ")";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert Rate_Type_Info to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing Rate_Type_Info: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadratemaxinfo(int iCheckStatus)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const int stationId = data->gtStation.iSID;
+
+    const int zoneId = data->gtStation.iZoneID;
+
+    const std::string fetchedColumn = "s" + std::to_string(stationId) + "_fetched";
+
+    // =========================================================
+    // Check whether Rate_Max_Info download is required
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string checkSql =
+            "SELECT name FROM parameter_mst "
+            "WHERE name = 'DownloadRateMaxInfo' "
+            "AND " +
+            fetchedColumn +
+            " = 0";
+
+        std::vector<ReaderItem> checkResult;
+
+        const int checkRet = centraldb->SQLSelect(checkSql, &checkResult, true);
+
+        if (checkRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Download Rate_Max_Info failed.", "DB");
+
+            return -1;
+        }
+
+        if (checkResult.empty())
+        {
+            m_remote_db_err_flag.store(0);
+
+            logDbMessage("Rate_Max_Info already downloaded.", "DB");
+
+            return -3;
+        }
+    }
+
+    // =========================================================
+    // Clear existing local Rate_Max_Info
+    // =========================================================
+    const int deleteRet = localdb->SQLExecutNoneQuery("DELETE FROM Rate_Max_Info");
+
+    if (deleteRet != 0)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage("Delete Rate_Max_Info from local failed.", "DB");
+
+        return -1;
+    }
+
+    m_local_db_err_flag = 0;
+
+    // =========================================================
+    // Download Rate_Max_Info for current zone
+    // =========================================================
+    logDbMessage("Download Rate_Max_Info.", "DB");
+
+    const std::string zone = std::to_string(zoneId);
+
+    const std::string selectSql =
+        "SELECT "
+        "Rate_Type, "
+        "Day_Type, "
+        "Start_Time, "
+        "End_Time, "
+        "Max_Fee "
+        "FROM Rate_Max_Info "
+        "WHERE Zone_ID = '" + zone + "' "
+        "OR Zone_ID LIKE '" + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + ",%' "
+        "OR Zone_ID LIKE '%," + zone + "'";
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql, &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download Rate_Max_Info failed.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    // =========================================================
+    // Write records to Local DB
+    // =========================================================
+    for (const auto& row : result)
+    {
+        rate_max_info_struct rateMaxInfo;
+
+        rateMaxInfo.rate_type = row.GetDataItem(0);
+        rateMaxInfo.day_type = row.GetDataItem(1);
+        rateMaxInfo.start_time = row.GetDataItem(2);
+        rateMaxInfo.end_time = row.GetDataItem(3);
+        rateMaxInfo.max_fee = row.GetDataItem(4);
+
+        const int writeRet = writeratemaxinfo2local(rateMaxInfo);
+
+        if (writeRet == 0)
+        {
+            ++downloadCount;
+        }
+    }
+
+    if (!result.empty())
+    {
+        logDbMessage(
+            "Downloading Rate_Max_Info Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    // =========================================================
+    // Mark DownloadRateMaxInfo as fetched
+    // =========================================================
+    if (iCheckStatus == 1)
+    {
+        const std::string updateSql =
+            "UPDATE parameter_mst SET " +
+            fetchedColumn +
+            " = 1 "
+            "WHERE name = 'DownloadRateMaxInfo'";
+
+        const int updateRet = centraldb->SQLExecutNoneQuery(updateSql);
+
+        if (updateRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            logDbMessage("Set DownloadRateMaxInfo fetched = 1 failed.", "DB");
+        }
+    }
+
+    // Preserve original behavior
+    if (result.empty())
+    {
+        return -1;
+    }
+
+    return downloadCount;
+}
+
+int db::writeratemaxinfo2local(const rate_max_info_struct& rateMaxInfo)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO Rate_Max_Info "
+            "(Rate_Type, Day_Type, Start_Time, End_Time, Max_Fee) "
+            "VALUES (" +
+            rateMaxInfo.rate_type + ", '" +
+            rateMaxInfo.day_type + "', '" +
+            rateMaxInfo.start_time + "', '" +
+            rateMaxInfo.end_time + "', " +
+            rateMaxInfo.max_fee + ")";
+
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert Rate_Max_Info to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing Rate_Max_Info: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::downloadTR()
+{
+    const std::string filter =
+        "TRType = 1 "
+        "OR TRType = 2 "
+        "OR TRType = 6 "
+        "OR TRType = 11 "
+        "OR TRType = 12";
+
+    // =========================================================
+    // Get total TR count
+    // =========================================================
+    const std::string countSql =
+        "SELECT COUNT(*) "
+        "FROM TR_mst "
+        "WHERE " + filter;
+
+    std::vector<ReaderItem> countResult;
+
+    const int countRet = centraldb->SQLSelect(countSql, &countResult, false);
+
+    if (countRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download TR fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (countResult.empty())
+    {
+        logDbMessage("Unable to retrieve TR count.", "DB");
+
+        return -1;
+    }
+
+    logDbMessage("Total " + countResult.front().GetDataItem(0) + " TR type to be download.", "DB");
+
+    // =========================================================
+    // Download TR records
+    // =========================================================
+    const std::string selectSql =
+        "SELECT "
+        "TRType, "
+        "Line_no, "
+        "Enabled, "
+        "LineText, "
+        "LineVar, "
+        "LineFont, "
+        "LineAlign "
+        "FROM TR_mst "
+        "WHERE " + filter;
+
+    std::vector<ReaderItem> result;
+
+    const int selectRet = centraldb->SQLSelect(selectSql,  &result, true);
+
+    if (selectRet != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        logDbMessage("Download TR fail.", "DB");
+
+        return -1;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    int downloadCount = 0;
+
+    if (!result.empty())
+    {
+        logDbMessage("Downloading TR " + std::to_string(result.size()) + " Records: Started", "DB");
+
+        for (const auto& row : result)
+        {
+            const int trType = std::stoi(row.GetDataItem(0));
+            const int lineNo = std::stoi(row.GetDataItem(1));
+            const int enabled = std::stoi(row.GetDataItem(2));
+            const std::string lineText = row.GetDataItem(3);
+            const std::string lineVar = row.GetDataItem(4);
+            const int lineFont = std::stoi(row.GetDataItem(5));
+            const int lineAlign = std::stoi(row.GetDataItem(6));
+
+            const int writeRet =
+                writetr2local(trType, lineNo, enabled, lineText, lineVar, lineFont, lineAlign);
+
+            if (writeRet == 0)
+            {
+                ++downloadCount;
+
+                // Preserve original behavior
+                m_remote_db_err_flag.store(0);
+            }
+        }
+
+        logDbMessage(
+            "Downloading TR Records: End, "
+            "Total Record :" +
+                std::to_string(result.size()) +
+            " ,Downloaded Record :" +
+                std::to_string(downloadCount),
+            "DB");
+    }
+
+    return downloadCount;
+}
+
+int db::writetr2local(int trType, int lineNo, int enabled, const std::string& lineText, const std::string& lineVar, int lineFont, int lineAlign)
+{
+    try
+    {
+        // =====================================================
+        // Check whether TR record already exists
+        // =====================================================
+        const std::string checkSql =
+            "SELECT * FROM TR_mst "
+            "WHERE TRType = " +
+            std::to_string(trType) +
+            " AND Line_no = " +
+            std::to_string(lineNo);
+
+        std::vector<ReaderItem> result;
+
+        int ret = localdb->SQLSelect(checkSql, &result, false);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Update local TR failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        // =====================================================
+        // Existing record -> UPDATE
+        // =====================================================
+        if (!result.empty())
+        {
+            const std::string sqlStmt =
+                "UPDATE TR_mst SET "
+                "TRType = " + std::to_string(trType) + ", "
+                "Line_no = " + std::to_string(lineNo) + ", "
+                "Enabled = " + std::to_string(enabled) + ", "
+                "LineText = '" + lineText + "', "
+                "LineVar = '" + lineVar + "', "
+                "LineFont = " + std::to_string(lineFont) + ", "
+                "LineAlign = " + std::to_string(lineAlign) + " "
+                "WHERE TRType = " + std::to_string(trType) +
+                " AND Line_no = " + std::to_string(lineNo);
+
+            ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
+
+                logDbMessage("Update local TR failed.", "DB");
+
+                return ret;
+            }
+
+            m_local_db_err_flag = 0;
+
+            return ret;
+        }
+
+        // =====================================================
+        // New record -> INSERT
+        // =====================================================
+        const std::string sqlStmt =
+            "INSERT INTO TR_mst "
+            "(TRType, Line_no, Enabled, LineText, LineVar, "
+            "LineFont, LineAlign) "
+            "VALUES (" +
+            std::to_string(trType) + ", " +
+            std::to_string(lineNo) + ", " +
+            std::to_string(enabled) + ", '" +
+            lineText + "', '" +
+            lineVar + "', " +
+            std::to_string(lineFont) + ", " +
+            std::to_string(lineAlign) + ")";
+
+        ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Insert TR to local failed.", "DB");
+
+            return ret;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(std::string("Local DB error in writing TR record: ") + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+DBError db::loadZoneEntriesfromLocal()
+{
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    const int zoneId = data->gtStation.iZoneID;
+
+    // =========================================================
+    // Load entry stations for current zone
+    // =========================================================
+    const std::string sqlStmt =
+        "SELECT StationID "
+        "FROM Station_Setup "
+        "WHERE StationType = 1 "
+        "AND ZoneID = '" +
+        std::to_string(zoneId) + "'";
+
+    std::vector<ReaderItem> result;
+
+    const int ret = localdb->SQLSelect(sqlStmt, &result, false);
+
+    if (ret != 0)
+    {
+        return iLocalFail;
+    }
+
+    if (result.empty())
+    {
+        return iNoData;
+    }
+
+    // =========================================================
+    // Build ZoneEntries
+    // =========================================================
+    std::string zoneEntries = ",";
+
+    for (const auto& row : result)
+    {
+        zoneEntries += row.GetDataItem(0) + ",";
+    }
+
+    // =========================================================
+    // Update Operation shared data
+    // =========================================================
+    auto paras = data->tParas;
+
+    paras.gsZoneEntries = zoneEntries;
+
+    OperationSharedDataUpdate update;
+    update.tParas = std::move(paras);
+
+    if (!op->FnUpdateSharedData(std::move(update)))
+    {
+        logDbMessage("Unable to update Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    logDbMessage("Load ZoneEntries from Local: " + zoneEntries, "DB");
+
+    return iDBSuccess;
+}
+
+DBError db::loadstationsetup()
+{
+    try
+    {
+        auto* op = operation::getInstance();
+
+        const auto data = op->FnGetSharedData();
+
+        if (!data)
+        {
+            logDbMessage("Unable to get Operation shared data.", "DB");
+
+            return iLocalFail;
+        }
+
+        const int stationId = data->gtStation.iSID;
+
+        // =========================================================
+        // Load station setup from Local DB
+        // =========================================================
+        const std::string sqlStmt =
+            "SELECT * FROM Station_Setup "
+            "WHERE StationId = '" +
+            std::to_string(stationId) + "'";
+
+        std::vector<ReaderItem> result;
+
+        const int ret = localdb->SQLSelect(sqlStmt, &result, false);
+
+        if (ret != 0)
+        {
+            logDbMessage("Get station setup fail.", "DB");
+
+            return iLocalFail;
+        }
+
+        if (result.empty())
+        {
+            return iNoData;
+        }
+
+        const auto& row = result.front();
+
+        // =========================================================
+        // Update station configuration
+        // =========================================================
+        auto station = data->gtStation;
+
+        station.iSID = std::stoi(row.GetDataItem(0));
+        station.sName = row.GetDataItem(1);
+
+        switch (std::stoi(row.GetDataItem(2)))
+        {
+            case 1:
+                station.iType = tientry;
+                break;
+
+            case 2:
+                station.iType = tiExit;
+                break;
+
+            default:
+                break;
+        }
+
+        station.iStatus = std::stoi(row.GetDataItem(3));
+        station.sPCName = row.GetDataItem(4);
+        station.iCHUPort = std::stoi(row.GetDataItem(5));
+        station.iAntID = std::stoi(row.GetDataItem(6));
+        station.iZoneID = std::stoi(row.GetDataItem(7));
+        station.iIsVirtual = std::stoi(row.GetDataItem(8));
+
+        switch (std::stoi(row.GetDataItem(9)))
+        {
+            case 0:
+                station.iSubType = iNormal;
+                break;
+
+            case 1:
+                station.iSubType = iXwithVENoPay;
+                break;
+
+            case 2:
+                station.iSubType = iXwithVEPay;
+                break;
+
+            default:
+                break;
+        }
+
+        station.iVirtualID = std::stoi(row.GetDataItem(10));
+
+        // =========================================================
+        // Mark station setup as loaded
+        // =========================================================
+        auto process = data->tProcess;
+
+        process.gbloadedStnSetup = true;
+
+        // =========================================================
+        // Update Operation shared data
+        // =========================================================
+        OperationSharedDataUpdate update;
+
+        update.gtStation = std::move(station);
+        update.tProcess = std::move(process);
+
+        if (!op->FnUpdateSharedData(std::move(update)))
+        {
+            logDbMessage( "Unable to update Operation shared data.", "DB");
+
+            return iLocalFail;
+        }
+
+        return iDBSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage(std::string("loadstationsetup exception: ") + e.what(), "DB");
+
+        return iLocalFail;
+    }
+}
+
+DBError db::loadParam()
+{
+    // Preserve existing behavior
+    loadZoneEntriesfromLocal();
+    loadparamfromCentral();
+
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    auto paras = data->tParas;
+    auto process = data->tProcess;
+
+    // Preserve existing behavior
+    paras.giTariffFeeMode = 0;
+
+    // =========================================================
+    // Load parameters from Local DB
+    // =========================================================
+    std::vector<ReaderItem> result;
+
+    const int ret = localdb->SQLSelect("SELECT ParamName, ParamValue FROM Param_mst", &result, true);
+
+    if (ret != 0)
+    {
+        logDbMessage("Load parameter failed.", "DB");
+
+        return iLocalFail;
+    }
+
+    if (result.empty())
+    {
+        return iNoData;
+    }
+
+    // =========================================================
+    // Convert parameter name to lowercase
+    // =========================================================
+    const auto toLower =
+        [](std::string value)
+        {
+            std::transform(
+                value.begin(),
+                value.end(),
+                value.begin(),
+                [](unsigned char ch)
+                {
+                    return static_cast<char>(std::tolower(ch));
+                });
+
+            return value;
+        };
+
+    // =========================================================
+    // Process parameters
+    // =========================================================
+    for (const auto& row : result)
+    {
+        if (row.getDataSize() != 2)
+        {
+            continue;
+        }
+
+        const std::string key = row.GetDataItem(0);
+        const std::string value = row.GetDataItem(1);
+
+        const std::string normalizedKey = toLower(key);
+
+        try
+        {
+            if (normalizedKey == "commportantenna")
+            {
+                paras.giCommPortAntenna = std::stoi(value);
+            }
+            else if (normalizedKey == "commportlcsc")
+            {
+                paras.giCommPortLCSC = std::stoi(value);
+            }
+            else if (normalizedKey == "commportprinter")
+            {
+                paras.giCommPortPrinter = std::stoi(value);
+            }
+            else if (normalizedKey == "eps")
+            {
+                paras.giEPS = std::stoi(value);
+            }
+            else if (normalizedKey == "carparkcode")
+            {
+                paras.gscarparkcode = value;
+            }
+            else if (normalizedKey == "locallcsc")
+            {
+                paras.gsLocalLCSC = value;
+            }
+            else if (normalizedKey == "remotelcsc")
+            {
+                paras.gsRemoteLCSC = value;
+            }
+            else if (normalizedKey == "remotelcscback")
+            {
+                paras.gsRemoteLCSCBack = value;
+            }
+            else if (normalizedKey == "cscrcdffolder")
+            {
+                paras.gsCSCRcdfFolder = value;
+            }
+            else if (normalizedKey == "cscrcdackfolder")
+            {
+                paras.gsCSCRcdackFolder = value;
+            }
+            else if (normalizedKey == "cpoid")
+            {
+                paras.gsCPOID = value;
+            }
+            else if (normalizedKey == "cpid")
+            {
+                paras.gsCPID = value;
+            }
+            else if (normalizedKey == "commportled")
+            {
+                paras.giCommPortLED = std::stoi(value);
+            }
+            else if (normalizedKey == "hasmcycle")
+            {
+                paras.giHasMCycle = std::stoi(value);
+            }
+            else if (normalizedKey == "ticketsiteid")
+            {
+                paras.giTicketSiteID = std::stoi(value);
+            }
+            else if (normalizedKey == "datakeepdays")
+            {
+                paras.giDataKeepDays = std::stoi(value);
+            }
+            else if (normalizedKey == "barrierpulse")
+            {
+                paras.gsBarrierPulse = std::stoi(value);
+            }
+            else if (normalizedKey == "antmaxretry")
+            {
+                paras.giAntMaxRetry = std::stoi(value);
+            }
+            else if (normalizedKey == "antminoktimes")
+            {
+                paras.giAntMinOKTimes = std::stoi(value);
+            }
+            else if (normalizedKey == "antinqto")
+            {
+                paras.giAntInqTO = std::stoi(value);
+            }
+            else if (normalizedKey == "antiiurepetition")
+            {
+                paras.gbAntiIURepetition = (std::stoi(value) == 1);
+            }
+            else if (normalizedKey == "commportled401")
+            {
+                paras.giCommportLED401 = std::stoi(value);
+            }
+            else if (normalizedKey == "commportreader")
+            {
+                paras.giCommPortKDEReader = std::stoi(value);
+            }
+            else if (normalizedKey == "commportcpt")
+            {
+                paras.giCommPortUPOS = std::stoi(value);
+            }
+            else if (normalizedKey == "ishdbsite")
+            {
+                paras.giIsHDBSite = std::stoi(value);
+            }
+            else if (normalizedKey == "allowedholdertype")
+            {
+                paras.gsAllowedHolderType = value;
+            }
+            else if (normalizedKey == "ledmaxchar")
+            {
+                paras.giLEDMaxChar = std::stoi(value);
+            }
+            else if (normalizedKey == "alwaystryonline")
+            {
+                paras.gbAlwaysTryOnline = (std::stoi(value) == 1);
+            }
+            else if (normalizedKey == "autodebitnoentry")
+            {
+                paras.gbAutoDebitNoEntry = (std::stoi(value) == 1);
+            }
+            else if (normalizedKey == "loopahangtime")
+            {
+                paras.giLoopAHangTime = std::stoi(value);
+            }
+            else if (normalizedKey == "operationto")
+            {
+                paras.giOperationTO = std::stoi(value);
+            }
+            else if (normalizedKey == "fullaction")
+            {
+                paras.giFullAction = static_cast<eFullAction>(std::stoi(value));
+            }
+            else if (normalizedKey == "barrieropentoolongtime")
+            {
+                paras.giBarrierOpenTooLongTime = std::stoi(value);
+            }
+            else if (normalizedKey == "bitbarrierarmbroken")
+            {
+                paras.giBitBarrierArmBroken = std::stoi(value);
+            }
+            else if (normalizedKey == "mccontrolaction")
+            {
+                paras.giMCControlAction = std::stoi(value);
+            }
+            else if (normalizedKey == "logbackfolder")
+            {
+                paras.gsLogBackFolder = value;
+            }
+            else if (normalizedKey == "logkeepdays")
+            {
+                paras.giLogKeepDays = std::stoi(value);
+            }
+            else if (normalizedKey == "dbbackupfolder")
+            {
+                paras.gsDBBackupFolder = value;
+            }
+            else if (normalizedKey == "maxsendofflineno")
+            {
+                paras.giMaxSendOfflineNo = std::stoi(value);
+            }
+            else if (normalizedKey == "maxlocaldbsize")
+            {
+                paras.glMaxLocalDBSize = std::stol(value);
+            }
+            else if (normalizedKey == "maxtransinterval")
+            {
+                paras.giMaxTransInterval = std::stol(value);
+            }
+            else if (normalizedKey == "noiuretry")
+            {
+                paras.giNoIURetry = std::stoi(value);
+            }
+            else if (normalizedKey == "maxdiffiu")
+            {
+                paras.giMaxDiffIU = std::stoi(value);
+            }
+            else if (normalizedKey == "lockbarrier")
+            {
+                paras.gbLockBarrier = (std::stoi(value) == 1);
+            }
+            else if (normalizedKey == "commportled2")
+            {
+                paras.giCommPortLED2 = std::stoi(value);
+            }
+            else if (normalizedKey == "chuip")
+            {
+                paras.gsCHUIP = value;
+            }
+            else if (normalizedKey == "site")
+            {
+                paras.gsSite = value;
+            }
+            else if (normalizedKey == "address")
+            {
+                paras.gsAddress = value;
+            }
+            else if (normalizedKey == "trytimes4ne")
+            {
+                paras.giTryTimes4NE = std::stoi(value);
+            }
+            else if (normalizedKey == "processreversedcmd")
+            {
+                paras.giProcessReversedCMD = std::stoi(value);
+            }
+            else if (normalizedKey == "hasthreewheelmc")
+            {
+                paras.giHasThreeWheelMC = std::stoi(value);
+            }
+            else if (normalizedKey == "maxdebitdays")
+            {
+                paras.giMaxDebitDays = std::stoi(value);
+            }
+            else if (normalizedKey == "firsthourmode")
+            {
+                paras.giFirstHourMode = std::stoi(value);
+            }
+            else if (normalizedKey == "peallowance")
+            {
+                paras.giPEAllowance = std::stoi(value);
+            }
+            else if (normalizedKey == "tarifffeemode")
+            {
+                paras.giTariffFeeMode = std::stoi(value);
+            }
+            else if (normalizedKey == "tariffgtmode")
+            {
+                paras.giTariffGTMode = std::stoi(value);
+            }
+            else if (normalizedKey == "hr2peallowance")
+            {
+                paras.giHr2PEAllowance = std::stoi(value);
+            }
+            else if (normalizedKey == "seasoncharge")
+            {
+                paras.giSeasonCharge = std::stoi(value);
+            }
+            else if (normalizedKey == "showseasonexpiredays")
+            {
+                paras.giShowSeasonExpireDays = std::stoi(value);
+            }
+            else if (normalizedKey == "showexpiredtime")
+            {
+                paras.giShowExpiredTime = std::stoi(value);
+            }
+            else if (normalizedKey == "mcycleperday")
+            {
+                paras.giMCyclePerDay = std::stoi(value);
+            }
+            else if (normalizedKey == "v3transtype")
+            {
+                paras.giV3TransType = std::stoi(value);
+            }
+            else if (normalizedKey == "v4transtype")
+            {
+                paras.giV4TransType = std::stoi(value);
+            }
+            else if (normalizedKey == "v5transtype")
+            {
+                paras.giV5TransType = std::stoi(value);
+            }
+            else if (normalizedKey == "firsthour")
+            {
+                paras.giFirstHour = std::stoi(value);
+            }
+            else if (normalizedKey == "hasholidayeve")
+            {
+                paras.giHasHolidayEve = std::stoi(value);
+            }
+            else if (normalizedKey == "hasredemption")
+            {
+                paras.gbHasRedemption = (std::stoi(value) == 1);
+            }
+            else if (normalizedKey == "company")
+            {
+                paras.gsCompany = value;
+            }
+            else if (normalizedKey == "gstno")
+            {
+                paras.gsGSTNo = value;
+            }
+            else if (normalizedKey == "tel")
+            {
+                paras.gsTel = value;
+            }
+            else if (normalizedKey == "zip")
+            {
+                paras.gsZIP = value;
+            }
+            else if (normalizedKey == "gstrate")
+            {
+                paras.gfGSTRate = std::stof(value) / 100.0F;
+
+                if (paras.gfGSTRate == 0.0F)
+                {
+                    paras.gfGSTRate = 0.09F;
+                }
+            }
+            else if (normalizedKey == "chucnto")
+            {
+                paras.giCHUCnTO = std::stof(value);
+            }
+            else if (normalizedKey == "hdrec")
+            {
+                paras.gsHdRec = value;
+            }
+            else if (normalizedKey == "hdtk")
+            {
+                paras.gsHdTk = value;
+            }
+            else if (normalizedKey == "needcard4complimentary")
+            {
+                paras.giNeedCard4Complimentary = std::stoi(value);
+            }
+            else if (normalizedKey == "exitticketredemption")
+            {
+                paras.giExitTicketRedemption = std::stoi(value);
+            }
+        }
+        catch (const std::invalid_argument& e)
+        {
+            logDbMessage(
+                "Invalid argument for key '" +
+                    key +
+                    "' with value '" +
+                    value +
+                    "': " +
+                    e.what(),
+                "DB");
+        }
+        catch (const std::out_of_range& e)
+        {
+            logDbMessage(
+                "Out of range for key '" +
+                    key +
+                    "' with value '" +
+                    value +
+                    "': " +
+                    e.what(),
+                "DB");
+        }
+        catch (const std::exception& e)
+        {
+            logDbMessage(
+                "Error processing key '" +
+                    key +
+                    "' with value '" +
+                    value +
+                    "': " +
+                    e.what(),
+                "DB");
+        }
+    }
+
+    // =========================================================
+    // Mark parameters as loaded
+    // =========================================================
+    process.gbloadedParam = true;
+
+    // =========================================================
+    // Update Operation shared data
+    // =========================================================
+    OperationSharedDataUpdate update;
+
+    update.tParas = std::move(paras);
+    update.tProcess = std::move(process);
+
+    if (!op->FnUpdateSharedData(std::move(update)))
+    {
+        logDbMessage("Unable to update Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    return iDBSuccess;
+}
+
+DBError db::loadparamfromCentral()
+{
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iCentralFail;
+    }
+
+    auto station = data->gtStation;
+
+    auto paras = data->tParas;
+
+    logDbMessage("Load parameter from Central DB.", "DB");
+
+    // =========================================================
+    // Load Group ID and Site ID
+    // =========================================================
+    std::vector<ReaderItem> siteResult;
+
+    const int siteRet = centraldb->SQLSelect("SELECT group_id, site_id FROM site_setup", &siteResult, true);
+
+    if (siteRet != 0)
+    {
+        return iCentralFail;
+    }
+
+    if (!siteResult.empty())
+    {
+        const auto& row = siteResult.front();
+
+        try
+        {
+            paras.giGroupID = std::stoi(row.GetDataItem(0));
+            paras.giSite = std::stoi(row.GetDataItem(1));
+        }
+        catch (const std::exception& e)
+        {
+            logDbMessage(std::string("Unable to parse Group/Site ID: ") + e.what(), "DB");
+
+            return iCentralFail;
+        }
+
+        logDbMessage("Load Group ID: " + std::to_string(paras.giGroupID), "DB");
+        logDbMessage("Load Site ID: " + std::to_string(paras.giSite), "DB");
+
+        OperationSharedDataUpdate update;
+        update.tParas = paras;
+
+        if (!op->FnUpdateSharedData(std::move(update)))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+
+            return iCentralFail;
+        }
+    }
+
+    // =========================================================
+    // Load Zone Entries and Total Lots
+    // =========================================================
+    const std::string zoneSql =
+        "SELECT entry_station, total_lots "
+        "FROM counter_definition "
+        "WHERE zone_id = " +
+        std::to_string(station.iZoneID);
+
+    std::vector<ReaderItem> zoneResult;
+
+    const int zoneRet = centraldb->SQLSelect(zoneSql, &zoneResult, true);
+
+    if (zoneRet != 0)
+    {
+        return iCentralFail;
+    }
+
+    if (!zoneResult.empty())
+    {
+        const auto& row = zoneResult.front();
+
+        paras.gsZoneEntries =  "," + row.GetDataItem(0) + ",";
+
+        try
+        {
+            station.iZoneLots = std::stoi(row.GetDataItem(1));
+        }
+        catch (const std::exception& e)
+        {
+            logDbMessage(std::string("Unable to parse Zone Total Lots: ") + e.what(), "DB");
+
+            return iCentralFail;
+        }
+
+        logDbMessage("Load zone for entry: " + paras.gsZoneEntries, "DB");
+        logDbMessage("Load Zone Total lots: " + std::to_string(station.iZoneLots), "DB");
+
+        OperationSharedDataUpdate update;
+
+        update.gtStation = station;
+        update.tParas = paras;
+
+        if (!op->FnUpdateSharedData(std::move(update)))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+
+            return iCentralFail;
+        }
+    }
+
+    // =========================================================
+    // Load last receipt number
+    // =========================================================
+    const std::string receiptSql =
+        "SELECT MAX(receipt_no) "
+        "FROM exit_trans "
+        "WHERE station_id = " +
+        std::to_string(station.iSID) +
+        " AND receipt_no <> ''";
+
+    std::vector<ReaderItem> receiptResult;
+
+    const int receiptRet = centraldb->SQLSelect(receiptSql, &receiptResult, true);
+
+    if (receiptRet != 0)
+    {
+        return iCentralFail;
+    }
+
+    if (receiptResult.empty())
+    {
+        logDbMessage("Load Last Receipt No: NULL", "DB");
+
+        return iNoData;
+    }
+
+    const std::string receiptNo = receiptResult.front().GetDataItem(0);
+
+    if (receiptNo.empty() ||
+        receiptNo == "NULL")
+    {
+        logDbMessage("Load Last Receipt No: NULL", "DB");
+
+        return iNoData;
+    }
+
+    // =========================================================
+    // Remove Station ID from receipt number
+    // =========================================================
+    const std::string stationId = std::to_string(station.iSID);
+
+    if (receiptNo.length() <= stationId.length())
+    {
+        logDbMessage("Invalid receipt number: " + receiptNo, "DB");
+
+        return iCentralFail;
+    }
+
+    const std::size_t serialLength = receiptNo.length() - stationId.length();
+    const std::string serialNo = receiptNo.substr(0, serialLength);
+
+    logDbMessage("Load Last Receipt No: " + serialNo, "DB");
+
+    try
+    {
+        const long lastSerialNo = std::stol(serialNo);
+
+        if (!updateOperationProcess(
+                [lastSerialNo](
+                    tProcess_Struct& process)
+                {
+                    process.glLastSerialNo = lastSerialNo;
+                }))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+
+            return iCentralFail;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage(std::string("Unable to parse Last Receipt No: ") + e.what(), "DB");
+
+        return iCentralFail;
+    }
+
+    return iDBSuccess;
+}
+
+DBError db::loadvehicletype()
+{
+    try
+    {
+        // =====================================================
+        // Load vehicle types from Local DB
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const int ret = localdb->SQLSelect("SELECT IUCode, TransType FROM Vehicle_type", &result, true);
+
+        if (ret != 0)
+        {
+            logDbMessage("Load Trans Type failed.", "DB");
+
+            return iLocalFail;
+        }
+
+        if (result.empty())
+        {
+            return iNoData;
+        }
+
+        // =====================================================
+        // Get Operation shared data
+        // =====================================================
+        auto* op = operation::getInstance();
+
+        const auto data = op->FnGetSharedData();
+
+        if (!data)
+        {
+            logDbMessage("Unable to get Operation shared data.", "DB");
+
+            return iLocalFail;
+        }
+
+        auto vehicleTypes = data->tVType;
+        auto process = data->tProcess;
+
+        // =====================================================
+        // Load vehicle types
+        // =====================================================
+        for (const auto& row : result)
+        {
+            if (row.getDataSize() != 2)
+            {
+                continue;
+            }
+
+            vehicleTypes.push_back(
+                {
+                    std::stoi(row.GetDataItem(0)),
+                    std::stoi(row.GetDataItem(1))
+                });
+        }
+
+        process.gbloadedVehtype = true;
+
+        // =====================================================
+        // Update Operation shared data
+        // =====================================================
+        OperationSharedDataUpdate update;
+
+        update.tVType = std::move(vehicleTypes);
+        update.tProcess = std::move(process);
+
+        if (!op->FnUpdateSharedData(std::move(update)))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+
+            return iLocalFail;
+        }
+
+        return iDBSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage(std::string("loadvehicletype exception: ") + e.what(), "DB");
+
+        return iLocalFail;
+    }
+}
+
+int db::FnGetVehicleType(const std::string& iuCode)
+{
+    constexpr int kDefaultVehicleType = 1;
+
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return kDefaultVehicleType;
+    }
+
+    try
+    {
+        const int iuCodeValue = std::stoi(iuCode);
+
+        for (const auto& item : data->tVType)
+        {
+            if (item.iIUCode == iuCodeValue)
+            {
+                return item.iType;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Invalid IUCode '" + iuCode + "': " + e.what(), "DB");
+    }
+
+    return kDefaultVehicleType;
+}
+
+DBError db::loadEntrymessage(const std::vector<ReaderItem>& selResult)
+{
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    if (selResult.empty())
+    {
+        return iNoData;
+    }
+
+    auto message = data->tMsg;
+    auto process = data->tProcess;
+
+    // =========================================================
+    // Message helpers
+    // =========================================================
+    const auto setDefaultMessage =
+        [](auto& target, const std::string& value)
+        {
+            target[0] = value;
+            target[1] = value;
+        };
+
+    const auto setLcdMessage =
+        [](auto& target, const std::string& value)
+        {
+            if (!value.empty() &&
+                boost::algorithm::to_lower_copy(value) != "null")
+            {
+                target[1] = value;
+            }
+        };
+
+    // =========================================================
+    // Process message records
+    // =========================================================
+    for (const auto& row : selResult)
+    {
+        if (row.getDataSize() != 2)
+        {
+            continue;
+        }
+
+        const std::string key = boost::algorithm::to_lower_copy(row.GetDataItem(0));
+
+        const std::string value = row.GetDataItem(1);
+
+        // =====================================================
+        // Default / LED messages
+        // =====================================================
+        if (key == "altdefaultled")
+        {
+            setDefaultMessage(message.Msg_AltDefaultLED, value);
+        }
+        else if (key == "altdefaultled2")
+        {
+            setDefaultMessage(message.Msg_AltDefaultLED2, value);
+        }
+        else if (key == "altdefaultled3")
+        {
+            setDefaultMessage(message.Msg_AltDefaultLED3, value);
+        }
+        else if (key == "altdefaultled4")
+        {
+            setDefaultMessage(message.Msg_AltDefaultLED4, value);
+        }
+        else if (key == "authorizedvehicle")
+        {
+            setDefaultMessage(message.Msg_authorizedvehicle, value);
+        }
+
+        // =====================================================
+        // Card Reading Error
+        // =====================================================
+        else if (key == "cardreadingerror")
+        {
+            setDefaultMessage(message.Msg_CardReadingError, value);
+        }
+        else if (key == "ccardreadingerror")
+        {
+            setLcdMessage(message.Msg_CardReadingError, value);
+        }
+
+        // =====================================================
+        // Card Taken
+        // =====================================================
+        else if (key == "cardtaken")
+        {
+            setDefaultMessage(message.Msg_CardTaken, value);
+        }
+        else if (key == "ccardtaken")
+        {
+            setLcdMessage(message.Msg_CardTaken, value);
+        }
+
+        // =====================================================
+        // Car Park
+        // =====================================================
+        else if (key == "carfullled")
+        {
+            setDefaultMessage(message.Msg_CarFullLED, value);
+        }
+        else if (key == "carparkfull2led")
+        {
+            setDefaultMessage(message.Msg_CarParkFull2LED, value);
+        }
+        else if (key == "dberror")
+        {
+            setDefaultMessage(message.Msg_DBError, value);
+        }
+
+        // =====================================================
+        // Default IU
+        // =====================================================
+        else if (key == "defaultiu")
+        {
+            setDefaultMessage(message.Msg_DefaultIU, value);
+        }
+        else if (key == "cdefaultiu")
+        {
+            setLcdMessage(message.Msg_DefaultIU, value);
+        }
+
+        // =====================================================
+        // Default LED
+        // =====================================================
+        else if (key == "defaultled")
+        {
+            setDefaultMessage(message.Msg_DefaultLED, value);
+        }
+        else if (key == "cdefaultled")
+        {
+            setLcdMessage(message.Msg_DefaultLED, value);
+        }
+        else if (key == "defaultled2")
+        {
+            setDefaultMessage(message.Msg_DefaultLED2, value);
+        }
+        else if (key == "cdefaultled2")
+        {
+            setLcdMessage(message.Msg_DefaultLED2, value);
+        }
+        else if (key == "defaultmsg2led")
+        {
+            setDefaultMessage(message.Msg_DefaultMsg2LED, value);
+        }
+        else if (key == "defaultmsgled")
+        {
+            setDefaultMessage(message.Msg_DefaultMsgLED, value);
+        }
+
+        // =====================================================
+        // Enhanced / Season Allowance
+        // =====================================================
+        else if (key == "eenhancedmcparking")
+        {
+            setDefaultMessage(message.Msg_EenhancedMCParking, value);
+        }
+        else if (key == "eseasonwithinallowance")
+        {
+            setDefaultMessage(message.Msg_ESeasonWithinAllowance, value);
+        }
+        else if (key == "ceseasonwithinallowance")
+        {
+            setLcdMessage(message.Msg_ESeasonWithinAllowance, value);
+        }
+        else if (key == "espt3parking")
+        {
+            setDefaultMessage(message.Msg_ESPT3Parking, value);
+        }
+        else if (key == "evipholderparking")
+        {
+            setDefaultMessage(message.Msg_EVIPHolderParking, value);
+        }
+
+        // =====================================================
+        // Expiring Season
+        // =====================================================
+        else if (key == "expiringseason")
+        {
+            setDefaultMessage(message.Msg_ExpiringSeason, value);
+        }
+        else if (key == "cexpiringseason")
+        {
+            setLcdMessage(message.Msg_ExpiringSeason, value);
+        }
+
+        // =====================================================
+        // Full
+        // =====================================================
+        else if (key == "fullled")
+        {
+            setDefaultMessage(message.Msg_FullLED, value);
+        }
+        else if (key == "cfullled")
+        {
+            setLcdMessage(message.Msg_FullLED, value);
+        }
+
+        // =====================================================
+        // Idle
+        // =====================================================
+        else if (key == "idle")
+        {
+            setDefaultMessage(message.Msg_Idle, value);
+        }
+        else if (key == "cidle")
+        {
+            setLcdMessage(message.Msg_Idle, value);
+        }
+
+        // =====================================================
+        // Insert Cashcard
+        // =====================================================
+        else if (key == "insertcashcard")
+        {
+            setDefaultMessage(message.Msg_InsertCashcard, value);
+        }
+        else if (key == "cinsertcashcard")
+        {
+            setLcdMessage(message.Msg_InsertCashcard, value);
+        }
+
+        // =====================================================
+        // IU Problem
+        // =====================================================
+        else if (key == "iuproblem")
+        {
+            setDefaultMessage(message.Msg_IUProblem, value);
+        }
+        else if (key == "ciuproblem")
+        {
+            setLcdMessage(message.Msg_IUProblem, value);
+        }
+
+        // =====================================================
+        // Lock Station
+        // =====================================================
+        else if (key == "lockstation")
+        {
+            setDefaultMessage(message.Msg_LockStation, value);
+        }
+        else if (key == "clockstation")
+        {
+            setLcdMessage(message.Msg_LockStation, value);
+        }
+
+        // =====================================================
+        // Loop A
+        // =====================================================
+        else if (key == "loopa")
+        {
+            setDefaultMessage(message.Msg_LoopA, value);
+        }
+        else if (key == "cloopa")
+        {
+            setLcdMessage(message.Msg_LoopA, value);
+        }
+
+        // =====================================================
+        // Loop A Full
+        // =====================================================
+        else if (key == "loopafull")
+        {
+            setDefaultMessage(message.Msg_LoopAFull, value);
+        }
+        else if (key == "cloopafull")
+        {
+            setLcdMessage(message.Msg_LoopAFull, value);
+        }
+
+        else if (key == "lorryfullled")
+        {
+            setDefaultMessage(message.Msg_LorryFullLED, value);
+        }
+        else if (key == "lotadjustmentmsg")
+        {
+            setDefaultMessage(message.Msg_LotAdjustmentMsg, value);
+        }
+
+        // =====================================================
+        // Low Balance
+        // =====================================================
+        else if (key == "lowbal")
+        {
+            setDefaultMessage(message.Msg_LowBal, value);
+        }
+        else if (key == "clowbal")
+        {
+            setLcdMessage(message.Msg_LowBal, value);
+        }
+
+        // =====================================================
+        // No IU
+        // =====================================================
+        else if (key == "noiu")
+        {
+            setDefaultMessage(message.Msg_NoIU, value);
+        }
+        else if (key == "cnoiu")
+        {
+            setLcdMessage(message.Msg_NoIU, value);
+        }
+
+        else if (key == "nonightparking2led")
+        {
+            setDefaultMessage(message.Msg_NoNightParking2LED, value);
+        }
+
+        // =====================================================
+        // Offline
+        // =====================================================
+        else if (key == "offline")
+        {
+            setDefaultMessage(message.Msg_Offline, value);
+        }
+        else if (key == "coffline")
+        {
+            setLcdMessage(message.Msg_Offline, value);
+        }
+
+        // =====================================================
+        // Printer Error
+        // =====================================================
+        else if (key == "printererror")
+        {
+            setDefaultMessage(message.Msg_PrinterError, value);
+        }
+        else if (key == "cprintererror")
+        {
+            setLcdMessage(message.Msg_PrinterError, value);
+        }
+
+        // =====================================================
+        // Printing Receipt
+        // =====================================================
+        else if (key == "printingreceipt")
+        {
+            setDefaultMessage(message.Msg_PrintingReceipt, value);
+        }
+        else if (key == "cprintingreceipt")
+        {
+            setLcdMessage(message.Msg_PrintingReceipt, value);
+        }
+
+        // =====================================================
+        // Processing
+        // =====================================================
+        else if (key == "processing")
+        {
+            setDefaultMessage(message.Msg_Processing, value);
+        }
+        else if (key == "cprocessing")
+        {
+            setLcdMessage(message.Msg_Processing, value);
+        }
+
+        // =====================================================
+        // Reader Comm Error
+        // =====================================================
+        else if (key == "readercommerror")
+        {
+            setDefaultMessage(message.Msg_ReaderCommError, value);
+        }
+        else if (key == "creadercommerror")
+        {
+            setLcdMessage(message.Msg_ReaderCommError, value);
+        }
+
+        // =====================================================
+        // Reader Error
+        // =====================================================
+        else if (key == "readererror")
+        {
+            setDefaultMessage(message.Msg_ReaderError, value);
+        }
+        else if (key == "creadererror")
+        {
+            setLcdMessage(message.Msg_ReaderError, value);
+        }
+
+        // =====================================================
+        // Same Last IU
+        // =====================================================
+        else if (key == "samelastiu")
+        {
+            setDefaultMessage(message.Msg_SameLastIU, value);
+        }
+        else if (key == "csamelastiu")
+        {
+            setLcdMessage(message.Msg_SameLastIU, value);
+        }
+
+        // =====================================================
+        // Scan Entry Ticket
+        // =====================================================
+        else if (key == "scanentryticket")
+        {
+            setDefaultMessage(message.Msg_ScanEntryTicket, value);
+        }
+        else if (key == "cscanentryticket")
+        {
+            setLcdMessage(message.Msg_ScanEntryTicket, value);
+        }
+
+        // =====================================================
+        // Scan Validation Ticket
+        // =====================================================
+        else if (key == "scanvalticket")
+        {
+            setDefaultMessage(message.Msg_ScanValTicket, value);
+        }
+        else if (key == "cscanvalticket")
+        {
+            setLcdMessage(message.Msg_ScanValTicket, value);
+        }
+
+        // =====================================================
+        // Season As Hourly
+        // =====================================================
+        else if (key == "seasonashourly")
+        {
+            setDefaultMessage(message.Msg_SeasonAsHourly, value);
+        }
+        else if (key == "cseasonashourly")
+        {
+            setLcdMessage(message.Msg_SeasonAsHourly, value);
+        }
+
+        // =====================================================
+        // Season Blocked
+        // =====================================================
+        else if (key == "seasonblocked")
+        {
+            setDefaultMessage(message.Msg_SeasonBlocked, value);
+        }
+        else if (key == "cseasonblocked")
+        {
+            setLcdMessage(message.Msg_SeasonBlocked, value);
+        }
+
+        // =====================================================
+        // Season Expired
+        // =====================================================
+        else if (key == "seasonexpired")
+        {
+            setDefaultMessage(message.Msg_SeasonExpired, value);
+        }
+        else if (key == "cseasonexpired")
+        {
+            setLcdMessage(message.Msg_SeasonExpired, value);
+        }
+
+        // =====================================================
+        // Season Invalid
+        // =====================================================
+        else if (key == "seasoninvalid")
+        {
+            setDefaultMessage(message.Msg_SeasonInvalid, value);
+        }
+        else if (key == "cseasoninvalid")
+        {
+            setLcdMessage(message.Msg_SeasonInvalid, value);
+        }
+
+        // =====================================================
+        // Season Multi Found
+        // =====================================================
+        else if (key == "seasonmultifound")
+        {
+            setDefaultMessage(message.Msg_SeasonMultiFound, value);
+        }
+        else if (key == "cseasonmultifound")
+        {
+            setLcdMessage(message.Msg_SeasonMultiFound, value);
+        }
+
+        // =====================================================
+        // Season Not Found
+        // =====================================================
+        else if (key == "seasonnotfound")
+        {
+            setDefaultMessage(message.Msg_SeasonNotFound, value);
+        }
+        else if (key == "cseasonnotfound")
+        {
+            setLcdMessage(message.Msg_SeasonNotFound, value);
+        }
+
+        // =====================================================
+        // Season Not Start
+        // =====================================================
+        else if (key == "seasonnotstart")
+        {
+            setDefaultMessage(message.Msg_SeasonNotStart, value);
+        }
+        else if (key == "cseasonnotstart")
+        {
+            setLcdMessage(message.Msg_SeasonNotStart, value);
+        }
+
+        // =====================================================
+        // Season Not Valid
+        // =====================================================
+        else if (key == "seasonnotvalid")
+        {
+            setDefaultMessage(message.Msg_SeasonNotValid, value);
+        }
+        else if (key == "cseasonnotvalid")
+        {
+            setLcdMessage(message.Msg_SeasonNotValid, value);
+        }
+
+        // =====================================================
+        // Season Only
+        // =====================================================
+        else if (key == "seasononly")
+        {
+            setDefaultMessage(message.Msg_SeasonOnly, value);
+        }
+        else if (key == "cseasononly")
+        {
+            setLcdMessage(message.Msg_SeasonOnly, value);
+        }
+
+        // =====================================================
+        // Season Passback
+        // =====================================================
+        else if (key == "seasonpassback")
+        {
+            setDefaultMessage(message.Msg_SeasonPassback, value);
+        }
+        else if (key == "cseasonpassback")
+        {
+            setLcdMessage(message.Msg_SeasonPassback, value);
+        }
+
+        // =====================================================
+        // Season Terminated
+        // =====================================================
+        else if (key == "seasonterminated")
+        {
+            setDefaultMessage(message.Msg_SeasonTerminated, value);
+        }
+        else if (key == "cseasonterminated")
+        {
+            setLcdMessage(message.Msg_SeasonTerminated, value);
+        }
+
+        // =====================================================
+        // System Error
+        // =====================================================
+        else if (key == "systemerror")
+        {
+            setDefaultMessage(message.Msg_SystemError, value);
+        }
+        else if (key == "csystemerror")
+        {
+            setLcdMessage(message.Msg_SystemError, value);
+        }
+
+        // =====================================================
+        // Valid Season
+        // =====================================================
+        else if (key == "validseason")
+        {
+            setDefaultMessage(message.Msg_ValidSeason, value);
+        }
+        else if (key == "cvalidseason")
+        {
+            setLcdMessage(message.Msg_ValidSeason, value);
+        }
+
+        // =====================================================
+        // VVIP
+        // =====================================================
+        else if (key == "vvip")
+        {
+            setDefaultMessage(message.Msg_VVIP, value);
+        }
+        else if (key == "cvvip")
+        {
+            setLcdMessage(message.Msg_VVIP, value);
+        }
+
+        // =====================================================
+        // Whole Day Parking
+        // =====================================================
+        else if (key == "wholedayparking")
+        {
+            setDefaultMessage(message.Msg_WholeDayParking, value);
+        }
+        else if (key == "cwholedayparking")
+        {
+            setLcdMessage(message.Msg_WholeDayParking, value);
+        }
+
+        // =====================================================
+        // With IU
+        // =====================================================
+        else if (key == "withiu")
+        {
+            setDefaultMessage(message.Msg_WithIU, value);
+        }
+        else if (key == "cwithiu")
+        {
+            setLcdMessage(message.Msg_WithIU, value);
+        }
+
+        // =====================================================
+        // Black List
+        // =====================================================
+        else if (key == "blacklist")
+        {
+            setDefaultMessage(message.MsgBlackList, value);
+        }
+        else if (key == "cblacklist")
+        {
+            setLcdMessage(message.MsgBlackList, value);
+        }
+
+        // =====================================================
+        // Enhanced Motorcycle Parking
+        // =====================================================
+        else if (key == "e1enhancedmcparking")
+        {
+            setDefaultMessage(message.Msg_E1enhancedMCParking, value);
+        }
+    }
+
+    // =========================================================
+    // Mark LED messages as loaded
+    // =========================================================
+    process.gbloadedLEDMsg = true;
+
+    // =========================================================
+    // Update Operation shared data
+    // =========================================================
+    OperationSharedDataUpdate update;
+
+    update.tMsg = std::move(message);
+    update.tProcess = std::move(process);
+
+    if (!op->FnUpdateSharedData(std::move(update)))
+    {
+        logDbMessage("Unable to update Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    return iDBSuccess;
+}
+
+DBError db::loadmessage()
+{
+    // =========================================================
+    // Load LED messages
+    // =========================================================
+    std::vector<ReaderItem> ledResult;
+
+    const int ledRet =
+        localdb->SQLSelect(
+            "SELECT msg_id, msg_body "
+            "FROM message_mst",
+            &ledResult,
+            true);
+
+    if (ledRet != 0)
+    {
+        logDbMessage("Load LED message failed.", "DB");
+
+        return iLocalFail;
+    }
+
+    const DBError ledLoadRet = loadEntrymessage(ledResult);
+
+    if (ledLoadRet != iDBSuccess)
+    {
+        return ledLoadRet;
+    }
+
+    // =========================================================
+    // Load LCD messages
+    // =========================================================
+    std::vector<ReaderItem> lcdResult;
+
+    const int lcdRet =
+        localdb->SQLSelect(
+            "SELECT msg_id, msg_body "
+            "FROM message_mst "
+            "WHERE m_status >= 10",
+            &lcdResult,
+            true);
+
+    if (lcdRet != 0)
+    {
+        logDbMessage("Load LCD message failed.", "DB");
+
+        return iLocalFail;
+    }
+
+    return loadEntrymessage(lcdResult);
+}
+
+DBError db::loadExitLcdAndLedMessage(const std::vector<ReaderItem>& selResult)
+{
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    if (selResult.empty())
+    {
+        return iNoData;
+    }
+
+    auto exitMessage = data->tExitMsg;
+    auto process = data->tProcess;
+
+    // Default message:
+    // Set both LED [0] and LCD [1].
+    const auto setDefaultMessage =
+        [](auto& target, const std::string& value)
+        {
+            target[0] = value;
+            target[1] = value;
+        };
+
+    // LCD override:
+    // Only update [1] if value is valid.
+    const auto setLcdMessage =
+        [](auto& target, const std::string& value)
+        {
+            if (!value.empty() &&
+                boost::algorithm::to_lower_copy(value) != "null")
+            {
+                target[1] = value;
+            }
+        };
+
+    // =========================================================
+    // Process Exit LED / LCD messages
+    // =========================================================
+    for (const auto& row : selResult)
+    {
+        if (row.getDataSize() != 2)
+        {
+            continue;
+        }
+
+        const std::string key = boost::algorithm::to_lower_copy(row.GetDataItem(0));
+        const std::string value = row.GetDataItem(1);
+
+        // =====================================================
+        // Black List
+        // =====================================================
+        if (key == "blacklist")
+        {
+            setDefaultMessage(exitMessage.MsgExit_BlackList, value);
+        }
+        else if (key == "cblacklist")
+        {
+            setLcdMessage(exitMessage.MsgExit_BlackList, value);
+        }
+
+        // =====================================================
+        // Card Error
+        // =====================================================
+        else if (key == "carderror")
+        {
+            setDefaultMessage(exitMessage.MsgExit_CardError, value);
+        }
+        else if (key == "ccarderror")
+        {
+            setLcdMessage(exitMessage.MsgExit_CardError, value);
+        }
+
+        // =====================================================
+        // Card In
+        // =====================================================
+        else if (key == "cardin")
+        {
+            setDefaultMessage(exitMessage.MsgExit_CardIn, value);
+        }
+        else if (key == "ccardin")
+        {
+            setLcdMessage(exitMessage.MsgExit_CardIn, value);
+        }
+
+        // =====================================================
+        // Complimentary To Validation
+        // =====================================================
+        else if (key == "comp2val")
+        {
+            setDefaultMessage(exitMessage.MsgExit_Comp2Val, value);
+        }
+        else if (key == "ccomp2val")
+        {
+            setLcdMessage(exitMessage.MsgExit_Comp2Val, value);
+        }
+
+        // =====================================================
+        // Complimentary Expired
+        // =====================================================
+        else if (key == "compexpired")
+        {
+            setDefaultMessage(exitMessage.MsgExit_CompExpired, value);
+        }
+        else if (key == "ccompexpired")
+        {
+            setLcdMessage(exitMessage.MsgExit_CompExpired, value);
+        }
+
+        // =====================================================
+        // Complimentary
+        // =====================================================
+        else if (key == "complimentary")
+        {
+            setDefaultMessage(exitMessage.MsgExit_Complimentary, value);
+        }
+        else if (key == "ccomplimentary")
+        {
+            setLcdMessage(exitMessage.MsgExit_Complimentary, value);
+        }
+
+        // =====================================================
+        // Debit Fail
+        // =====================================================
+        else if (key == "debitfail")
+        {
+            setDefaultMessage(exitMessage.MsgExit_DebitFail, value);
+        }
+        else if (key == "cdebitfail")
+        {
+            setLcdMessage(exitMessage.MsgExit_DebitFail, value);
+        }
+
+        // =====================================================
+        // Debit NAK
+        // =====================================================
+        else if (key == "debitnak")
+        {
+            setDefaultMessage(exitMessage.MsgExit_DebitNak, value);
+        }
+        else if (key == "cdebitnak")
+        {
+            setLcdMessage(exitMessage.MsgExit_DebitNak, value);
+        }
+
+        // =====================================================
+        // Entry Debit
+        // =====================================================
+        else if (key == "entrydebit")
+        {
+            setDefaultMessage(exitMessage.MsgExit_EntryDebit, value);
+        }
+        else if (key == "centrydebit")
+        {
+            setLcdMessage(exitMessage.MsgExit_EntryDebit, value);
+        }
+
+        // =====================================================
+        // Expired Card
+        // =====================================================
+        else if (key == "expcard")
+        {
+            setDefaultMessage(exitMessage.MsgExit_ExpCard, value);
+        }
+        else if (key == "cexpcard")
+        {
+            setLcdMessage(exitMessage.MsgExit_ExpCard, value);
+        }
+
+        // =====================================================
+        // Fleet Card
+        // =====================================================
+        else if (key == "fleetcard")
+        {
+            setDefaultMessage(exitMessage.MsgExit_FleetCard, value);
+        }
+        else if (key == "cfleetcard")
+        {
+            setLcdMessage(exitMessage.MsgExit_FleetCard, value);
+        }
+
+        // =====================================================
+        // Free Parking
+        // =====================================================
+        else if (key == "freeparking")
+        {
+            setDefaultMessage(exitMessage.MsgExit_FreeParking, value);
+        }
+        else if (key == "cfreeparking")
+        {
+            setLcdMessage(exitMessage.MsgExit_FreeParking, value);
+        }
+
+        // =====================================================
+        // Grace Period
+        // =====================================================
+        else if (key == "graceperiod")
+        {
+            setDefaultMessage(exitMessage.MsgExit_GracePeriod, value);
+        }
+        else if (key == "cgraceperiod")
+        {
+            setLcdMessage(exitMessage.MsgExit_GracePeriod, value);
+        }
+
+        // =====================================================
+        // Invalid Ticket
+        // =====================================================
+        else if (key == "invalidticket")
+        {
+            setDefaultMessage(exitMessage.MsgExit_InvalidTicket, value);
+        }
+        else if (key == "cinvalidticket")
+        {
+            setLcdMessage(exitMessage.MsgExit_InvalidTicket, value);
+        }
+
+        // =====================================================
+        // Wrong Ticket
+        // =====================================================
+        else if (key == "wrongticket")
+        {
+            setDefaultMessage(exitMessage.MsgExit_WrongTicket, value);
+        }
+        else if (key == "cwrongticket")
+        {
+            setLcdMessage(exitMessage.MsgExit_WrongTicket, value);
+        }
+
+        // =====================================================
+        // Redemption Expired
+        // =====================================================
+        else if (key == "redemptionexpired")
+        {
+            setDefaultMessage(exitMessage.MsgExit_RedemptionExpired, value);
+        }
+        else if (key == "credemptionexpired")
+        {
+            setLcdMessage(exitMessage.MsgExit_RedemptionExpired, value);
+        }
+
+        // =====================================================
+        // IU Problem
+        // =====================================================
+        else if (key == "iuproblem")
+        {
+            setDefaultMessage(exitMessage.MsgExit_IUProblem, value);
+        }
+        else if (key == "ciuproblem")
+        {
+            setLcdMessage(exitMessage.MsgExit_IUProblem, value);
+        }
+
+        // =====================================================
+        // Master Season
+        // =====================================================
+        else if (key == "masterseason")
+        {
+            setDefaultMessage(exitMessage.MsgExit_MasterSeason, value);
+        }
+        else if (key == "cmasterseason")
+        {
+            setLcdMessage(exitMessage.MsgExit_MasterSeason, value);
+        }
+
+        // =====================================================
+        // No Entry
+        // =====================================================
+        else if (key == "noentry")
+        {
+            setDefaultMessage(exitMessage.MsgExit_NoEntry, value);
+        }
+        else if (key == "cnoentry")
+        {
+            setLcdMessage(exitMessage.MsgExit_NoEntry, value);
+        }
+
+        // =====================================================
+        // Printer Error
+        // =====================================================
+        else if (key == "printererror")
+        {
+            setDefaultMessage(exitMessage.MsgExit_PrinterError, value);
+        }
+        else if (key == "cprintererror")
+        {
+            setLcdMessage(exitMessage.MsgExit_PrinterError, value);
+        }
+
+        // =====================================================
+        // Redemption Ticket
+        // =====================================================
+        else if (key == "redemptionticket")
+        {
+            setDefaultMessage(exitMessage.MsgExit_RedemptionTicket, value);
+        }
+        else if (key == "credemptionticket")
+        {
+            setLcdMessage(exitMessage.MsgExit_RedemptionTicket, value);
+        }
+
+        // =====================================================
+        // Season Blocked
+        // =====================================================
+        else if (key == "seasonblocked")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonBlocked, value);
+        }
+        else if (key == "cseasonblocked")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonBlocked, value);
+        }
+
+        // =====================================================
+        // Season Expired
+        // =====================================================
+        else if (key == "seasonexpired")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonExpired, value);
+        }
+        else if (key == "cseasonexpired")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonExpired, value);
+        }
+
+        // =====================================================
+        // Season Invalid
+        // =====================================================
+        else if (key == "seasoninvalid")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonInvalid, value);
+        }
+        else if (key == "cseasoninvalid")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonInvalid, value);
+        }
+
+        // =====================================================
+        // Season Not Start
+        // =====================================================
+        else if (key == "seasonnotstart")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonNotStart, value);
+        }
+        else if (key == "cseasonnotstart")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonNotStart, value);
+        }
+
+        // =====================================================
+        // Season Only
+        // =====================================================
+        else if (key == "seasononly")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonOnly, value);
+        }
+        else if (key == "cseasononly")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonOnly, value);
+        }
+
+        // =====================================================
+        // Season Passback
+        // =====================================================
+        else if (key == "seasonpassback")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonPassback, value);
+        }
+        else if (key == "cseasonpassback")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonPassback, value);
+        }
+
+        // =====================================================
+        // Season Registered No IU
+        // =====================================================
+        else if (key == "seasonregnoiu")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonRegNoIU, value);
+        }
+        else if (key == "cseasonregnoiu")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonRegNoIU, value);
+        }
+
+        // =====================================================
+        // Season Registered OK
+        // =====================================================
+        else if (key == "seasonregok")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonRegOK, value);
+        }
+        else if (key == "cseasonregok")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonRegOK, value);
+        }
+
+        // =====================================================
+        // Season Terminated
+        // =====================================================
+        else if (key == "seasonterminated")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SeasonTerminated, value);
+        }
+        else if (key == "cseasonterminated")
+        {
+            setLcdMessage(exitMessage.MsgExit_SeasonTerminated, value);
+        }
+
+        // =====================================================
+        // System Error
+        // =====================================================
+        else if (key == "systemerror")
+        {
+            setDefaultMessage(exitMessage.MsgExit_SystemError, value);
+        }
+        else if (key == "csystemerror" ||
+                 key == "csystemerrord")
+        {
+            setLcdMessage(exitMessage.MsgExit_SystemError, value);
+        }
+
+        // =====================================================
+        // Take Card
+        // =====================================================
+        else if (key == "takecard")
+        {
+            setDefaultMessage(exitMessage.MsgExit_TakeCard, value);
+        }
+        else if (key == "ctakecard")
+        {
+            setLcdMessage(exitMessage.MsgExit_TakeCard, value);
+        }
+
+        // =====================================================
+        // Ticket Expired
+        // =====================================================
+        else if (key == "ticketexpired")
+        {
+            setDefaultMessage(exitMessage.MsgExit_TicketExpired, value);
+        }
+        else if (key == "cticketexpired")
+        {
+            setLcdMessage(exitMessage.MsgExit_TicketExpired, value);
+        }
+
+        // =====================================================
+        // Ticket Not Found
+        // =====================================================
+        else if (key == "ticketnotfound")
+        {
+            setDefaultMessage(exitMessage.MsgExit_TicketNotFound, value);
+        }
+        else if (key == "cticketnotfound")
+        {
+            setLcdMessage(exitMessage.MsgExit_TicketNotFound, value);
+        }
+
+        // =====================================================
+        // Used Ticket
+        // =====================================================
+        else if (key == "usedticket")
+        {
+            setDefaultMessage(exitMessage.MsgExit_UsedTicket, value);
+        }
+        else if (key == "cusedticket")
+        {
+            setLcdMessage(exitMessage.MsgExit_UsedTicket, value);
+        }
+
+        // =====================================================
+        // Wrong Card
+        // =====================================================
+        else if (key == "wrongcard")
+        {
+            setDefaultMessage(exitMessage.MsgExit_WrongCard, value);
+        }
+        else if (key == "cwrongcard")
+        {
+            setLcdMessage(exitMessage.MsgExit_WrongCard, value);
+        }
+
+        // =====================================================
+        // X Card Again
+        // =====================================================
+        else if (key == "xcardagain")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XCardAgain, value);
+        }
+        else if (key == "cxcardagain")
+        {
+            setLcdMessage(exitMessage.MsgExit_XCardAgain, value);
+        }
+
+        // =====================================================
+        // X Card Taken
+        // =====================================================
+        else if (key == "xcardtaken")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XCardTaken, value);
+        }
+        else if (key == "cxcardtaken")
+        {
+            setLcdMessage(exitMessage.MsgExit_XCardTaken, value);
+        }
+
+        // =====================================================
+        // X Default IU
+        // =====================================================
+        else if (key == "xdefaultiu")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XDefaultIU, value);
+        }
+        else if (key == "cxdefaultiu")
+        {
+            setLcdMessage(exitMessage.MsgExit_XDefaultIU, value);
+        }
+
+        // =====================================================
+        // X Default LED
+        // =====================================================
+        else if (key == "xdefaultled")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XDefaultLED, value);
+        }
+        else if (key == "cxdefaultled")
+        {
+            setLcdMessage(exitMessage.MsgExit_XDefaultLED, value);
+        }
+
+        // =====================================================
+        // X Default LED 2
+        // =====================================================
+        else if (key == "xdefaultled2")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XDefaultLED2, value);
+        }
+        else if (key == "cxdefaultled2")
+        {
+            setLcdMessage(exitMessage.MsgExit_XDefaultLED2, value);
+        }
+
+        // =====================================================
+        // X Expiring Season
+        // =====================================================
+        else if (key == "xexpiringseason")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XExpiringSeason, value);
+        }
+        else if (key == "cxexpiringseason")
+        {
+            setLcdMessage(exitMessage.MsgExit_XExpiringSeason, value);
+        }
+
+        // =====================================================
+        // X Idle
+        // =====================================================
+        else if (key == "xidle")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XIdle, value);
+        }
+        else if (key == "cxidle")
+        {
+            setLcdMessage(exitMessage.MsgExit_XIdle, value);
+        }
+
+        // =====================================================
+        // X Loop A
+        // =====================================================
+        else if (key == "xloopa")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XLoopA, value);
+        }
+        else if (key == "cxloopa")
+        {
+            setLcdMessage(exitMessage.MsgExit_XLoopA, value);
+        }
+
+        // =====================================================
+        // X Low Balance
+        // =====================================================
+        else if (key == "xlowbal")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XLowBal, value);
+        }
+        else if (key == "cxlowbal")
+        {
+            setLcdMessage(exitMessage.MsgExit_XLowBal, value);
+        }
+
+        // =====================================================
+        // X No Card
+        // =====================================================
+        else if (key == "xnocard")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XNoCard, value);
+        }
+        else if (key == "cxnocard")
+        {
+            setLcdMessage(exitMessage.MsgExit_XNoCard, value);
+        }
+
+        // =====================================================
+        // X No CHU
+        // =====================================================
+        else if (key == "xnochu")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XNoCHU, value);
+        }
+        else if (key == "cxnochu")
+        {
+            setLcdMessage(exitMessage.MsgExit_XNoCHU, value);
+        }
+
+        // =====================================================
+        // X No IU
+        // =====================================================
+        else if (key == "xnoiu")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XNoIU, value);
+        }
+        else if (key == "cxnoiu")
+        {
+            setLcdMessage(exitMessage.MsgExit_XNoIU, value);
+        }
+
+        // =====================================================
+        // X Same Last IU
+        // =====================================================
+        else if (key == "xsamelastiu")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XSameLastIU, value);
+        }
+        else if (key == "cxsamelastiu")
+        {
+            setLcdMessage(exitMessage.MsgExit_XSameLastIU, value);
+        }
+
+        // =====================================================
+        // X Season Within Allowance
+        // =====================================================
+        else if (key == "xseasonwithinallowance")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XSeasonWithinAllowance, value);
+        }
+        else if (key == "cxseasonwithinallowance")
+        {
+            setLcdMessage(exitMessage.MsgExit_XSeasonWithinAllowance, value);
+        }
+
+        // =====================================================
+        // X Valid Season
+        // =====================================================
+        else if (key == "xvalidseason")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XValidSeason, value);
+        }
+        else if (key == "cxvalidseason")
+        {
+            setLcdMessage(exitMessage.MsgExit_XValidSeason, value);
+        }
+
+        // =====================================================
+        // Enhanced Motorcycle Parking
+        // =====================================================
+        else if (key == "x1enhancedmcparking")
+        {
+            setDefaultMessage(exitMessage.MsgExit_X1enhancedMCParking, value);
+        }
+        else if (key == "xenhancedmcparking")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XenhancedMCParking, value);
+        }
+        else if (key == "xspt3parking")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XSPT3Parking, value);
+        }
+        else if (key == "xvipholderparking")
+        {
+            setDefaultMessage(exitMessage.MsgExit_XVIPHolderParking, value);
+        }
+    }
+
+    // =========================================================
+    // Mark Exit messages as loaded
+    // =========================================================
+    process.gbloadedLEDExitMsg = true;
+
+    // =========================================================
+    // Update Operation shared data
+    // =========================================================
+    OperationSharedDataUpdate update;
+
+    update.tExitMsg = std::move(exitMessage);
+    update.tProcess = std::move(process);
+
+    if (!op->FnUpdateSharedData(std::move(update)))
+    {
+        logDbMessage("Unable to update Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    return iDBSuccess;
+}
+
+DBError db::loadExitmessage()
+{
+    // =========================================================
+    // Load Exit LED messages
+    // =========================================================
+    std::vector<ReaderItem> ledResult;
+
+    const int ledRet =
+        localdb->SQLSelect(
+            "SELECT msg_id, msg_body "
+            "FROM message_mst",
+            &ledResult,
+            true);
+
+    if (ledRet != 0)
+    {
+        logDbMessage("Load Exit LED message failed.", "DB");
+
+        return iLocalFail;
+    }
+
+    const DBError ledLoadRet = loadExitLcdAndLedMessage(ledResult);
+
+    if (ledLoadRet != iDBSuccess)
+    {
+        return ledLoadRet;
+    }
+
+    // =========================================================
+    // Load Exit LCD messages
+    // =========================================================
+    std::vector<ReaderItem> lcdResult;
+
+    const int lcdRet =
+        localdb->SQLSelect(
+            "SELECT msg_id, msg_body "
+            "FROM message_mst "
+            "WHERE m_status >= 10",
+            &lcdResult,
+            true);
+
+    if (lcdRet != 0)
+    {
+        logDbMessage("Load Exit LCD message failed.", "DB");
+
+        return iLocalFail;
+    }
+
+    return loadExitLcdAndLedMessage(lcdResult);
+}
+
+DBError db::loadTR(int iType)
+{
+    // Preserve existing behavior:
+    // TR type is currently forced to 2.
+    (void)iType;
+    constexpr int kTRType = 2;
+
+    // =========================================================
+    // Load Ticket / Receipt format from Local DB
+    // =========================================================
+    const std::string sqlStmt =
+        "SELECT LineText, LineVar, LineFont, LineAlign "
+        "FROM TR_mst "
+        "WHERE TRType = " +
+        std::to_string(kTRType) +
+        " AND Enabled = 1 "
+        "ORDER BY Line_no";
+
+    std::vector<ReaderItem> result;
+
+    const int ret = localdb->SQLSelect(sqlStmt, &result, true);
+
+    if (ret != 0)
+    {
+        logDbMessage("Load TR failed.", "DB");
+
+        return iLocalFail;
+    }
+
+    if (result.empty())
+    {
+        logDbMessage("No Ticket/Receipt to load.", "DB");
+
+        return iNoData;
+    }
+
+    // =========================================================
+    // Get Operation shared data
+    // =========================================================
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    auto trItems = data->tTR;
+
+    // =========================================================
+    // Load TR items
+    // =========================================================
+    int loadedCount = 0;
+
+    try
+    {
+        for (const auto& row : result)
+        {
+            if (row.getDataSize() < 4)
+            {
+                continue;
+            }
+
+            tTR_struc tr{};
+
+            tr.gsTR0 = row.GetDataItem(0);
+            tr.gsTR1 = row.GetDataItem(1);
+            tr.giTRF = std::stoi(row.GetDataItem(2));
+            tr.giTRA = std::stoi(row.GetDataItem(3));
+
+            trItems.push_back(std::move(tr));
+
+            ++loadedCount;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage(std::string("loadTR exception: ") + e.what(), "DB");
+
+        return iLocalFail;
+    }
+
+    // =========================================================
+    // Update Operation shared data
+    // =========================================================
+    OperationSharedDataUpdate update;
+
+    update.tTR = std::move(trItems);
+
+    if (!op->FnUpdateSharedData(std::move(update)))
+    {
+        logDbMessage("Unable to update Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    logDbMessage(
+        "Load " +
+            std::to_string(loadedCount) +
+            " Ticket/Receipt Format.",
+        "DB");
+
+    return iDBSuccess;
+}
+
+std::string db::GetPartialSeasonMsg(int transType)
+{
+    const std::string sqlStmt =
+        "SELECT Description "
+        "FROM trans_type "
+        "WHERE trans_type = " +
+        std::to_string(transType);
+
+    std::vector<ReaderItem> result;
+
+    const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
+
+    if (ret != 0)
+    {
+        return "";
+    }
+
+    if (result.empty())
+    {
+        return "";
+    }
+
+    return result.front().GetDataItem(0);
+}
+
+void db::moveOfflineTransToCentral()
+{
+    try
+    {
+        const auto data = operation::getInstance()->FnGetSharedData();
+
+        if (!data)
+        {
+            logDbMessage("Unable to get Operation shared data.", "DB");
+
+            return;
+        }
+
+        const auto stationType = data->gtStation.iType;
+
+        // Only Entry / Exit stations are supported
+        if (stationType != tientry &&
+            stationType != tiExit)
+        {
+            return;
+        }
+
+        // =====================================================
+        // Reset offline status
+        // =====================================================
+        if (!updateOperationProcess(
+                [](tProcess_Struct& process)
+                {
+                    process.offline_status = 0;
+                }))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+        }
+
+        // =====================================================
+        // Check pending offline transactions
+        // =====================================================
+        const bool isEntryStation = (stationType == tientry);
+        const std::string tableName = isEntryStation ? "Entry_Trans" : "Exit_Trans";
+        const Ctrl_Type ctrl = isEntryStation ? s_Entry : s_Exit;
+
+        const std::string countSql =
+            "SELECT count(iu_tk_no) FROM " +
+            tableName;
+
+        std::vector<ReaderItem> countResult;
+
+        const int countRet = localdb->SQLSelect(countSql, &countResult, false);
+
+        if (countRet != 0)
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage("Move offline data failed.", "DB");
+
+            return;
+        }
+
+        m_local_db_err_flag = 0;
+
+        if (countResult.empty())
+        {
+            return;
+        }
+
+        const int pendingCount = std::stoi(countResult.front().GetDataItem(0));
+
+        if (pendingCount <= 0)
+        {
+            return;
+        }
+
+        logDbMessage(
+            "Total " +
+                std::to_string(pendingCount) +
+                (isEntryStation
+                    ? " Entry trans to be uploaded."
+                    : " Exit trans to be uploaded."),
+            "DB");
+
+        if (!updateOperationProcess(
+                [](tProcess_Struct& process)
+                {
+                    process.offline_status = 1;
+                }))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+        }
+
+        // =====================================================
+        // Build transaction query
+        // =====================================================
+        std::string sqlStmt;
+
+        if (isEntryStation)
+        {
+            sqlStmt =
+                "SELECT "
+                "Station_ID, "
+                "Entry_Time, "
+                "iu_tk_No, "
+                "trans_type, "
+                "Status, "
+                "TK_SerialNo, "
+                "Card_Type, "
+                "card_no, "
+                "paid_amt, "
+                "parking_fee, "
+                "gst_amt, "
+                "lpn, "
+                "VCC "
+                "FROM Entry_Trans "
+                "ORDER BY Entry_Time DESC";
+        }
+        else
+        {
+            sqlStmt =
+                "SELECT "
+                "Station_ID, "
+                "Exit_Time, "
+                "iu_tk_No, "
+                "card_mc_no, "
+                "trans_type, "
+                "status, "
+                "parked_time, "
+                "Parking_Fee, "
+                "Paid_Amt, "
+                "Receipt_No, "
+                "Redeem_amt, "
+                "Redeem_time, "
+                "Redeem_no, "
+                "gst_amt, "
+                "chu_debit_code, "
+                "Card_Type, "
+                "Top_Up_Amt, "
+                "lpn, "
+                "Entry_ID, "
+                "entry_time, "
+                "VCC, "
+                "EEPDSerialNo, "
+                "EEPTransRoute, "
+                "EEPPaymentResult, "
+                "EEPPaymentTime "
+                "FROM Exit_Trans "
+                "ORDER BY Exit_Time DESC";
+        }
+
+        // =====================================================
+        // Load transactions from Local DB
+        // =====================================================
+        std::vector<ReaderItem> result;
+
+        const int selectRet = localdb->SQLSelect(sqlStmt, &result, true);
+
+        if (selectRet != 0)
+        {
+            m_local_db_err_flag = 1;
+            return;
+        }
+
+        m_local_db_err_flag = 0;
+
+        if (result.empty())
+        {
+            return;
+        }
+
+        logDbMessage("Uploading " + std::to_string(result.size()) + " records: Started", "DB");
+
+        // =====================================================
+        // Upload transactions
+        // =====================================================
+        for (const auto& row : result)
+        {
+            int centralRet = -1;
+
+            // =================================================
+            // Entry transaction
+            // =================================================
+            if (isEntryStation)
+            {
+                tEntryTrans_Struct entryTrans{};
+
+                entryTrans.esid = row.GetDataItem(0);
+                entryTrans.sEntryTime = row.GetDataItem(1);
+                entryTrans.sIUTKNo = row.GetDataItem(2);
+                entryTrans.iTransType = std::stoi(row.GetDataItem(3));
+                entryTrans.iStatus = std::stoi(row.GetDataItem(4));
+                entryTrans.sSerialNo = row.GetDataItem(5);
+                entryTrans.iCardType = std::stoi(row.GetDataItem(6));
+                entryTrans.sCardNo = row.GetDataItem(7);
+                entryTrans.sPaidAmt = std::stof(row.GetDataItem(8));
+                entryTrans.sFee = std::stof(row.GetDataItem(9));
+                entryTrans.sGSTAmt = std::stof(row.GetDataItem(10));
+                entryTrans.sLPN[0] = row.GetDataItem(11);
+                entryTrans.VCC = row.GetDataItem(12);
+
+                centralRet = insertTransToCentralEntryTransTmp(entryTrans);
+
+                // Central insert failed
+                if (centralRet != 0)
+                {
+                    m_remote_db_err_flag.store(1);
+                    continue;
+                }
+
+                // Central insert successful
+                const int deleteRet = deleteLocalTrans(entryTrans.sIUTKNo, entryTrans.sEntryTime, ctrl);
+
+                m_local_db_err_flag = (deleteRet == 0) ? 0 : 1;
+
+                m_remote_db_err_flag.store(0);
+            }
+
+            // =================================================
+            // Exit transaction
+            // =================================================
+            else
+            {
+                tExitTrans_Struct exitTrans{};
+
+                exitTrans.xsid = row.GetDataItem(0);
+                exitTrans.sExitTime = row.GetDataItem(1);
+                exitTrans.sIUNo = row.GetDataItem(2);
+                exitTrans.sCardNo = row.GetDataItem(3);
+                exitTrans.iTransType = std::stoi(row.GetDataItem(4));
+                exitTrans.iStatus = std::stoi(row.GetDataItem(5));
+                exitTrans.lParkedTime = std::stoi(row.GetDataItem(6));
+                exitTrans.sFee = std::stof(row.GetDataItem(7));
+                exitTrans.sPaidAmt = std::stof(row.GetDataItem(8));
+                exitTrans.sReceiptNo = row.GetDataItem(9);
+                exitTrans.sRedeemAmt = std::stof(row.GetDataItem(10));
+                exitTrans.iRedeemTime = std::stoi(row.GetDataItem(11));
+                exitTrans.sRedeemNo = row.GetDataItem(12);
+                exitTrans.sGSTAmt = std::stof(row.GetDataItem(13));
+                exitTrans.sCHUDebitCode = row.GetDataItem(14);
+                exitTrans.iCardType = std::stoi(row.GetDataItem(15));
+                exitTrans.sTopupAmt = std::stof(row.GetDataItem(16));
+                exitTrans.sLPN[0] = row.GetDataItem(17);
+                exitTrans.iEntryID = std::stoi(row.GetDataItem(18));
+
+                if (exitTrans.iEntryID < 1)
+                {
+                    exitTrans.sEntryTime = "";
+                }
+                else
+                {
+                    exitTrans.sEntryTime =  row.GetDataItem(19);
+                }
+
+                exitTrans.VCC = row.GetDataItem(20);
+                exitTrans.sDSerialNo = row.GetDataItem(21);
+                exitTrans.iEEPTransRoute = std::stoi(row.GetDataItem(22));
+                exitTrans.iEEPPaymentResult = std::stoi(row.GetDataItem(23));
+                exitTrans.sEEPpaymentTime = row.GetDataItem(24);
+
+                centralRet = insertTransToCentralExitTransTmp(exitTrans);
+
+                // Central insert failed
+                if (centralRet != 0)
+                {
+                    m_remote_db_err_flag.store(1);
+                    continue;
+                }
+
+                // -------------------------------------------------
+                // Preserve existing movement_trans handling
+                // -------------------------------------------------
+                DeleteBeforeInsertMT(exitTrans);
+                insert2movementtrans(exitTrans);
+
+                const int deleteRet = deleteLocalTrans(exitTrans.sIUNo, exitTrans.sExitTime, ctrl);
+
+                m_local_db_err_flag =(deleteRet == 0) ? 0 : 1;
+
+                m_remote_db_err_flag.store(0);
+            }
+        }
+
+        logDbMessage("Uploading trans records: End", "DB");
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("moveOfflineTransToCentral exception: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+    }
+}
+
+int db::insertTransToCentralEntryTransTmp(const tEntryTrans_Struct& entryTrans)
+{
+    constexpr const char* kTableName = "Entry_Trans_tmp";
+
+    // =========================================================
+    // Build INSERT statement
+    // =========================================================
+    const std::string sqlStmt =
+        "INSERT INTO " +
+        std::string(kTableName) +
+        " ("
+        "Station_ID, "
+        "Entry_Time, "
+        "IU_Tk_No, "
+        "trans_type, "
+        "status, "
+        "TK_Serialno, "
+        "Card_Type, "
+        "card_no, "
+        "paid_amt, "
+        "parking_fee, "
+        "VCC, "
+        "gst_amt, "
+        "lpn"
+        ") VALUES ('" +
+        entryTrans.esid +
+        "', convert(datetime, '" +
+        entryTrans.sEntryTime +
+        "', 120), '" +
+        entryTrans.sIUTKNo +
+        "', '" +
+        std::to_string(entryTrans.iTransType) +
+        "', '" +
+        std::to_string(entryTrans.iStatus) +
+        "', '" +
+        entryTrans.sSerialNo +
+        "', '" +
+        std::to_string(entryTrans.iCardType) +
+        "', '" +
+        entryTrans.sCardNo +
+        "', '" +
+        std::to_string(entryTrans.sPaidAmt) +
+        "', '" +
+        std::to_string(entryTrans.sFee) +
+        "', '" +
+        entryTrans.VCC +
+        "', '" +
+        std::to_string(entryTrans.sGSTAmt) +
+        "', '" +
+        entryTrans.sLPN[0] +
+        "')";
+
+    // =========================================================
+    // Insert into Central DB
+    // =========================================================
+    const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+    if (ret == 0)
+    {
+        logDbMessage(
+            "Central DB: INSERT IUNo=" +
+                entryTrans.sIUTKNo +
+                " and EntryTime=" +
+                entryTrans.sEntryTime +
+                " INTO " +
+                kTableName +
+                " : Success",
+            "DB");
+    }
+    else
+    {
+        logDbMessage(
+            "Central DB: INSERT IUNo=" +
+                entryTrans.sIUTKNo +
+                " and EntryTime=" +
+                entryTrans.sEntryTime +
+                " INTO " +
+                kTableName +
+                " : Fail",
+            "DB");
+    }
+
+    m_remote_db_err_flag.store(ret == 0 ? 0 : 1);
+
+    return ret;
+}
+
+int db::insertTransToCentralExitTransTmp(const tExitTrans_Struct& exitTrans)
+{
+    constexpr const char* kTableName = "Exit_Trans_tmp";
+
+    logDbMessage(
+        "Central DB: INSERT IUNo=" +
+            exitTrans.sIUNo +
+            " and ExitTime=" +
+            exitTrans.sExitTime +
+            " INTO " +
+            kTableName +
+            " : Started",
+        "DB");
+
+    // =========================================================
+    // Build INSERT statement
+    // =========================================================
+    const std::string sqlStmt =
+        "INSERT INTO " +
+        std::string(kTableName) +
+        " ("
+        "Station_ID, "
+        "Exit_Time, "
+        "IU_Tk_No, "
+        "card_mc_no, "
+        "trans_type, "
+        "parked_time, "
+        "parking_fee, "
+        "paid_amt, "
+        "receipt_no, "
+        "status, "
+        "redeem_amt, "
+        "redeem_time, "
+        "redeem_no, "
+        "gst_amt, "
+        "chu_debit_code, "
+        "card_type, "
+        "top_up_amt, "
+        "lpn, "
+        "VCC, "
+        "EEPDSerialNo, "
+        "EEPTransRoute, "
+        "EEPPaymentResult, "
+        "EEPPaymentTime"
+        ") VALUES ('" +
+        exitTrans.xsid +
+        "', convert(datetime, '" +
+        exitTrans.sExitTime +
+        "', 120), '" +
+        exitTrans.sIUNo +
+        "', '" +
+        exitTrans.sCardNo +
+        "', '" +
+        std::to_string(exitTrans.iTransType) +
+        "', '" +
+        std::to_string(exitTrans.lParkedTime) +
+        "', '" +
+        std::to_string(exitTrans.sFee) +
+        "', '" +
+        std::to_string(exitTrans.sPaidAmt) +
+        "', '" +
+        exitTrans.sReceiptNo +
+        "', '" +
+        std::to_string(exitTrans.iStatus) +
+        "', '" +
+        std::to_string(exitTrans.sRedeemAmt) +
+        "', '" +
+        std::to_string(exitTrans.iRedeemTime) +
+        "', '" +
+        exitTrans.sRedeemNo +
+        "', '" +
+        std::to_string(exitTrans.sGSTAmt) +
+        "', '" +
+        exitTrans.sCHUDebitCode +
+        "', '" +
+        std::to_string(exitTrans.iCardType) +
+        "', '" +
+        std::to_string(exitTrans.sTopupAmt) +
+        "', '" +
+        exitTrans.sLPN[0] +
+        "', '" +
+        exitTrans.VCC +
+        "', '" +
+        exitTrans.sDSerialNo +
+        "', '" +
+        std::to_string(exitTrans.iEEPTransRoute) +
+        "', '" +
+        std::to_string(exitTrans.iEEPPaymentResult) +
+        "', convert(datetime, '" +
+        exitTrans.sEEPpaymentTime +
+        "', 120))";
+
+    // =========================================================
+    // Insert into Central DB
+    // =========================================================
+    const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+    if (ret == 0)
+    {
+        logDbMessage(
+            "Central DB: INSERT IUNo=" +
+                exitTrans.sIUNo +
+                " and ExitTime=" +
+                exitTrans.sExitTime +
+                " INTO " +
+                kTableName +
+                " : Success",
+            "DB");
+    }
+    else
+    {
+        logDbMessage(
+            "Central DB: INSERT IUNo=" +
+                exitTrans.sIUNo +
+                " and ExitTime=" +
+                exitTrans.sExitTime +
+                " INTO " +
+                kTableName +
+                " : Fail",
+            "DB");
+    }
+
+    m_remote_db_err_flag.store(ret == 0 ? 0 : 1);
+
+    return ret;
+}
+
+int db::deleteLocalTrans(const std::string& iuNo, const std::string& transTime, Ctrl_Type ctrl)
+{
+    std::string tableName;
+    std::string timeColumn;
+
+    // =========================================================
+    // Determine table and transaction time column
+    // =========================================================
+    switch (ctrl)
+    {
+        case s_Entry:
+            tableName = "Entry_Trans";
+            timeColumn = "Entry_Time";
+            break;
+
+        case s_Exit:
+            tableName = "Exit_Trans";
+            timeColumn = "exit_time";
+            break;
+
+        default:
+            logDbMessage("deleteLocalTrans: Invalid Ctrl_Type.", "DB");
+
+            m_local_db_err_flag = 1;
+            return -1;
+    }
+
+    try
+    {
+        // =====================================================
+        // Build DELETE statement
+        // =====================================================
+        const std::string sqlStmt =
+            "DELETE FROM " +
+            tableName +
+            " WHERE iu_tk_no = '" +
+            iuNo +
+            "' AND " +
+            timeColumn +
+            " = '" +
+            transTime +
+            "'";
+
+        if (ctrl == s_Exit)
+        {
+            logDbMessage(
+                "Local DB: Delete IUNo=" +
+                    iuNo +
+                    " AND TrxTime=" +
+                    transTime +
+                    " From " +
+                    tableName +
+                    ": Started",
+                "DB");
+        }
+
+        // =====================================================
+        // Delete Local transaction
+        // =====================================================
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret == 0)
+        {
+            m_local_db_err_flag = 0;
+
+            logDbMessage(
+                "Local DB: Delete IUNo=" +
+                    iuNo +
+                    " AND TrxTime=" +
+                    transTime +
+                    " From " +
+                    tableName +
+                    ": Success",
+                "DB");
+        }
+        else
+        {
+            m_local_db_err_flag = 1;
+
+            logDbMessage(
+                "Local DB: Delete IUNo=" +
+                    iuNo +
+                    " AND TrxTime=" +
+                    transTime +
+                    " From " +
+                    tableName +
+                    ": Fail",
+                "DB");
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        m_local_db_err_flag = 1;
+
+        logDbMessage(
+            "Local DB: Delete IUNo=" +
+                iuNo +
+                " AND TrxTime=" +
+                transTime +
+                " From " +
+                tableName +
+                ": Fail",
+            "DB");
+
+        logDbMessage("Local DB: deleteLocalTrans error: " + std::string(e.what()), "DB");
+
+        return -1;
+    }
+}
+
+int db::clearseason()
+{
+    constexpr const char* kTableName = "season_mst";
+
+    const std::string sqlStmt = "TRUNCATE TABLE " + std::string(kTableName);
+
+    try
+    {
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        m_local_db_err_flag = (ret == 0) ? 0 : 1;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("DB: Local DB error in clearing " + std::string(kTableName) + ": " + e.what(), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return -1;
+    }
+}
+
+int db::IsBlackListIU(const std::string& iuNo)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "SELECT type "
+            "FROM BlackList "
+            "WHERE status = 0 "
+            "AND CAN = '" +
+            iuNo +
+            "'";
+
+        std::vector<ReaderItem> result;
+
+        const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
+
+        if (ret != 0)
+        {
+            return -1;
+        }
+
+        if (result.empty())
+        {
+            return -1;
+        }
+
+        return std::stoi(result.front().GetDataItem(0));
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("IsBlackListIU exception for IU '" + iuNo + "': " + e.what(), "DB");
+
+        return -1;
+    }
+}
+
+int db::AddRemoteControl(const std::string& stationId, const std::string& action, const std::string& remarks)
+{
+    constexpr const char* kTableName = "remote_control_history";
+
+    try
+    {
+        // =====================================================
+        // Build INSERT statement
+        // =====================================================
+        const std::string sqlStmt =
+            "INSERT INTO " +
+            std::string(kTableName) +
+            " ("
+            "station_id, "
+            "action_dt, "
+            "action_name, "
+            "operator, "
+            "remarks"
+            ") VALUES ('" +
+            stationId +
+            "', GETDATE(), '" +
+            action +
+            "', 'auto', '" +
+            remarks +
+            "')";
+
+        // =====================================================
+        // Insert into Central DB
+        // =====================================================
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret == 0)
+        {
+            logDbMessage("Success insert: " + action, "DB");
+
+            m_remote_db_err_flag.store(0);
+        }
+        else
+        {
+            logDbMessage("Fail to insert: " + action, "DB");
+
+            m_remote_db_err_flag.store(1);
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("AddRemoteControl exception: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
+}
+
+int db::AddSysEvent(const std::string& event, int eventType, std::string occurTime)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const std::string stationId = std::to_string(data->gtStation.iSID);
+
+    if (occurTime.empty())
+    {
+        occurTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+    }
+
+    try
+    {
+        std::string sqlStmt;
+
+        // =====================================================
+        // Build INSERT statement
+        // =====================================================
+        if (eventType > 0)
+        {
+            sqlStmt =
+                "INSERT INTO sys_event_log "
+                "(station_id, event, event_type, event_time) "
+                "VALUES ('" +
+                stationId +
+                "', '" +
+                event +
+                "', " +
+                std::to_string(eventType) +
+                ", '" +
+                occurTime +
+                "')";
+        }
+        else
+        {
+            sqlStmt =
+                "INSERT INTO sys_event_log "
+                "(station_id, event) "
+                "VALUES ('" +
+                stationId +
+                "', '" +
+                event +
+                "')";
+        }
+
+        // =====================================================
+        // Insert into Central DB
+        // =====================================================
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret == 0)
+        {
+            logDbMessage("Success insert sys event log: " + event, "DB");
+
+            m_remote_db_err_flag.store(0);
+        }
+        else
+        {
+            logDbMessage("Fail to insert sys event log: " + event, "DB");
+
+            m_remote_db_err_flag.store(1);
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("AddSysEvent exception: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
+}
+
+int db::UpdateSysEvent(const std::string& event, int eventType, const std::string& occurTime)
+{
+    (void)event;
+
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const std::string stationId = std::to_string(data->gtStation.iSID);
+
+    try
+    {
+        // =====================================================
+        // Build UPDATE statement
+        // =====================================================
+        const std::string sqlStmt =
+            "UPDATE sys_event_log "
+            "SET recoved_time = '" +
+            occurTime +
+            "' "
+            "WHERE station_id = " +
+            stationId +
+            " AND event_type = " +
+            std::to_string(eventType) +
+            " AND recoved_time IS NULL";
+
+        // =====================================================
+        // Update Central DB
+        // =====================================================
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret == 0)
+        {
+            m_remote_db_err_flag.store(0);
+
+            if (centraldb->NumberOfRowsAffected > 0)
+            {
+                logDbMessage("Success update recovered time.", "DB");
+            }
+            else
+            {
+                logDbMessage("No event found for recovered time update.", "DB");
+            }
+        }
+        else
+        {
+            logDbMessage("Fail to update event recovered time.", "DB");
+
+            m_remote_db_err_flag.store(1);
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("UpdateSysEvent exception: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
+}
+
+bool db::HasAlertNotification()
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return true;
+    }
+
+    const std::string stationId = std::to_string(data->gtStation.iSID);
+
+    try
+    {
+        const std::string sqlStmt =
+            "SELECT * "
+            "FROM sys_event_log "
+            "WHERE recoved_time IS NULL "
+            "AND station_id = " +
+            stationId;
+
+        std::vector<ReaderItem> result;
+
+        const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
+
+        if (ret != 0)
+        {
+            return true;
+        }
+
+        return !result.empty();
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("HasAlertNotification exception: " + std::string(e.what()), "DB");
+
+        return true;
+    }
+}
+
+int db::FnGetDatabaseErrorFlag() const
+{
+    return m_remote_db_err_flag.load();
+}
+
+int db::HouseKeeping()
+{
+    // =========================================================
+    // Clear expired season records
+    // =========================================================
+    clearexpiredseason();
+
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const auto stationType = data->gtStation.iType;
+    const int dataKeepHours = data->tParas.giDataKeepDays * 24;
+
+    // =========================================================
+    // Local housekeeping helper
+    // =========================================================
+    const auto executeHouseKeeping =
+        [this](
+            const std::string& sqlStmt,
+            const std::string& tableName)
+        {
+            try
+            {
+                const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+                m_local_db_err_flag = (ret == 0) ? 0 : 1;
+
+                return ret;
+            }
+            catch (const std::exception& e)
+            {
+                logDbMessage(
+                    "DB: Local DB error in housekeeping(" +
+                        tableName +
+                        "): " +
+                        e.what(),
+                    "DB");
+
+                m_local_db_err_flag = 1;
+
+                return -1;
+            }
+        };
+
+    // =========================================================
+    // Entry station housekeeping
+    // =========================================================
+    if (stationType == tientry)
+    {
+        const std::string sqlStmt =
+            "DELETE FROM Entry_Trans "
+            "WHERE send_status = true "
+            "OR TIMESTAMPDIFF(HOUR, entry_time, NOW()) >= " +
+            std::to_string(dataKeepHours);
+
+        executeHouseKeeping(sqlStmt, "Entry_Trans");
+
+        return 0;
+    }
+
+    // =========================================================
+    // Exit station housekeeping
+    // =========================================================
+    {
+        const std::string sqlStmt =
+            "DELETE FROM Exit_Trans "
+            "WHERE send_status = true "
+            "OR TIMESTAMPDIFF(HOUR, exit_time, NOW()) >= " +
+            std::to_string(dataKeepHours);
+
+        executeHouseKeeping(sqlStmt, "Exit_Trans");
+    }
+
+    // =========================================================
+    // Clear old unmatched Entry transactions at Exit station
+    // =========================================================
+    {
+        const std::string sqlStmt =
+            "DELETE FROM Entry_Trans "
+            "WHERE TIMESTAMPDIFF(HOUR, entry_time, NOW()) >= " +
+            std::to_string(dataKeepHours);
+
+        executeHouseKeeping(sqlStmt, "Entry_Trans");
+    }
+
+    return 0;
+}
+
+int db::clearexpiredseason()
+{
+    const std::string sqlStmt =
+        "DELETE FROM season_mst "
+        "WHERE TIMESTAMPDIFF(HOUR, date_to, NOW()) >= 30 * 24";
+
+    try
+    {
+        const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+        m_local_db_err_flag = (ret == 0) ? 0 : 1;
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("DB: Local DB error in clearing expired season: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return -1;
+    }
+}
+
+int db::updateEntryTrans(const std::string& lpn, const std::string& transId)
+{
+    try
+    {
+        // =====================================================
+        // Try Entry_trans_tmp first
+        // =====================================================
+        const std::string tmpSql =
+            "UPDATE Entry_trans_tmp "
+            "SET lpn = '" +
+            lpn +
+            "' "
+            "WHERE entry_lpn_sid = '" +
+            transId +
+            "'";
+
+        int ret = centraldb->SQLExecutNoneQuery(tmpSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update LPN to Entry_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update LPN to Entry_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(0);
+
+            return ret;
+        }
+
+        // =====================================================
+        // Not found in tmp, try Entry_trans
+        // =====================================================
+        const std::string entrySql =
+            "UPDATE Entry_trans "
+            "SET lpn = '" +
+            lpn +
+            "' "
+            "WHERE entry_lpn_sid = '" +
+            transId +
+            "'";
+
+        ret = centraldb->SQLExecutNoneQuery(entrySql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update LPN to Entry_trans.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update LPN to Entry_trans.", "DB");
+        }
+        else
+        {
+            logDbMessage("No TransID found for LPN update.", "DB");
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("updateEntryTrans exception: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
+}
+
+int db::updateExitTrans(const std::string& lpn, const std::string& transId)
+{
+    try
+    {
+        // =====================================================
+        // Try Exit_trans_tmp first
+        // =====================================================
+        const std::string tmpSql =
+            "UPDATE Exit_trans_tmp "
+            "SET lpn = '" +
+            lpn +
+            "' "
+            "WHERE exit_lpn_sid = '" +
+            transId +
+            "'";
+
+        int ret = centraldb->SQLExecutNoneQuery(tmpSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update LPN to Exit_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update LPN to Exit_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(0);
+
+            return ret;
+        }
+
+        // =====================================================
+        // Not found in tmp, try Exit_trans
+        // =====================================================
+        const std::string exitSql =
+            "UPDATE Exit_trans "
+            "SET lpn = '" +
+            lpn +
+            "' "
+            "WHERE exit_lpn_sid = '" +
+            transId +
+            "'";
+
+        ret = centraldb->SQLExecutNoneQuery(exitSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update LPN to Exit_trans.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update LPN to Exit_trans.", "DB");
+        }
+        else
+        {
+            logDbMessage("No TransID found for LPN update.", "DB");
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("updateExitTrans exception: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
+}
+
+DBError db::insertexittrans(tExitTrans_Struct& exitTrans)
+{
+    auto* op = operation::getInstance();
+
+    const auto data = op->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return iLocalFail;
+    }
+
+    const std::string transId = data->tProcess.gsTransID;
+
+    // =========================================================
+    // Format transaction amounts
+    // =========================================================
+    exitTrans.sFee = op->GfeeFormat(exitTrans.sFee);
+    exitTrans.sPaidAmt = op->GfeeFormat(exitTrans.sPaidAmt);
+    exitTrans.sRedeemAmt = op->GfeeFormat(exitTrans.sRedeemAmt);
+    exitTrans.sGSTAmt = op->GfeeFormat(exitTrans.sGSTAmt);
+
+    bool useLocalDb = false;
+
+    // =========================================================
+    // Check / reconnect Central DB
+    // =========================================================
+    if (centraldb->IsConnected() != -1)
+    {
+        centraldb->Disconnect();
+
+        if (centraldb->Connect() != 0)
+        {
+            logDbMessage("Unable to connect to Central DB while inserting exit_trans table.", "DB");
+
+            if (!updateOperationProcess(
+                    [](tProcess_Struct& process)
+                    {
+                        process.giSystemOnline = 1;
+                    }))
+            {
+                logDbMessage("Unable to update Operation shared data.", "DB");
+            }
+
+            useLocalDb = true;
+        }
+    }
+
+    // =========================================================
+    // Insert into Central DB
+    // =========================================================
+    if (!useLocalDb)
+    {
+        if (!updateOperationProcess(
+                [](tProcess_Struct& process)
+                {
+                    process.giSystemOnline = 0;
+                }))
+        {
+            logDbMessage(
+                "Unable to update Operation shared data.",
+                "DB");
+        }
+
+        // Central DB parked_time is SMALLINT
+        if (exitTrans.lParkedTime >= 32000)
+        {
+            exitTrans.lParkedTime = 32000;
+        }
+
+        const bool hasEepPaymentTime =
+            (exitTrans.iEEPPaymentResult == 1 ||
+             exitTrans.iEEPPaymentResult == 2);
+
+        std::string sqlStmt =
+            "INSERT INTO exit_trans_tmp ("
+            "station_id, "
+            "exit_time, "
+            "iu_tk_no, "
+            "card_mc_no, "
+            "trans_type, "
+            "parked_time, "
+            "parking_fee, "
+            "paid_amt, "
+            "receipt_no, "
+            "status, "
+            "redeem_amt, "
+            "redeem_time, "
+            "redeem_no, "
+            "gst_amt, "
+            "chu_debit_code, "
+            "card_type, "
+            "top_up_amt, "
+            "uposbatchno, "
+            "feefrom, "
+            "lpn, "
+            "exit_lpn_SID, "
+            "EEPDSerialNo, "
+            "EEPTransRoute, "
+            "EEPPaymentResult, "
+            "VCC";
+
+        if (hasEepPaymentTime)
+        {
+            sqlStmt +=
+                ", EEPPaymentTime";
+        }
+
+        sqlStmt +=
+            ") VALUES (" +
+            exitTrans.xsid +
+            ", '" +
+            exitTrans.sExitTime +
+            "', '" +
+            exitTrans.sIUNo +
+            "', '" +
+            exitTrans.sCardNo +
+            "', " +
+            std::to_string(exitTrans.iTransType) +
+            ", " +
+            std::to_string(exitTrans.lParkedTime) +
+            ", " +
+            std::to_string(exitTrans.sFee) +
+            ", " +
+            std::to_string(exitTrans.sPaidAmt) +
+            ", '" +
+            exitTrans.sReceiptNo +
+            "', " +
+            std::to_string(exitTrans.iStatus) +
+            ", " +
+            std::to_string(exitTrans.sRedeemAmt) +
+            ", " +
+            std::to_string(exitTrans.iRedeemTime) +
+            ", '" +
+            exitTrans.sRedeemNo +
+            "', " +
+            std::to_string(exitTrans.sGSTAmt) +
+            ", '" +
+            exitTrans.sCHUDebitCode +
+            "', " +
+            std::to_string(exitTrans.iCardType) +
+            ", " +
+            std::to_string(exitTrans.sTopupAmt) +
+            ", '" +
+            exitTrans.uposbatchno +
+            "', '" +
+            exitTrans.feefrom +
+            "', '" +
+            exitTrans.lpn +
+            "', '" +
+            transId +
+            "', '" +
+            exitTrans.sDSerialNo +
+            "', " +
+            std::to_string(exitTrans.iEEPTransRoute) +
+            ", " +
+            std::to_string(exitTrans.iEEPPaymentResult) +
+            ", '" +
+            exitTrans.VCC +
+            "'";
+
+        if (hasEepPaymentTime)
+        {
+            sqlStmt +=
+                ", '" +
+                exitTrans.sEEPpaymentTime +
+                "'";
+        }
+
+        sqlStmt += ")";
+
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            logDbMessage(sqlStmt, "DB");
+            logDbMessage("Insert exit_trans to Central: fail.", "DB");
+
+            return iCentralFail;
+        }
+
+        logDbMessage("Insert exit_trans to Central: success.", "DB");
+
+        return iCentralSuccess;
+    }
+
+    // =========================================================
+    // Central unavailable - insert into Local DB
+    // =========================================================
+    if (localdb->IsConnected() != 1)
+    {
+        localdb->Disconnect();
+
+        if (localdb->Connect() != 0)
+        {
+            logDbMessage("Unable to connect to Local DB while inserting Exit_Trans table.", "DB");
+
+            return iLocalFail;
+        }
+    }
+
+    const std::string sqlStmt =
+        "INSERT INTO Exit_Trans ("
+        "Station_ID, "
+        "exit_time, "
+        "iu_tk_no, "
+        "card_mc_no, "
+        "trans_type, "
+        "parked_time, "
+        "Parking_Fee, "
+        "Paid_Amt, "
+        "Receipt_No, "
+        "Status, "
+        "Redeem_amt, "
+        "Redeem_time, "
+        "Redeem_no, "
+        "gst_amt, "
+        "chu_debit_code, "
+        "Card_Type, "
+        "Top_Up_Amt, "
+        "uposbatchno, "
+        "feefrom, "
+        "lpn, "
+        "Entry_ID, "
+        "entry_time, "
+        "exit_lpn_SID, "
+        "EEPDSerialNo, "
+        "EEPTransRoute, "
+        "EEPPaymentResult, "
+        "EEPPaymentTime, "
+        "VCC"
+        ") VALUES (" +
+        exitTrans.xsid +
+        ", '" +
+        exitTrans.sExitTime +
+        "', '" +
+        exitTrans.sIUNo +
+        "', '" +
+        exitTrans.sCardNo +
+        "', " +
+        std::to_string(exitTrans.iTransType) +
+        ", " +
+        std::to_string(exitTrans.lParkedTime) +
+        ", " +
+        std::to_string(exitTrans.sFee) +
+        ", " +
+        std::to_string(exitTrans.sPaidAmt) +
+        ", '" +
+        exitTrans.sReceiptNo +
+        "', " +
+        std::to_string(exitTrans.iStatus) +
+        ", " +
+        std::to_string(exitTrans.sRedeemAmt) +
+        ", " +
+        std::to_string(exitTrans.iRedeemTime) +
+        ", '" +
+        exitTrans.sRedeemNo +
+        "', " +
+        std::to_string(exitTrans.sGSTAmt) +
+        ", '" +
+        exitTrans.sCHUDebitCode +
+        "', " +
+        std::to_string(exitTrans.iCardType) +
+        ", " +
+        std::to_string(exitTrans.sTopupAmt) +
+        ", '" +
+        exitTrans.uposbatchno +
+        "', '" +
+        exitTrans.feefrom +
+        "', '" +
+        exitTrans.lpn +
+        "', " +
+        std::to_string(exitTrans.iEntryID) +
+        ", '" +
+        exitTrans.sEntryTime +
+        "', '" +
+        transId +
+        "', '" +
+        exitTrans.sDSerialNo +
+        "', " +
+        std::to_string(exitTrans.iEEPTransRoute) +
+        ", " +
+        std::to_string(exitTrans.iEEPPaymentResult) +
+        ", '" +
+        exitTrans.sEEPpaymentTime +
+        "', '" +
+        exitTrans.VCC +
+        "')";
+
+    const int ret = localdb->SQLExecutNoneQuery(sqlStmt);
+
+    if (ret != 0)
+    {
+        logDbMessage(sqlStmt, "DB");
+        logDbMessage("Insert Exit_Trans to Local: fail.", "DB");
+
+        return iLocalFail;
+    }
+
+    logDbMessage("Insert Exit_Trans to Local: success.", "DB");
+
+    if (!updateOperationProcess(
+            [](tProcess_Struct& process)
+            {
+                ++process.glNoofOfflineData;
+            }))
+    {
+        logDbMessage("Unable to update Operation shared data.", "DB");
+    }
+
+    return iLocalSuccess;
+}
+
+int db::updateExitReceiptNo(const std::string& receiptNo, const std::string& stationId)
+{
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    const std::string exitTime = data->tExit.sExitTime;
+
+    try
+    {
+        // =====================================================
+        // Try Exit_trans_tmp first
+        // =====================================================
+        const std::string tmpSql =
+            "UPDATE Exit_trans_tmp "
+            "SET receipt_no = '" +
+            receiptNo +
+            "' "
+            "WHERE station_id = '" +
+            stationId +
+            "' "
+            "AND Exit_time = '" +
+            exitTime +
+            "'";
+
+        int ret = centraldb->SQLExecutNoneQuery(tmpSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update Receipt No to Exit_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update Receipt No to Exit_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(0);
+
+            return ret;
+        }
+
+        // =====================================================
+        // Not found in tmp, try Exit_trans
+        // =====================================================
+        const std::string exitSql =
+            "UPDATE Exit_trans "
+            "SET receipt_no = '" +
+            receiptNo +
+            "' "
+            "WHERE station_id = '" +
+            stationId +
+            "' "
+            "AND Exit_time = '" +
+            exitTime +
+            "'";
+
+        ret = centraldb->SQLExecutNoneQuery(exitSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update Receipt No to Exit_trans.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update Receipt No to Exit_trans.", "DB");
+        }
+        else
+        {
+            logDbMessage("No Receipt record found for update.", "DB");
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("updateExitReceiptNo exception: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
 }
 
 DBError db::LoadTariff()
 {
+    constexpr int kTariffPeriods = 9;
+    constexpr int kMaxAttempts = 2;
 
-	std::string sqlStmt;
-	std::string tbName="tariff_setup";
+    try
+    {
+        logDbMessage("Load tariff_setup: Started", "DB");
 
-	vector<ReaderItem> selResult;
-	
-	std::string sValue;
-	int r,j,k,i;
-	tariff_struct t;
-	int w=-1;
-	int bTried=0;
+        // =====================================================
+        // Try Local DB first.
+        // If no data, download once and retry.
+        // =====================================================
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+        {
+            std::vector<ReaderItem> result;
 
-	try
-	{
+            const int ret =
+                localdb->SQLSelect(
+                    "SELECT * "
+                    "FROM tariff_setup "
+                    "ORDER BY day_index",
+                    &result,
+                    true);
 
-		operation::getInstance()->writelog("Load tariff_setup: Started","DB");
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
 
-		Try_Again:
-		sqlStmt="select * ";
-		sqlStmt= sqlStmt +  "from " + tbName + " order by day_index";
+                logDbMessage("Load tariff parameters failed.", "DB");
 
-	//	operation::getInstance()->writelog(sqlStmt, "DB");
+                return iLocalFail;
+            }
 
-		r=localdb->SQLSelect(sqlStmt,&selResult,true);
-		if (r!=0) return iLocalFail;
-		if (selResult.size()>0){
-			for(j=0;j<selResult.size();j++){
-				int idx = 2;
-	//			operation::getInstance()->writelog("loading"+ std::to_string(j), "DB");
-				t.tariff_id = selResult[j].GetDataItem(0);
-				t.day_index = selResult[j].GetDataItem(1);
-				for(int k=0;k<9;k++){
-					t.start_time[k]=selResult[j].GetDataItem(idx++);
-					if (t.start_time[k]=="NULL") t.start_time[k]="";
-					t.end_time[k]=selResult[j].GetDataItem(idx++);
-					if (t.end_time[k]=="NULL") t.end_time[k]="";
-					t.rate_type[k]=selResult[j].GetDataItem(idx++);
-					t.charge_time_block[k]=selResult[j].GetDataItem(idx++);
-					t.charge_rate[k]=selResult[j].GetDataItem(idx++);
-					t.grace_time[k]=selResult[j].GetDataItem(idx++);
-					t.min_charge[k]=selResult[j].GetDataItem(idx++);
-					t.max_charge[k]=selResult[j].GetDataItem(idx++);
-					t.first_free[k]=selResult[j].GetDataItem(idx++);
-					t.first_add[k]=selResult[j].GetDataItem(idx++);
-					t.second_free[k]=selResult[j].GetDataItem(idx++);
-					t.second_add[k]=selResult[j].GetDataItem(idx++);
-					t.third_free[k]=selResult[j].GetDataItem(idx++);
-					t.third_add[k]=selResult[j].GetDataItem(idx++);
-					t.allowance[k]=selResult[j].GetDataItem(idx++);
-				}
-				t.whole_day_max= selResult[j].GetDataItem(idx++);
-				t.whole_day_min= selResult[j].GetDataItem(idx++);
-				t.zone_cutoff= selResult[j].GetDataItem(idx++);
-				t.day_cutoff= selResult[j].GetDataItem(idx++);
-				t.day_type	= selResult[j].GetDataItem(idx++);
+            m_local_db_err_flag = 0;
 
-				std::vector<std::string> tmpStr;
-		
-				boost::algorithm::split(tmpStr, t.day_type, boost::algorithm::is_any_of(","));
+            // =================================================
+            // No Local data - download once and retry
+            // =================================================
+            if (result.empty())
+            {
+                if (attempt == 0)
+                {
+                    downloadtariffsetup();
+                    continue;
+                }
 
-				operation::getInstance()->writelog("loading Tday_Type = "+ t.day_type, "DB");
+                logDbMessage("Load tariff parameters error: no data in local DB.", "DB");
 
-				for (std::size_t i = 0; i < tmpStr.size() - 1; i++)
-				{
-					t.dtype= std::stoi(tmpStr[i]);
-				//	operation::getInstance()->writelog("loading day_Type = "+ std::to_string(t.dtype), "DB");
-					w=WriteTariff2RAM(t);
-				//	operation::getInstance()->writelog("loadingA next", "DB");	
-				}
-				//operation::getInstance()->writelog("loading next", "DB");	
-			}
+                return iNoData;
+            }
 
-			operation::getInstance()->writelog("Load tariff parameters: success","DB");
+            // =================================================
+            // Load tariff records
+            // =================================================
+            for (const auto& row : result)
+            {
+                tariff_struct tariff{};
 
-			return iDBSuccess;
-		}
-		else{
-			if(bTried==0)
-			{
-				downloadtariffsetup();
-				bTried=1;
-				goto Try_Again;
-				
-			}
+                int index = 0;
 
-			return iNoData;
-			operation::getInstance()->writelog("Load tariff parameters error: no data in local DB","DB");
+                tariff.tariff_id = row.GetDataItem(index++);
+                tariff.day_index = row.GetDataItem(index++);
 
-		}
-	}
-	catch(const std::exception &e)
-	{
-		operation::getInstance()->writelog("Load tariff parameters error: local DB error","DB");
-		return iLocalFail;
-	}
+                // =============================================
+                // Load 9 tariff periods
+                // =============================================
+                for (int period = 0; period < kTariffPeriods; ++period)
+                {
+                    tariff.start_time[period] = row.GetDataItem(index++);
 
+                    if (tariff.start_time[period] == "NULL")
+                    {
+                        tariff.start_time[period].clear();
+                    }
+
+                    tariff.end_time[period] = row.GetDataItem(index++);
+
+                    if (tariff.end_time[period] == "NULL")
+                    {
+                        tariff.end_time[period].clear();
+                    }
+
+                    tariff.rate_type[period] = row.GetDataItem(index++);
+                    tariff.charge_time_block[period] = row.GetDataItem(index++);
+                    tariff.charge_rate[period] = row.GetDataItem(index++);
+                    tariff.grace_time[period] = row.GetDataItem(index++);
+                    tariff.min_charge[period] = row.GetDataItem(index++);
+                    tariff.max_charge[period] = row.GetDataItem(index++);
+                    tariff.first_free[period] = row.GetDataItem(index++);
+                    tariff.first_add[period] = row.GetDataItem(index++);
+                    tariff.second_free[period] = row.GetDataItem(index++);
+                    tariff.second_add[period] = row.GetDataItem(index++);
+                    tariff.third_free[period] = row.GetDataItem(index++);
+                    tariff.third_add[period] = row.GetDataItem(index++);
+                    tariff.allowance[period] = row.GetDataItem(index++);
+                }
+
+                // =============================================
+                // Load daily tariff settings
+                // =============================================
+                tariff.whole_day_max = row.GetDataItem(index++);
+                tariff.whole_day_min = row.GetDataItem(index++);
+                tariff.zone_cutoff = row.GetDataItem(index++);
+                tariff.day_cutoff = row.GetDataItem(index++);
+                tariff.day_type = row.GetDataItem(index++);
+
+                logDbMessage("Loading Tday_Type = " + tariff.day_type, "DB");
+
+                // =============================================
+                // Load each day type into RAM
+                // =============================================
+                std::vector<std::string> dayTypes;
+
+                boost::algorithm::split(dayTypes, tariff.day_type, boost::algorithm::is_any_of(","));
+
+                for (const auto& dayType : dayTypes)
+                {
+                    // Handles trailing comma safely.
+                    if (dayType.empty())
+                    {
+                        continue;
+                    }
+
+                    tariff.dtype = std::stoi(dayType);
+
+                    WriteTariff2RAM(tariff);
+                }
+            }
+
+            logDbMessage("Load tariff parameters: success", "DB");
+
+            return iDBSuccess;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Load tariff parameters error: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return iLocalFail;
+    }
+
+    return iNoData;
 }
 
-int db::WriteTariff2RAM(tariff_struct t)
+int db::WriteTariff2RAM(const tariff_struct& tariff)
 {
+    constexpr int kTariffPeriods = 9;
 
-	time_t vfdate,vtdate;
-	CE_Time vfdt,vtdt;
-	int r=-1;// success flag
-	int debug=0;
-	int a,b;
+    // =========================================================
+    // Calculate tariff RAM position
+    // =========================================================
+    int groupIndex = tariff.dtype / 8;
+    int dayIndex = tariff.dtype % 8;
 
-	a=t.dtype/8;
-	b=(t.dtype%8);
-	if(b==0)
-	{
-		b=8;
-		a=a-1;
-		if(a<0)a=0;
-	}
-	
-	gtariff[a][b].day_type=std::to_string(t.dtype);
+    if (dayIndex == 0)
+    {
+        dayIndex = 8;
+        --groupIndex;
 
-	gtariff[a][b].tariff_id =t.tariff_id;
-	gtariff[a][b].day_index =t.day_index;		
-	for(int k=0;k<9;k++){
-		gtariff[a][b].start_time[k] =t.start_time[k];
-		gtariff[a][b].end_time[k] =t.end_time[k];
-		gtariff[a][b].rate_type[k] =t.rate_type[k];
-		gtariff[a][b].charge_time_block[k] =t.charge_time_block[k];
-		gtariff[a][b].charge_rate[k] =t.charge_rate[k];
-		gtariff[a][b].grace_time[k] =t.grace_time[k];
-		gtariff[a][b].first_free[k] =t.first_free[k];
-		gtariff[a][b].first_add[k] =t.first_add[k];
-		gtariff[a][b].second_free[k] =t.second_free[k];
-		gtariff[a][b].second_add[k] =t.second_add[k];
-		gtariff[a][b].third_free[k] =t.third_free[k];
-		gtariff[a][b].third_add[k] =t.third_add[k];
-		gtariff[a][b].allowance[k] =t.allowance[k];
-		gtariff[a][b].min_charge[k] =t.min_charge[k];
-		gtariff[a][b].max_charge[k] =t.max_charge[k];
-	}
-	gtariff[a][b].zone_cutoff =t.zone_cutoff;
-	gtariff[a][b].day_cutoff =t.day_cutoff;
-	gtariff[a][b].whole_day_max =t.whole_day_max;
-	gtariff[a][b].whole_day_min =t.whole_day_min;
-	
-	return(1);
+        if (groupIndex < 0)
+        {
+            groupIndex = 0;
+        }
+    }
+
+    // =========================================================
+    // Write tariff to RAM
+    // =========================================================
+    auto& target = gtariff[groupIndex][dayIndex];
+
+    target.day_type = std::to_string(tariff.dtype);
+    target.tariff_id = tariff.tariff_id;
+    target.day_index = tariff.day_index;
+
+    for (int period = 0; period < kTariffPeriods; ++period)
+    {
+        target.start_time[period] = tariff.start_time[period];
+        target.end_time[period] = tariff.end_time[period];
+        target.rate_type[period] = tariff.rate_type[period];
+        target.charge_time_block[period] = tariff.charge_time_block[period];
+        target.charge_rate[period] = tariff.charge_rate[period];
+        target.grace_time[period] = tariff.grace_time[period];
+        target.first_free[period] = tariff.first_free[period];
+        target.first_add[period] = tariff.first_add[period];
+        target.second_free[period] = tariff.second_free[period];
+        target.second_add[period] = tariff.second_add[period];
+        target.third_free[period] = tariff.third_free[period];
+        target.third_add[period] = tariff.third_add[period];
+        target.allowance[period] = tariff.allowance[period];
+        target.min_charge[period] = tariff.min_charge[period];
+        target.max_charge[period] = tariff.max_charge[period];
+    }
+
+    target.zone_cutoff = tariff.zone_cutoff;
+    target.day_cutoff = tariff.day_cutoff;
+    target.whole_day_max = tariff.whole_day_max;
+    target.whole_day_min = tariff.whole_day_min;
+
+    return 1;
 }
 
 DBError db::LoadHoliday()
 {
+    constexpr int kMaxAttempts = 2;
 
-	std::string sqlStmt;
-	std::string tbName="holiday_mst";
+    try
+    {
+        logDbMessage("Load holiday: Started", "DB");
 
-	vector<ReaderItem> selResult;
+        // =====================================================
+        // Try Local DB first.
+        // If no data, download once and retry.
+        // =====================================================
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+        {
+            std::vector<ReaderItem> result;
 
-	std::string sValue;
-	int r,j;
-	int w=-1;
-	int bTried=0;
+            const std::string sqlStmt =
+                "SELECT DATE_FORMAT("
+                "holiday_date, '%Y-%m-%d') "
+                "AS YourDateAsString "
+                "FROM holiday_mst "
+                "ORDER BY holiday_date";
 
-	try
-	{
+            const int ret = localdb->SQLSelect(sqlStmt, &result, true);
 
-		operation::getInstance()->writelog ("Load holiday: Started", "DB");
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
 
-		Try_Again:
-		sqlStmt="Select date_format(holiday_date,'%Y-%m-%d') as YourDateAsString ";
-		sqlStmt= sqlStmt +  " FROM " + tbName + " Order by holiday_date";
+                logDbMessage("Load holiday failed.", "DB");
 
-		r=localdb->SQLSelect(sqlStmt,&selResult,true);
-		if (r!=0) return iLocalFail;
+                return iLocalFail;
+            }
 
-		if (selResult.size()>0){
-		
-			msholiday.clear();
-		
-			for(j=0;j<selResult.size();j++){
-				
-				sValue=selResult[j].GetDataItem(0);
-				msholiday.push_back(sValue);
+            m_local_db_err_flag = 0;
 
-			}
+            // =================================================
+            // No Local data - download once and retry
+            // =================================================
+            if (result.empty())
+            {
+                if (attempt == 0)
+                {
+                    downloadholidaymst();
+                    continue;
+                }
 
-			operation::getInstance()->writelog("Load holiday: success", "DB");
+                logDbMessage("Load holiday error: no data in local DB.", "DB");
 
-			return iDBSuccess;
-		}
-		else{
-			if(bTried==0)
-			{
-				downloadholidaymst();
-				bTried=1;
-				goto Try_Again;
-				
-			}
+                return iNoData;
+            }
 
-			return iNoData;
-			operation::getInstance()->writelog("Load holiday error: no data in local DB", "DB");
+            // =================================================
+            // Load holidays into RAM
+            // =================================================
+            msholiday.clear();
 
-		}
+            for (const auto& row : result)
+            {
+                if (row.getDataSize() < 1)
+                {
+                    continue;
+                }
 
-	}
-	catch(const std::exception &e)
-	{
-		operation::getInstance()->writelog("Load holiday error: local DB error", "DB");
-		return iLocalFail;
-	}
+                msholiday.push_back(row.GetDataItem(0));
+            }
 
+            logDbMessage("Load holiday: success", "DB");
+
+            return iDBSuccess;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Load holiday error: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return iLocalFail;
+    }
+
+    return iNoData;
 }
 
 DBError db::ClearHoliday()
 {
-	std::string tableNm="holiday_mst";
-	
-	std::string sqlStmt;
-	
-	int r=-1;      // success flag
-	try {
+    try
+    {
+        const int ret = localdb->SQLExecutNoneQuery("TRUNCATE TABLE holiday_mst");
 
-		sqlStmt="truncate table " + tableNm;
+        if (ret != 0)
+        {
+            m_local_db_err_flag = 1;
 
-		r=localdb->SQLExecutNoneQuery(sqlStmt);
+            logDbMessage("Failed to clear holiday_mst.", "DB");
 
-		if(r==0) m_local_db_err_flag=0;
-		else m_local_db_err_flag=1;
-	}
-	catch (const std::exception &e)
-	{
-		operation::getInstance()->writelog("DB: local db error in clearing: " + std::string(e.what()), "DB");
-		r=-1;
-		m_local_db_err_flag=1;
-	} 
-	if (r= 0) return iDBSuccess;
-	return iLocalFail;
+            return iLocalFail;
+        }
+
+        m_local_db_err_flag = 0;
+
+        return iDBSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("DB: Local DB error while clearing holiday_mst: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return iLocalFail;
+    }
 }
 
-
-int db::GetDayTypeWithHE(CE_Time curr_date)
+int db::GetDayTypeWithHE(CE_Time currDate)
 {
-	int iRet;
-	CE_Time next_date;
-	iRet=curr_date.getweekday();
+    constexpr int kHolidayDayType = 7;
+    constexpr int kHolidayEveDayType = 8;
+    constexpr std::time_t kSecondsPerDay = 24 * 60 * 60;
 
-	//operation::getInstance()->writelog("day Type is: " + std::to_string(iRet), "DB");
+    const int dayType = currDate.getweekday();
 
-	next_date.SetTime(curr_date.GetUnixTimestamp()+86400);    // 86400 one day
-	//operation::getInstance()->writelog("next date time is: " + next_date.DateString(), "DB");
-	
-	if(iRet!=6)
-	{
-		if(iRet!=7)
-		{
-			for(int i=0; i<msholiday.size();i++){
-				if(next_date.DateString().compare(msholiday[i])==0)
-				{
-					iRet=8;
-					break;
-				}
-			}
-		}
-	}
-	
-	for(int i=0; i<msholiday.size();i++){
-		if(curr_date.DateString().compare(msholiday[i])==0)
-		{
-			iRet=7;
-			return(iRet);
-		}
-	}
-	return(iRet);
+    // =========================================================
+    // Current date
+    // =========================================================
+    const std::string currentDate = currDate.DateString();
+
+    const auto isHoliday =
+        [this](const std::string& date)
+        {
+            return std::find(
+                       msholiday.begin(),
+                       msholiday.end(),
+                       date) != msholiday.end();
+        };
+
+    // Current date is holiday
+    if (isHoliday(currentDate))
+    {
+        return kHolidayDayType;
+    }
+
+    // =========================================================
+    // Check holiday eve
+    // =========================================================
+    if (dayType != 6 && dayType != 7)
+    {
+        CE_Time nextDate;
+
+        nextDate.SetTime(currDate.GetUnixTimestamp() + kSecondsPerDay);
+
+        if (isHoliday(nextDate.DateString()))
+        {
+            return kHolidayEveDayType;
+        }
+    }
+
+    return dayType;
 }
 
-int db::GetDayTypeNoPE(CE_Time curr_date)
+int db::GetDayTypeNoPE(CE_Time currDate)
 {
-	int iRet;
-//	operation::getInstance()->writelog("check day type, no holiday eve", "DB");
-//	operation::getInstance()->writelog("Current day: " + curr_date.DateString(), "DB");
+    constexpr int kHolidayDayType = 8;
+    const int dayType = currDate.getweekday();
+    const std::string currentDate = currDate.DateString();
 
-	iRet=curr_date.getweekday();
-	for(int i=0; i<msholiday.size();i++){
+    const auto it =
+        std::find(
+            msholiday.begin(),
+            msholiday.end(),
+            currentDate);
 
-//		operation::getInstance()->writelog("holiday: " + msholiday[i], "DB");
+    if (it != msholiday.end())
+    {
+        return kHolidayDayType;
+    }
 
-		if(curr_date.DateString().compare(msholiday[i])==0)
-		{
-			iRet=8;
-			return(iRet);
-		}
-	}
-	return(iRet);
+    return dayType;
 }
 
-int db::GetDayType(CE_Time curr_date)
+int db::GetDayType(CE_Time currDate)
 {
-	int Ret;
-	if(operation::getInstance()->tParas.giHasHolidayEve==1)
-		Ret=GetDayTypeWithHE(curr_date);//PH is 7, EvePH is 8
-	else
-		Ret=GetDayTypeNoPE(curr_date);
-	return(Ret);
-	
+    const auto data = operation::getInstance()->FnGetSharedData();
+
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+
+        return -1;
+    }
+
+    if (data->tParas.giHasHolidayEve == 1)
+    {
+        return GetDayTypeWithHE(currDate);  //PH is 7, EvePH is 8
+    }
+
+    return GetDayTypeNoPE(currDate);
 }
 
-float db::HasPaidWithinPeriod(string sTimeFrom, string sTimeTo)
+float db::HasPaidWithinPeriod(const std::string& timeFrom, const std::string& timeTo)
 {
-	string msCurrentIU;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    const auto data = operation::getInstance()->FnGetSharedData();
 
-	if(operation::getInstance()->gtStation.iType==tientry)
-	msCurrentIU=operation::getInstance()->tEntry.sIUTKNo;
-	else
-	msCurrentIU=operation::getInstance()->tExit.sIUNo;
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-	if((msCurrentIU.length()==10)||((operation::getInstance()->tParas.giMCyclePerDay==2)&&(msCurrentIU.length()==16)))
-	{
-		//ok
-	}
-	else
-	return(0);
+        return 0.0F;
+    }
 
-	int r=-1;
-	float w=-1;
-	
-	sqlStmt= "Select paid_amt From exit_trans ";
-	sqlStmt=sqlStmt + "WHERE iu_tk_no = '"+msCurrentIU;
-	sqlStmt=sqlStmt + "'and paid_amt >0";
-	
-	if(msCurrentIU.length()==16)
-	sqlStmt=sqlStmt + " and (trans_type=7 or trans_type=22)";
-	sqlStmt=sqlStmt + " And convert(char(19),exit_time,120) > '"+ sTimeFrom+ "'";
+    // =========================================================
+    // Get current IU / Ticket No.
+    // =========================================================
+    const std::string currentIU =
+        (data->gtStation.iType == tientry)
+            ? data->tEntry.sIUTKNo
+            : data->tExit.sIUNo;
 
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	
-	if(r!=0) 
-	{
-		m_remote_db_err_flag.store(1);
-		goto processLocal;
-	}
-	else m_remote_db_err_flag.store(0);
+    const bool isNormalIU = (currentIU.length() == 10);
 
-	if (selResult.size()>0)
-	{
-		w=std::stof(selResult[0].GetDataItem(0));
-		operation::getInstance()->writelog("payfee is: " + std::to_string(w), "DB");
-		return w;
-	}
-	if (selResult.size()<1){
-		r=-1; //should raise error
-		goto processLocal;
-	}
-	
-processLocal:
+    const bool isMotorcycleIU = (data->tParas.giMCyclePerDay == 2 && currentIU.length() == 16);
 
-	sqlStmt= "Select paid_amt From entry_trans ";
-	sqlStmt=sqlStmt + " Where iu_tk_no='"+ msCurrentIU + "' and paid_amt>0";
+    if (!isNormalIU &&
+        !isMotorcycleIU)
+    {
+        return 0.0F;
+    }
 
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
+    // timeTo is not used by the existing implementation.
+    // Keep this explicit until the required period logic is confirmed.
+    (void)timeTo;
 
-	if(r!=0) m_local_db_err_flag=1;
-	else  m_local_db_err_flag=0;
+    // =========================================================
+    // Check Central DB first
+    // =========================================================
+    std::string centralSql =
+        "SELECT paid_amt "
+        "FROM exit_trans "
+        "WHERE iu_tk_no = '" +
+        currentIU +
+        "' "
+        "AND paid_amt > 0";
 
-	if (selResult.size()>0)
-	{
-		w=std::stof(selResult[0].GetDataItem(0));
-		operation::getInstance()->writelog("payfee is: " + std::to_string(w), "DB");
-		return w;
-	}
-	return w;
+    if (currentIU.length() == 16)
+    {
+        centralSql +=
+            " AND (trans_type = 7 OR trans_type = 22)";
+    }
 
+    centralSql +=
+        " AND CONVERT(char(19), exit_time, 120) > '" +
+        timeFrom +
+        "'";
+
+    std::vector<ReaderItem> centralResult;
+
+    const int centralRet = centraldb->SQLSelect(centralSql, &centralResult, true);
+
+    if (centralRet == 0)
+    {
+        m_remote_db_err_flag.store(0);
+
+        if (!centralResult.empty())
+        {
+            try
+            {
+                const float paidAmount = std::stof(centralResult.front().GetDataItem(0));
+
+                logDbMessage("Paid fee is: " + std::to_string(paidAmount), "DB");
+
+                return paidAmount;
+            }
+            catch (const std::exception& e)
+            {
+                logDbMessage("Invalid paid amount from Central DB: " + std::string(e.what()), "DB");
+
+                return -1.0F;
+            }
+        }
+    }
+    else
+    {
+        m_remote_db_err_flag.store(1);
+    }
+
+    // =========================================================
+    // Not found / Central failed - check Local DB
+    // =========================================================
+    const std::string localSql =
+        "SELECT paid_amt "
+        "FROM entry_trans "
+        "WHERE iu_tk_no = '" +
+        currentIU +
+        "' "
+        "AND paid_amt > 0";
+
+    std::vector<ReaderItem> localResult;
+
+    const int localRet = localdb->SQLSelect(localSql, &localResult, true);
+
+    if (localRet != 0)
+    {
+        m_local_db_err_flag = 1;
+        return -1.0F;
+    }
+
+    m_local_db_err_flag = 0;
+
+    if (localResult.empty())
+    {
+        return -1.0F;
+    }
+
+    try
+    {
+        const float paidAmount = std::stof(localResult.front().GetDataItem(0));
+
+        logDbMessage("Paid fee is: " + std::to_string(paidAmount), "DB");
+
+        return paidAmount;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Invalid paid amount from Local DB: " + std::string(e.what()), "DB");
+
+        return -1.0F;
+    }
 }
 
-float db::RoundIt(float val, int giTariffFeeMode)
+float db::RoundIt(float value, int tariffFeeMode)
 {
-	float iRet;
-	
-	if(giTariffFeeMode==1) iRet=ceilf(val); // rounded up
-	else if(giTariffFeeMode==2) iRet=floorf(val); //rounded down
-	else if(giTariffFeeMode==3) iRet=roundf(val); //normal(.5 to 1)
-	return(iRet);
-	
-};
+    switch (tariffFeeMode)
+    {
+        case 1:
+            return std::ceil(value);   // Round up
 
-float db::CalFeeRAM2G(string eTime, string payTime,int iTransType, bool bNoGT) 
+        case 2:
+            return std::floor(value);  // Round down
+
+        case 3:
+            return std::round(value);  // Normal rounding
+
+        default:
+            return value;              // No rounding
+    }
+}
+
+float db::CalFeeRAM2G(
+    const std::string& entryTime,
+    const std::string& payTime,
+    int transType,
+    bool noGraceTime)
 {
-	float iRet=0;
-	bool bUsedTariff[2];
-	int giGT,timediff;
-	float tempfee = 0;
-	int giTransType;
-	CE_Time calTime;
-	CE_Time payET,payDT;
-	payET.SetTime(eTime);
-	payDT.SetTime(payTime);
-	//-------
-	for(int i=0; i<2;i++){
-		bUsedTariff[i] = false;
-		if (eTime > gtarifftypeinfo[i].start_time) {
-			if (gtarifftypeinfo[i].end_time > payTime) {
-					bUsedTariff[i] = true;
-					break;
-			} else{
-				if (eTime < gtarifftypeinfo[i].end_time ) {
-					if (i == 0){
-						bUsedTariff[i] = true;
-						bUsedTariff[i+1] = true;
-					}else{
-						operation::getInstance()->writelog("Tariff type info Error", "DB");
-						return(-4);
-					}
-				}
-			} 
-		}
-	}
+    constexpr int kTariffTypeMultiplier = 40;
+    constexpr float kTariffError = -4.0F;
 
-	if (bUsedTariff[0] == true && bUsedTariff[1] == true) {
-		// cross two zone,need get grace time
-		giGT = std::stoi(gtariff[iTransType][1].grace_time[0]);
+    bool usedTariff[2] =
+    {
+        false,
+        false
+    };
 
-		timediff=calTime.diffmin(payET.GetUnixTimestamp(), payDT.GetUnixTimestamp());
-		if (timediff> giGT) {
-			giTransType = std::stoi(gtarifftypeinfo[0].tariff_type) *40;
-			iRet = CalFeeRAM2GR(eTime,gtarifftypeinfo[0].end_time,iTransType+ giTransType, true);
-			operation::getInstance()->writelog("Fee For Early Tariff: " + Common::getInstance()->SetFeeFormat(iRet),"DB");
-			giTransType = std::stoi(gtarifftypeinfo[1].tariff_type) *40;
-			tempfee = CalFeeRAM2GR(gtarifftypeinfo[1].start_time,payTime,iTransType + giTransType, true);
-			operation::getInstance()->writelog("Fee For Current Tariff: " + Common::getInstance()->SetFeeFormat(tempfee),"DB");
-			iRet = iRet + tempfee;
-		} else{
-			operation::getInstance()->writelog("within grace period","DB");
-			return(0);
-		}
-	} else{
-		if (bUsedTariff[0] == true) {
-			operation::getInstance()->writelog("Use Tariff Type:" + gtarifftypeinfo[0].tariff_type, "DB");
-			giTransType = std::stoi(gtarifftypeinfo[0].tariff_type) *40;
-			tempfee = CalFeeRAM2GR(eTime,payTime,iTransType + giTransType, bNoGT);
-		}else{
-			operation::getInstance()->writelog("Use Tariff Type:" + gtarifftypeinfo[1].tariff_type, "DB");
-			giTransType = std::stoi(gtarifftypeinfo[1].tariff_type) *40;
-			tempfee = CalFeeRAM2GR(eTime,payTime,iTransType + giTransType, bNoGT);
-		}
-		iRet = tempfee;
-	}
-	operation::getInstance()->writelog("Total Parking Fee: " + Common::getInstance()->SetFeeFormat(iRet), "DB");
+    CE_Time entryDateTime;
+    CE_Time payDateTime;
+    CE_Time calTime;
 
-	return iRet;
+    entryDateTime.SetTime(entryTime);
+    payDateTime.SetTime(payTime);
 
+    // =========================================================
+    // Determine which tariff type is used
+    // =========================================================
+    for (int index = 0; index < 2; ++index)
+    {
+        if (entryTime <= gtarifftypeinfo[index].start_time)
+        {
+            continue;
+        }
+
+        // Entire parking period is within this tariff type
+        if (gtarifftypeinfo[index].end_time > payTime)
+        {
+            usedTariff[index] = true;
+            break;
+        }
+
+        // Entry is within this tariff type,
+        // but payment time has crossed its end time.
+        if (entryTime < gtarifftypeinfo[index].end_time)
+        {
+            if (index == 0)
+            {
+                usedTariff[0] = true;
+                usedTariff[1] = true;
+                break;
+            }
+
+            logDbMessage("Tariff type info Error.", "DB");
+
+            return kTariffError;
+        }
+    }
+
+    try
+    {
+        float totalFee = 0.0F;
+
+        // =====================================================
+        // Cross two tariff types
+        // =====================================================
+        if (usedTariff[0] && usedTariff[1])
+        {
+            const int graceTime = std::stoi(gtariff[transType][1].grace_time[0]);
+
+            const int timeDiff =
+                calTime.diffmin(
+                    entryDateTime.GetUnixTimestamp(),
+                    payDateTime.GetUnixTimestamp());
+
+            if (timeDiff <= graceTime)
+            {
+                logDbMessage("Within grace period.", "DB");
+
+                return 0.0F;
+            }
+
+            // -------------------------------------------------
+            // First tariff type
+            // -------------------------------------------------
+            int tariffTypeOffset = std::stoi(gtarifftypeinfo[0].tariff_type) * kTariffTypeMultiplier;
+
+            totalFee =
+                CalFeeRAM2GR(
+                    entryTime,
+                    gtarifftypeinfo[0].end_time,
+                    transType + tariffTypeOffset,
+                    true);
+
+            logDbMessage("Fee For Early Tariff: " + Common::getInstance()->SetFeeFormat(totalFee), "DB");
+
+            // -------------------------------------------------
+            // Second tariff type
+            // -------------------------------------------------
+            tariffTypeOffset = std::stoi(gtarifftypeinfo[1].tariff_type) * kTariffTypeMultiplier;
+
+            const float currentTariffFee =
+                CalFeeRAM2GR(
+                    gtarifftypeinfo[1].start_time,
+                    payTime,
+                    transType + tariffTypeOffset,
+                    true);
+
+            logDbMessage("Fee For Current Tariff: " + Common::getInstance()->SetFeeFormat(currentTariffFee), "DB");
+
+            totalFee += currentTariffFee;
+        }
+        else
+        {
+            // =================================================
+            // Use one tariff type
+            // =================================================
+            const int tariffIndex = usedTariff[0] ? 0 : 1;
+
+            logDbMessage("Use Tariff Type: " + gtarifftypeinfo[tariffIndex].tariff_type, "DB");
+
+            const int tariffTypeOffset = std::stoi(gtarifftypeinfo[tariffIndex].tariff_type) * kTariffTypeMultiplier;
+
+            totalFee =
+                CalFeeRAM2GR(
+                    entryTime,
+                    payTime,
+                    transType + tariffTypeOffset,
+                    noGraceTime);
+        }
+
+        logDbMessage("Total Parking Fee: " + Common::getInstance()->SetFeeFormat(totalFee), "DB");
+
+        return totalFee;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("CalFeeRAM2G tariff data error: " + std::string(e.what()), "DB");
+
+        return kTariffError;
+    }
 }
 
 float db::CalFeeRAM2GR(string eTime, string payTime,int iTransType, bool bNoGT) 
 {
-	CE_Time entryTime;
-	CE_Time payDT;
-	CE_Time calTime;
-	CE_Time currentTime;
-	CE_Time PD,pt;
-	CE_Time Lpd,Npd;
-	entryTime.SetTime(eTime);
-	payDT.SetTime(payTime);
-	float dayFee=0, zoneFee=0;
-	int iDayType;
-	bool bFirstFreed = false; // for first free time, only once
-	bool bGotDayInfo = false; // for get day info, only once for a day
-	bool b24HourBlock = false;
-	//bool bGT = false; //for grace time, only valid for 1st zone
-	bool bMCPerDayChecked= false;
-	int i24HourBlocks;
-	int s24HourFee=0, s24HourCharges=0;
-	string dtStr;
-	CE_Time zt;
+    CE_Time entryTime;
+    CE_Time payDT;
+    CE_Time calTime;
+    CE_Time currentTime;
+    CE_Time PD,pt;
+    CE_Time Lpd,Npd;
+    entryTime.SetTime(eTime);
+    payDT.SetTime(payTime);
+    float dayFee=0, zoneFee=0;
+    int iDayType;
+    bool bFirstFreed = false; // for first free time, only once
+    bool bGotDayInfo = false; // for get day info, only once for a day
+    bool b24HourBlock = false;
+    //bool bGT = false; //for grace time, only valid for 1st zone
+    bool bMCPerDayChecked= false;
+    int i24HourBlocks;
+    int s24HourFee=0, s24HourCharges=0;
+    string dtStr;
+    CE_Time zt;
 
-	string sT[9],eT[9];
-	int rateType[10],GT[10];
-	float chargeRate[9];
-	int CTB[9];
-	float zoneMin[9],zoneMax[9];
-	float firstAdd[9],secondAdd[9],thirdAdd[9];
-	int firstFree[9],secondFree[9],thirdFree[9];
-	int iAllowance[9];
-	int maxZone, zoneRateType;
-	int iZoneCutoff,iDayCutoff;
-	float dayMin, dayMax;
-	int iNextGT,iNextRT;
-	CE_Time zoneTime[10];
-	
-	int currentZone, currentRateType;
-	int currentCTB, currentGT;
-	float currentRate=0, currentMin=0, currentMax=0;
-	float currentAdd, currentAdd2, currentAdd3;
-	int currentFree, currentFree2, currentFree3;
-	int currentAllowance;
-	float charge=0;
-	int timediff;
-	float haspaid;
-	float iRet=0;
+    const auto operationData = operation::getInstance()->FnGetSharedData();
+    if (!operationData)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
+        return -1.0F;
+    }
 
-	if(bNoGT== true) 
-		operation::getInstance()->writelog( "Calculate parking fee with no grace .... ", "DB");
-	else 
-		operation::getInstance()->writelog("Calculate parking fee for rate type: "+ to_string(iTransType), "DB");
-	//operation::getInstance()->writelog("Entry Time: " + entryTime.DateTimeString(), "DB");
-	//operation::getInstance()->writelog("Pay Time: " + payDT.DateTimeString(), "DB");
-	
-	timediff = calTime.diffmin(entryTime.GetUnixTimestamp(), payDT.GetUnixTimestamp());
+    const auto& paras = operationData->tParas;
 
-	if(timediff<0) return(0);
+    string sT[9],eT[9];
+    int rateType[10],GT[10];
+    float chargeRate[9];
+    int CTB[9];
+    float zoneMin[9],zoneMax[9];
+    float firstAdd[9],secondAdd[9],thirdAdd[9];
+    int firstFree[9],secondFree[9],thirdFree[9];
+    int iAllowance[9];
+    int maxZone, zoneRateType;
+    int iZoneCutoff,iDayCutoff;
+    float dayMin, dayMax;
+    int iNextGT,iNextRT;
+    CE_Time zoneTime[10];
+    
+    int currentZone, currentRateType;
+    int currentCTB, currentGT;
+    float currentRate=0, currentMin=0, currentMax=0;
+    float currentAdd, currentAdd2, currentAdd3;
+    int currentFree, currentFree2, currentFree3;
+    int currentAllowance;
+    float charge=0;
+    int timediff;
+    float haspaid;
+    float iRet=0;
 
-	long a,b;
+    if(bNoGT== true) 
+        logDbMessage( "Calculate parking fee with no grace .... ", "DB");
+    else 
+        logDbMessage("Calculate parking fee for rate type: "+ to_string(iTransType), "DB");
+    //logDbMessage("Entry Time: " + entryTime.DateTimeString(), "DB");
+    //logDbMessage("Pay Time: " + payDT.DateTimeString(), "DB");
+    
+    timediff = calTime.diffmin(entryTime.GetUnixTimestamp(), payDT.GetUnixTimestamp());
 
-	a=entryTime.Second();
-	b=payDT.Second();
-	
-	if (a<b)
-	{
-		payDT.SetTime(payDT.GetUnixTimestamp()+60);
-		//operation::getInstance()->writelog("add one minutes to PayTime: " + payDT.DateTimeStringNoS(), "DB");
+    if(timediff<0) return(0);
 
-	}
-	currentTime.SetTime(payDT.GetUnixTimestamp());
+    long a,b;
 
-	PD.SetTime(entryTime.Year(),entryTime.Month(),entryTime.Day(),0,0,0);
-	pt.SetTime(entryTime.GetUnixTimestamp());
-	
-	operation::getInstance()->writelog("Cal fee time: " + pt.DateTimeStringNoS() + " ~ " + currentTime.DateTimeStringNoS() , "DB");
-	
-	while(1)
-	{
-		timediff=calTime.diffday(PD.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-		if(timediff<0)
-		break;
-		if(bGotDayInfo==false)
-		{
-			dayFee=0;
-			Lpd.SetTime(PD.GetUnixTimestamp()-86400);
-			iDayType=GetDayType(Lpd);
-			//operation:: getInstance()->writelog("last day Type:" + to_string(iDayType), "DB");
-			if(gtariff[iTransType][iDayType].start_time[0].empty())
-			{
-				//operation::getInstance()->writelog("No Tariff defined for DayType: "+to_string(iDayType), "DB");
-				return(-2); //No Tariff defined for DayType
-			}
-			maxZone=0;
-			for(int k=1;k<10;k++){
+    a=entryTime.Second();
+    b=payDT.Second();
+    
+    if (a<b)
+    {
+        payDT.SetTime(payDT.GetUnixTimestamp()+60);
+        //logDbMessage("add one minutes to PayTime: " + payDT.DateTimeStringNoS(), "DB");
 
-				if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
-				{
-					maxZone=k;
-					//operation::getInstance()->writelog("Max zone for last day is: " + to_string(maxZone), "DB");
-					break;
-				}
-			};
-			
-			if(maxZone==0) return(-4); //time zone wrong
-			// put last zone of last day in array(0)
-			rateType[0]=std::stoi(gtariff[iTransType][iDayType].rate_type[maxZone-1]);
-			chargeRate[0]=std::stod(gtariff[iTransType][iDayType].charge_rate[maxZone-1]);
-			CTB[0]=std::stoi(gtariff[iTransType][iDayType].charge_time_block[maxZone-1]);
-			zoneMin[0]=std::stod(gtariff[iTransType][iDayType].min_charge[maxZone-1]);
-			zoneMax[0]=std::stod(gtariff[iTransType][iDayType].max_charge[maxZone-1]);
-			GT[0]=std::stoi(gtariff[iTransType][iDayType].grace_time[maxZone-1]);
-			firstAdd[0]=std::stod(gtariff[iTransType][iDayType].first_add[maxZone-1]);
-			firstFree[0]=std::stoi(gtariff[iTransType][iDayType].first_free[maxZone-1]);
-			secondAdd[0]=std::stod(gtariff[iTransType][iDayType].second_add[maxZone-1]);
-			secondFree[0]=std::stoi(gtariff[iTransType][iDayType].second_free[maxZone-1]);
-			thirdAdd[0]=std::stod(gtariff[iTransType][iDayType].third_add[maxZone-1]);
-			thirdFree[0]=std::stoi(gtariff[iTransType][iDayType].third_free[maxZone-1]);
-			iAllowance[0]=std::stoi(gtariff[iTransType][iDayType].allowance[maxZone-1]);
-			zt.SetTime(gtariff[iTransType][iDayType].start_time[maxZone-1]);
-			
-			dtStr=Lpd.DateString()+" "+ zt.TimeString();
+    }
+    currentTime.SetTime(payDT.GetUnixTimestamp());
 
-			zoneTime[0].SetTime(dtStr);
-			//operation::getInstance()->writelog ("lastest Zone time for last day start:" + zoneTime[0].DateTimeString(), "DB");
-			//get day of PD
-			iDayType=GetDayType(PD);
-			//operation::getInstance()->writelog("Current day Type: "+ std::to_string(iDayType), "DB");
-			if(gtariff[iTransType][iDayType].start_time[0].empty())
-			{
-				operation::getInstance()->writelog ("No Tariff defined for Daytype: "+ to_string(iDayType), "DB");
-				return(-2); //No Tariff defined for DayType
-			}
+    PD.SetTime(entryTime.Year(),entryTime.Month(),entryTime.Day(),0,0,0);
+    pt.SetTime(entryTime.GetUnixTimestamp());
+    
+    logDbMessage("Cal fee time: " + pt.DateTimeStringNoS() + " ~ " + currentTime.DateTimeStringNoS() , "DB");
+    
+    while(1)
+    {
+        timediff=calTime.diffday(PD.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+        if(timediff<0)
+        break;
+        if(bGotDayInfo==false)
+        {
+            dayFee=0;
+            Lpd.SetTime(PD.GetUnixTimestamp()-86400);
+            iDayType=GetDayType(Lpd);
+            //logDbMessage("last day Type:" + to_string(iDayType), "DB");
+            if(gtariff[iTransType][iDayType].start_time[0].empty())
+            {
+                //logDbMessage("No Tariff defined for DayType: "+to_string(iDayType), "DB");
+                return(-2); //No Tariff defined for DayType
+            }
+            maxZone=0;
+            for(int k=1;k<10;k++){
 
-			maxZone=0;
-			for(int k=1;k<10;k++){
-				if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
-				{
-					maxZone=k;
-					//operation::getInstance()->writelog ("max zone for current day is: "+ std:: to_string(maxZone),"DB");
-					break;
-				}
-			}
-			//---------------------
-			if(maxZone==0) return(-4); //time zone wrong
-			for(int k=1;k<=maxZone;k++){
-				rateType[k]=std::stoi(gtariff[iTransType][iDayType].rate_type[k-1]);
-				chargeRate[k]=std::stod(gtariff[iTransType][iDayType].charge_rate[k-1]);
-				CTB[k]=std::stoi(gtariff[iTransType][iDayType].charge_time_block[k-1]);
-				zoneMin[k]=std::stod(gtariff[iTransType][iDayType].min_charge[k-1]);
-				zoneMax[k]=std::stod(gtariff[iTransType][iDayType].max_charge[k-1]);
-				GT[k]=std::stoi(gtariff[iTransType][iDayType].grace_time[k-1]);
-				firstAdd[k]=std::stod(gtariff[iTransType][iDayType].first_add[k-1]);
-				firstFree[k]=std::stoi(gtariff[iTransType][iDayType].first_free[k-1]);
-				secondAdd[k]=std::stod(gtariff[iTransType][iDayType].second_add[k-1]);
-				secondFree[k]=std::stoi(gtariff[iTransType][iDayType].second_free[k-1]);
-				thirdAdd[k]=std::stod(gtariff[iTransType][iDayType].third_add[k-1]);
-				thirdFree[k]=std::stoi(gtariff[iTransType][iDayType].third_free[k-1]);
-				iAllowance[k]=std::stoi(gtariff[iTransType][iDayType].allowance[k-1]);
-				
-				//operation::getInstance()->writelog("Zone time from db is: " + gtariff[iTransType][iDayType].start_time[k-1], "DB");
-				zt.SetTime(gtariff[iTransType][iDayType].start_time[k-1]);
-				//operation::getInstance()->writelog("Zone time convert is: " + zt.DateTimeString(), "DB");
-				dtStr=PD.DateString()+" "+zt.TimeString();
-				
-				//operation::getInstance()->writelog("Zone time plus pd date is: " + dtStr, "DB");
-				zoneTime[k].SetTime(dtStr);
-				//operation::getInstance()->writelog("time zone" + std::to_string(k) + " start: " + zoneTime[k].DateTimeString(), "DB");
-			}
-			dayMin = std::stod(gtariff[iTransType][iDayType].whole_day_min);
-			dayMax = std::stod(gtariff[iTransType][iDayType].whole_day_max);
-			iZoneCutoff = std::stoi(gtariff[iTransType][iDayType].zone_cutoff);
-			iDayCutoff = std::stoi(gtariff[iTransType][iDayType].day_cutoff);
+                if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
+                {
+                    maxZone=k;
+                    //logDbMessage("Max zone for last day is: " + to_string(maxZone), "DB");
+                    break;
+                }
+            };
+            
+            if(maxZone==0) return(-4); //time zone wrong
+            // put last zone of last day in array(0)
+            rateType[0]=std::stoi(gtariff[iTransType][iDayType].rate_type[maxZone-1]);
+            chargeRate[0]=std::stod(gtariff[iTransType][iDayType].charge_rate[maxZone-1]);
+            CTB[0]=std::stoi(gtariff[iTransType][iDayType].charge_time_block[maxZone-1]);
+            zoneMin[0]=std::stod(gtariff[iTransType][iDayType].min_charge[maxZone-1]);
+            zoneMax[0]=std::stod(gtariff[iTransType][iDayType].max_charge[maxZone-1]);
+            GT[0]=std::stoi(gtariff[iTransType][iDayType].grace_time[maxZone-1]);
+            firstAdd[0]=std::stod(gtariff[iTransType][iDayType].first_add[maxZone-1]);
+            firstFree[0]=std::stoi(gtariff[iTransType][iDayType].first_free[maxZone-1]);
+            secondAdd[0]=std::stod(gtariff[iTransType][iDayType].second_add[maxZone-1]);
+            secondFree[0]=std::stoi(gtariff[iTransType][iDayType].second_free[maxZone-1]);
+            thirdAdd[0]=std::stod(gtariff[iTransType][iDayType].third_add[maxZone-1]);
+            thirdFree[0]=std::stoi(gtariff[iTransType][iDayType].third_free[maxZone-1]);
+            iAllowance[0]=std::stoi(gtariff[iTransType][iDayType].allowance[maxZone-1]);
+            zt.SetTime(gtariff[iTransType][iDayType].start_time[maxZone-1]);
+            
+            dtStr=Lpd.DateString()+" "+ zt.TimeString();
 
-			//operation::getInstance()->writelog("daymin =" + Common::getInstance()->SetFeeFormat(dayMin), "DB");
-			//operation::getInstance()->writelog("dayMax = "+ Common::getInstance()->SetFeeFormat(dayMax), "DB");
-			//get firstzone for next day
-			Npd.SetTime(PD.GetUnixTimestamp()+86400);      // add one day
-			iDayType=GetDayType(Npd);
-			//operation::getInstance()->writelog("Next day type: "+ to_string(iDayType), "DB");
-			if(gtariff[iTransType][iDayType].start_time[0].empty())
-			{
-				operation::getInstance()->writelog ("No tariff defined for DayType: " + to_string(iDayType), "DB");
-				return(-2); //No Tariff defined for DayType
-			}
-			iNextGT = stoi(gtariff[iTransType][iDayType].grace_time[0]);
-			iNextRT = stoi(gtariff[iTransType][iDayType].rate_type[0]);
-			zt.SetTime(gtariff[iTransType][iDayType].start_time[0]);
-			if(iDayCutoff==1)
-				dtStr=Npd.DateString()+" 00:00:00";
-			else
-				dtStr=Npd.DateString()+" "+zt.TimeString();
-			//operation::getInstance()->writelog("zone time is:" + dtStr,"DB");
-			zoneTime[maxZone+1].SetTime(dtStr);
-			//operation::getInstance()->writelog("Next day zone time start: " + zoneTime[maxZone+1].DateTimeString(), "DB");
-			GT[maxZone+1]=iNextGT;
-			rateType[maxZone+1]=iNextRT;
-			bGotDayInfo = true;
-			
-			if((dayMin==dayMax)&&(dayMin>0))
-			{
-				//operation::getInstance()->writelog ("In 24hrmode","DB");
-				b24HourBlock= true;
-				s24HourFee=dayMin;
-				dayMin=0;
-				dayMax=0;
-			}
-			else
-			{
-			//	operation::getInstance()->writelog ("Out 24hrmode","DB");
-				b24HourBlock= false;
-				i24HourBlocks=0;
-			}
-			
-		}       // end bGotDayInfo==false
-		//if defined 24 hour block, and blocks>0
-		if(b24HourBlock == true)
-		{
-			timediff=calTime.diffhour(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-			i24HourBlocks=timediff/24;
-		}
-		else
-			i24HourBlocks=0;
-		
-		if(i24HourBlocks>0)
-		{
-			s24HourCharges=s24HourCharges+s24HourFee;
-			pt.SetTime(pt.GetUnixTimestamp()+86400);
-			currentRateType=0;
-			bNoGT= true;
-			//operation::getInstance()->writelog("24hr charge: " + s24HourCharges, "DB");
-		}
-		else
-		{
-			for(int k=1;k<=maxZone+1;k++)
-			{
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[k].GetUnixTimestamp());
-				
-				if(timediff>0)
-				{
-					currentZone=k-1;
-					//operation::getInstance()->writelog("Enter to zone" + std::to_string(k-1) , "DB");
-					break;
-				}
-			};
-			//operation::getInstance()->writelog("current zone is: " + std::to_string(currentZone), "DB");
-			
-			currentRateType = rateType[currentZone];
-			currentRate = chargeRate[currentZone];
-			currentCTB = CTB[currentZone];
-			currentMin = zoneMin[currentZone];
-			currentMax = zoneMax[currentZone];
-			currentGT = GT[currentZone];
-			currentAdd = firstAdd[currentZone];
-			currentFree = firstFree[currentZone];
+            zoneTime[0].SetTime(dtStr);
+            //logDbMessage ("lastest Zone time for last day start:" + zoneTime[0].DateTimeString(), "DB");
+            //get day of PD
+            iDayType=GetDayType(PD);
+            //logDbMessage("Current day Type: "+ std::to_string(iDayType), "DB");
+            if(gtariff[iTransType][iDayType].start_time[0].empty())
+            {
+                logDbMessage ("No Tariff defined for Daytype: "+ to_string(iDayType), "DB");
+                return(-2); //No Tariff defined for DayType
+            }
 
-			currentAdd2 = secondAdd[currentZone];
-			currentFree2 = secondFree[currentZone];
-			currentAdd3 = thirdAdd[currentZone];
-			currentFree3 = thirdFree[currentZone];
+            maxZone=0;
+            for(int k=1;k<10;k++){
+                if(gtariff[iTransType][iDayType].end_time[k-1].compare(gtariff[iTransType][iDayType].start_time[0])==0)
+                {
+                    maxZone=k;
+                    //logDbMessage ("max zone for current day is: "+ std:: to_string(maxZone),"DB");
+                    break;
+                }
+            }
+            //---------------------
+            if(maxZone==0) return(-4); //time zone wrong
+            for(int k=1;k<=maxZone;k++){
+                rateType[k]=std::stoi(gtariff[iTransType][iDayType].rate_type[k-1]);
+                chargeRate[k]=std::stod(gtariff[iTransType][iDayType].charge_rate[k-1]);
+                CTB[k]=std::stoi(gtariff[iTransType][iDayType].charge_time_block[k-1]);
+                zoneMin[k]=std::stod(gtariff[iTransType][iDayType].min_charge[k-1]);
+                zoneMax[k]=std::stod(gtariff[iTransType][iDayType].max_charge[k-1]);
+                GT[k]=std::stoi(gtariff[iTransType][iDayType].grace_time[k-1]);
+                firstAdd[k]=std::stod(gtariff[iTransType][iDayType].first_add[k-1]);
+                firstFree[k]=std::stoi(gtariff[iTransType][iDayType].first_free[k-1]);
+                secondAdd[k]=std::stod(gtariff[iTransType][iDayType].second_add[k-1]);
+                secondFree[k]=std::stoi(gtariff[iTransType][iDayType].second_free[k-1]);
+                thirdAdd[k]=std::stod(gtariff[iTransType][iDayType].third_add[k-1]);
+                thirdFree[k]=std::stoi(gtariff[iTransType][iDayType].third_free[k-1]);
+                iAllowance[k]=std::stoi(gtariff[iTransType][iDayType].allowance[k-1]);
+                
+                //logDbMessage("Zone time from db is: " + gtariff[iTransType][iDayType].start_time[k-1], "DB");
+                zt.SetTime(gtariff[iTransType][iDayType].start_time[k-1]);
+                //logDbMessage("Zone time convert is: " + zt.DateTimeString(), "DB");
+                dtStr=PD.DateString()+" "+zt.TimeString();
+                
+                //logDbMessage("Zone time plus pd date is: " + dtStr, "DB");
+                zoneTime[k].SetTime(dtStr);
+                //logDbMessage("time zone" + std::to_string(k) + " start: " + zoneTime[k].DateTimeString(), "DB");
+            }
+            dayMin = std::stod(gtariff[iTransType][iDayType].whole_day_min);
+            dayMax = std::stod(gtariff[iTransType][iDayType].whole_day_max);
+            iZoneCutoff = std::stoi(gtariff[iTransType][iDayType].zone_cutoff);
+            iDayCutoff = std::stoi(gtariff[iTransType][iDayType].day_cutoff);
 
-			currentAllowance = iAllowance[currentZone];
-			
-			if((currentRateType<1)||(currentRateType>2))
-			return(-3);
-			//operation::getInstance()->writelog("currentRateType: " + std::to_string(currentRateType), "DB");
-			//operation::getInstance()->writelog("current Rate: "+ Common::getInstance()->SetFeeFormat(currentRate),"DB");
-			//operation::getInstance()->writelog("currentCTB: "+ std::to_string(currentCTB),"DB");
-			//operation::getInstance()->writelog("currentFree: " + Common::getInstance()->SetFeeFormat(currentFree),"DB");
-			//operation::getInstance()->writelog("currentAdd: " + Common::getInstance()->SetFeeFormat(currentAdd),"DB");
-			//operation::getInstance()->writelog("currentFree2: " + Common::getInstance()->SetFeeFormat(currentFree2),"DB");
-			//operation::getInstance()->writelog("currentAdd2: " + Common::getInstance()->SetFeeFormat(currentAdd2),"DB");
-			//operation::getInstance()->writelog("currentFree3: " + Common::getInstance()->SetFeeFormat(currentFree3),"DB");
-			//operation::getInstance()->writelog("currentAdd3: " + Common::getInstance()->SetFeeFormat(currentAdd3),"DB");
-			//operation::getInstance()->writelog("currentGT: "+ std::to_string(currentGT),"DB");
-			//operation::getInstance()->writelog("currentMax: "+ Common::getInstance()->SetFeeFormat(currentMax),"DB");
-			//operation::getInstance()->writelog("currentMin: "+ Common::getInstance()->SetFeeFormat(currentMin),"DB");
-			//operation::getInstance()->writelog("currentAllowance: "+ Common::getInstance()->SetFeeFormat(currentAllowance),"DB");
-		}
-		
-		// check grace time
-		
-		if(bNoGT==false)
-		{
-			if(currentGT>0)
-			{
-				//operation::getInstance()->writelog("fee start time: " + pt.DateTimeString(),"DB");
-				//operation::getInstance()->writelog("cal fee time: " + currentTime.DateTimeString(),"DB");
-				//---------
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-				//operation::getInstance()->writelog("parked time = " + std::to_string(timediff),"DB");
-				if(timediff>currentGT)
-				{
-				//	operation::getInstance()->writelog("No grace time","DB");
-					bNoGT=true;
-				}
-				else
-				{
-					//operation::getInstance()->writelog("within grace period","DB");
-					return(0);
-				}
-			}
-			else
-					bNoGT=true;
-		}
-		
-		// push time, get zone fee
-		zoneFee =0;
+            //logDbMessage("daymin =" + Common::getInstance()->SetFeeFormat(dayMin), "DB");
+            //logDbMessage("dayMax = "+ Common::getInstance()->SetFeeFormat(dayMax), "DB");
+            //get firstzone for next day
+            Npd.SetTime(PD.GetUnixTimestamp()+86400);      // add one day
+            iDayType=GetDayType(Npd);
+            //logDbMessage("Next day type: "+ to_string(iDayType), "DB");
+            if(gtariff[iTransType][iDayType].start_time[0].empty())
+            {
+                logDbMessage ("No tariff defined for DayType: " + to_string(iDayType), "DB");
+                return(-2); //No Tariff defined for DayType
+            }
+            iNextGT = stoi(gtariff[iTransType][iDayType].grace_time[0]);
+            iNextRT = stoi(gtariff[iTransType][iDayType].rate_type[0]);
+            zt.SetTime(gtariff[iTransType][iDayType].start_time[0]);
+            if(iDayCutoff==1)
+                dtStr=Npd.DateString()+" 00:00:00";
+            else
+                dtStr=Npd.DateString()+" "+zt.TimeString();
+            //logDbMessage("zone time is:" + dtStr,"DB");
+            zoneTime[maxZone+1].SetTime(dtStr);
+            //logDbMessage("Next day zone time start: " + zoneTime[maxZone+1].DateTimeString(), "DB");
+            GT[maxZone+1]=iNextGT;
+            rateType[maxZone+1]=iNextRT;
+            bGotDayInfo = true;
+            
+            if((dayMin==dayMax)&&(dayMin>0))
+            {
+                //logDbMessage ("In 24hrmode","DB");
+                b24HourBlock= true;
+                s24HourFee=dayMin;
+                dayMin=0;
+                dayMax=0;
+            }
+            else
+            {
+            //	logDbMessage ("Out 24hrmode","DB");
+                b24HourBlock= false;
+                i24HourBlocks=0;
+            }
+            
+        }       // end bGotDayInfo==false
+        //if defined 24 hour block, and blocks>0
+        if(b24HourBlock == true)
+        {
+            timediff=calTime.diffhour(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+            i24HourBlocks=timediff/24;
+        }
+        else
+            i24HourBlocks=0;
+        
+        if(i24HourBlocks>0)
+        {
+            s24HourCharges=s24HourCharges+s24HourFee;
+            pt.SetTime(pt.GetUnixTimestamp()+86400);
+            currentRateType=0;
+            bNoGT= true;
+            //logDbMessage("24hr charge: " + s24HourCharges, "DB");
+        }
+        else
+        {
+            for(int k=1;k<=maxZone+1;k++)
+            {
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[k].GetUnixTimestamp());
+                
+                if(timediff>0)
+                {
+                    currentZone=k-1;
+                    //logDbMessage("Enter to zone" + std::to_string(k-1) , "DB");
+                    break;
+                }
+            };
+            //logDbMessage("current zone is: " + std::to_string(currentZone), "DB");
+            
+            currentRateType = rateType[currentZone];
+            currentRate = chargeRate[currentZone];
+            currentCTB = CTB[currentZone];
+            currentMin = zoneMin[currentZone];
+            currentMax = zoneMax[currentZone];
+            currentGT = GT[currentZone];
+            currentAdd = firstAdd[currentZone];
+            currentFree = firstFree[currentZone];
 
-		if(currentRateType==1)         // hourly charge
-		{
-			if (currentCTB==0)
-				return(-3);
-			if(currentAllowance>0)
-			{
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-				//operation::getInstance()->writelog("time diff for allowance is "+ timediff,"DB");
-				if(((charge>0)||(dayFee>0))&&(timediff<=currentAllowance))
-				{
-					//operation::getInstance()->writelog("within allowance, no change","DB");
-					break;
-				}
-			};
-			
-			if(currentFree>0)
-			{
-				if(((operation::getInstance()->tParas.giFirstHourMode==0)||((dayFee==0)&&(charge==0)))&& (bFirstFreed==false))
-				{
-					//operation::getInstance()->writelog("gifirsthour: "+ std::to_string(operation::getInstance()->tParas.giFirstHour),"DB");
+            currentAdd2 = secondAdd[currentZone];
+            currentFree2 = secondFree[currentZone];
+            currentAdd3 = thirdAdd[currentZone];
+            currentFree3 = thirdFree[currentZone];
 
-					if(operation::getInstance()->tParas.giFirstHour>0)
-					{
-						timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-						if(timediff<=currentFree)
-						{
-							if(iZoneCutoff==1)
-								pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-							else
-								pt.SetTime(pt.GetUnixTimestamp()+(currentFree*60));
+            currentAllowance = iAllowance[currentZone];
+            
+            if((currentRateType<1)||(currentRateType>2))
+            return(-3);
+            //logDbMessage("currentRateType: " + std::to_string(currentRateType), "DB");
+            //logDbMessage("current Rate: "+ Common::getInstance()->SetFeeFormat(currentRate),"DB");
+            //logDbMessage("currentCTB: "+ std::to_string(currentCTB),"DB");
+            //logDbMessage("currentFree: " + Common::getInstance()->SetFeeFormat(currentFree),"DB");
+            //logDbMessage("currentAdd: " + Common::getInstance()->SetFeeFormat(currentAdd),"DB");
+            //logDbMessage("currentFree2: " + Common::getInstance()->SetFeeFormat(currentFree2),"DB");
+            //logDbMessage("currentAdd2: " + Common::getInstance()->SetFeeFormat(currentAdd2),"DB");
+            //logDbMessage("currentFree3: " + Common::getInstance()->SetFeeFormat(currentFree3),"DB");
+            //logDbMessage("currentAdd3: " + Common::getInstance()->SetFeeFormat(currentAdd3),"DB");
+            //logDbMessage("currentGT: "+ std::to_string(currentGT),"DB");
+            //logDbMessage("currentMax: "+ Common::getInstance()->SetFeeFormat(currentMax),"DB");
+            //logDbMessage("currentMin: "+ Common::getInstance()->SetFeeFormat(currentMin),"DB");
+            //logDbMessage("currentAllowance: "+ Common::getInstance()->SetFeeFormat(currentAllowance),"DB");
+        }
+        
+        // check grace time
+        
+        if(bNoGT==false)
+        {
+            if(currentGT>0)
+            {
+                //logDbMessage("fee start time: " + pt.DateTimeString(),"DB");
+                //logDbMessage("cal fee time: " + currentTime.DateTimeString(),"DB");
+                //---------
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                //logDbMessage("parked time = " + std::to_string(timediff),"DB");
+                if(timediff>currentGT)
+                {
+                //	logDbMessage("No grace time","DB");
+                    bNoGT=true;
+                }
+                else
+                {
+                    //logDbMessage("within grace period","DB");
+                    return(0);
+                }
+            }
+            else
+                    bNoGT=true;
+        }
+        
+        // push time, get zone fee
+        zoneFee =0;
 
-							//operation::getInstance()->writelog("New pt time in first mode: "+ pt.DateTimeString(),"DB");
-							zoneFee = currentAdd;
-							//--- add for change per mins charge
-							timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-							if(timediff<=0)
-							{
-								dayFee=dayFee + zoneFee;
-								break;
-							}
-							else
-							{
-								if((operation::getInstance()->tParas.giFirstHour>1)&&(iZoneCutoff==0))
-								{
-									
-									timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-									if((timediff<=0)&&(rateType[currentZone+1]==2))
-									{
-										zoneFee= currentAdd;
-										goto SettleFirstFree1;
-									}
-									pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
-									zoneFee = currentAdd + currentAdd2;
-									timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-									if(timediff<=0)
-									{
-										dayFee=dayFee + zoneFee;
-										break;
-									}
-									else
-									{
-										if(operation::getInstance()->tParas.giFirstHour>2)
-										{
-											timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-											if((timediff<=0)&& (rateType[currentZone+1]==2))
-											{
-												zoneFee = currentAdd + currentAdd2;
-												goto SettleFirstFree1;
-											}
-											pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
-											zoneFee = currentAdd + currentAdd2 + currentAdd3;
-											timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-											if(timediff<=0)
-											{
-												dayFee=dayFee + zoneFee;
-												break;
-											}
-										}
-									}
-								}
+        if(currentRateType==1)         // hourly charge
+        {
+            if (currentCTB==0)
+                return(-3);
+            if(currentAllowance>0)
+            {
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                //logDbMessage("time diff for allowance is "+ timediff,"DB");
+                if(((charge>0)||(dayFee>0))&&(timediff<=currentAllowance))
+                {
+                    //logDbMessage("within allowance, no change","DB");
+                    break;
+                }
+            };
+            
+            if(currentFree>0)
+            {
+                if(((paras.giFirstHourMode==0)||((dayFee==0)&&(charge==0)))&& (bFirstFreed==false))
+                {
+                    //logDbMessage("gifirsthour: "+ std::to_string(paras.giFirstHour),"DB");
+
+                    if(paras.giFirstHour>0)
+                    {
+                        timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                        if(timediff<=currentFree)
+                        {
+                            if(iZoneCutoff==1)
+                                pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                            else
+                                pt.SetTime(pt.GetUnixTimestamp()+(currentFree*60));
+
+                            //logDbMessage("New pt time in first mode: "+ pt.DateTimeString(),"DB");
+                            zoneFee = currentAdd;
+                            //--- add for change per mins charge
+                            timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                            if(timediff<=0)
+                            {
+                                dayFee=dayFee + zoneFee;
+                                break;
+                            }
+                            else
+                            {
+                                if((paras.giFirstHour>1)&&(iZoneCutoff==0))
+                                {
+                                    
+                                    timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                                    if((timediff<=0)&&(rateType[currentZone+1]==2))
+                                    {
+                                        zoneFee= currentAdd;
+                                        goto SettleFirstFree1;
+                                    }
+                                    pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
+                                    zoneFee = currentAdd + currentAdd2;
+                                    timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                    if(timediff<=0)
+                                    {
+                                        dayFee=dayFee + zoneFee;
+                                        break;
+                                    }
+                                    else
+                                    {
+                                        if(paras.giFirstHour>2)
+                                        {
+                                            timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                                            if((timediff<=0)&& (rateType[currentZone+1]==2))
+                                            {
+                                                zoneFee = currentAdd + currentAdd2;
+                                                goto SettleFirstFree1;
+                                            }
+                                            pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+                                            zoneFee = currentAdd + currentAdd2 + currentAdd3;
+                                            timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                            if(timediff<=0)
+                                            {
+                                                dayFee=dayFee + zoneFee;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
 
 SettleFirstFree1:
-								if(operation::getInstance()->tParas.giFirstHourMode==1)
-								bFirstFreed=true;
-							}
-						}
-						else
-						{
-							zoneFee = currentAdd;
-							pt.SetTime(pt.GetUnixTimestamp()+(currentFree*60));
-							timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-							if(timediff<=0)
-							{
-								dayFee=dayFee + zoneFee;
-								break;
-							}
-							else
-							{
-								if(operation::getInstance()->tParas.giFirstHour>1)
-								{
-									timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-									if(timediff<= currentFree2)
-									{
-										if(iZoneCutoff==1)
-										pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-										else
-										pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
-										//operation::getInstance()->writelog( "New pt time in first mode 2 "+pt.DateTimeString(),"DB");
-										zoneFee = currentAdd + currentAdd2;
-										timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-										if(timediff<=0)
-										{
-											dayFee=dayFee + zoneFee;
-											break;
-										}
-										else
-										{
-											if((operation::getInstance()->tParas.giFirstHour>2)&&(iZoneCutoff==0))
-											{
-												timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-												if((timediff<=0)&& (rateType[currentZone+1]==2))
-												{
-													zoneFee = currentAdd + currentAdd2;
-													goto SettleFirstFree2;
-												}
-												pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
-												zoneFee = currentAdd + currentAdd2 + currentAdd3;
-												timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-												if(timediff<=0)
-												{
-													dayFee=dayFee + zoneFee;
-													break;
-												}
-											}
+                                if(paras.giFirstHourMode==1)
+                                bFirstFreed=true;
+                            }
+                        }
+                        else
+                        {
+                            zoneFee = currentAdd;
+                            pt.SetTime(pt.GetUnixTimestamp()+(currentFree*60));
+                            timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                            if(timediff<=0)
+                            {
+                                dayFee=dayFee + zoneFee;
+                                break;
+                            }
+                            else
+                            {
+                                if(paras.giFirstHour>1)
+                                {
+                                    timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                                    if(timediff<= currentFree2)
+                                    {
+                                        if(iZoneCutoff==1)
+                                        pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                                        else
+                                        pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
+                                        //logDbMessage( "New pt time in first mode 2 "+pt.DateTimeString(),"DB");
+                                        zoneFee = currentAdd + currentAdd2;
+                                        timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                        if(timediff<=0)
+                                        {
+                                            dayFee=dayFee + zoneFee;
+                                            break;
+                                        }
+                                        else
+                                        {
+                                            if((paras.giFirstHour>2)&&(iZoneCutoff==0))
+                                            {
+                                                timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                                                if((timediff<=0)&& (rateType[currentZone+1]==2))
+                                                {
+                                                    zoneFee = currentAdd + currentAdd2;
+                                                    goto SettleFirstFree2;
+                                                }
+                                                pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+                                                zoneFee = currentAdd + currentAdd2 + currentAdd3;
+                                                timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                                if(timediff<=0)
+                                                {
+                                                    dayFee=dayFee + zoneFee;
+                                                    break;
+                                                }
+                                            }
 SettleFirstFree2:
-											if(operation::getInstance()->tParas.giFirstHourMode==1)
-											bFirstFreed=true;
-										}
-									}
-									else
-									{
-										zoneFee = currentAdd + currentAdd2;
-										pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
-										//operation::getInstance()->writelog( "2nd New pt time"+pt.DateTimeString(),"DB");
-										timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-										if(timediff<=0)
-										{
-											dayFee=dayFee + zoneFee;
-											break;
-										}
-										else
-										{
-											if(operation::getInstance()->tParas.giFirstHour>2)
-											{
-												timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-												if(timediff<= currentFree3)
-												{
-													if(iZoneCutoff==1)
-													pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-													else
-													pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
-													//operation::getInstance()->writelog( "New pt time in first mode 3 "+pt.DateTimeString(),"DB");
-													zoneFee = currentAdd + currentAdd2 + currentAdd3;
-													timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-													if(timediff<=0)
-													{
-														dayFee=dayFee + zoneFee;
-														break;
-													}
-													else
-													{
-														if(operation::getInstance()->tParas.giFirstHourMode==1)
-														bFirstFreed=true;
-													}
-												}
-												else
-												{
-													
-													zoneFee = currentAdd + currentAdd2 + currentAdd3;
-													pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
-													//operation::getInstance()->writelog( "3rd New pt time"+pt.DateTimeString(),"DB");
-													timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-													if(timediff<=0)
-													{
-														dayFee=dayFee + zoneFee;
-														break;
-													}
-													else
-													{
-														if(operation::getInstance()->tParas.giFirstHourMode==1)
-														bFirstFreed = true;
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			//operation::getInstance()->writelog("Zone Fee after first hour mode is "+Common::getInstance()->SetFeeFormat(zoneFee),"DB");
-			//  one time zone  while 
-			while(1)
-			{
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-				
-				if(timediff<=0) break;
-				
-				if(currentAllowance>0)
-				{
-					timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-					if(((charge>0)||(dayFee>0)||(zoneFee>0))&&(timediff<=currentAllowance))
-					{
-						//operation::getInstance()->writelog("within allowance, no change","DB");
-					}
-					else
-					zoneFee = zoneFee + currentRate;
-				}
-				else
-				zoneFee = zoneFee + currentRate;
-				
-				if((currentMax>0)&&(zoneFee>=currentMax))
-				{
-					pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-					break;
-				}
-				pt.SetTime(pt.GetUnixTimestamp()+(currentCTB*60));
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-				if(timediff<=0) break;
-			}   // end while for one time zone
-			
-			if(iZoneCutoff==1)
-			{
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-				if(timediff<0)
-				{
-					if((operation::getInstance()->tParas.giHr2PEAllowance>0)&& (rateType[currentZone+1]==2))
-					{
-						timediff=calTime.diffmin(entryTime.GetUnixTimestamp(), payDT.GetUnixTimestamp());
-						if(timediff>operation::getInstance()->tParas.giHr2PEAllowance)
-						{
-							pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-						}
-					}
-					else
-					{
-						pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-					}
-				}
-			};
-			//operation::getInstance()->writelog("zone Fee is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
-			
-		};	
-		
-		if(currentRateType==2)      //per entry charge
-		{
-			//operation::getInstance()->writelog("zone Fee before enter currentRateType is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
-			if((operation::getInstance()->tParas.giMCyclePerDay>0)&&(iTransType== 2))
-			{
-				if((bMCPerDayChecked== false)&&(currentRate>0))
-				{
-					haspaid= HasPaidWithinPeriod(zoneTime[currentZone].DateTimeString(),zoneTime[currentZone+1].DateTimeString());
-					if(haspaid>0)
-					{
-						currentRate=0;
-					}
-				}
-				bMCPerDayChecked=true;
-			}
-			if(currentAllowance>0)
-			{
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
-				
-				if(((charge>0)||(dayFee>0))&&(timediff<=currentAllowance))
-				{
-					operation::getInstance()->writelog("within allowance, no change","DB");
-				}
-				else
-				zoneFee = zoneFee + currentRate;
-			}
-			else
-			zoneFee = zoneFee + currentRate;
-			
-			//operation::getInstance()->writelog("PEallowance = "+ std::to_string(operation::getInstance()->tParas.giPEAllowance),"DB");
-			
-			if(operation::getInstance()->tParas.giPEAllowance>0)
-			{
-				//operation::getInstance()->writelog("pt before gi Allowance is : "+pt.DateTimeString(),"DB");
-				timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
-				//operation::getInstance()->writelog("time diff in gi is "+std::to_string(timediff),"DB");
-				if(timediff<operation::getInstance()->tParas.giPEAllowance)
-				{
-					pt.SetTime(pt.GetUnixTimestamp()+(operation::getInstance()->tParas.giPEAllowance*60));
-				//	operation::getInstance()->writelog("pt in gi Allowance 1 is : "+pt.DateTimeString(),"DB");
-				}
-				else
-				{
-					pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-				//	operation::getInstance()->writelog("pt in gi Allowance 2 is : "+pt.DateTimeString(),"DB");
-				}
-			//operation::getInstance()->writelog("pt in gi Allowance is : "+pt.DateTimeString(),"DB");
-			}
-			else
-			pt.SetTime(zoneTime[currentZone+1].DateTimeString());
-		//	operation::getInstance()->writelog("pre entry zone Fee is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
-		};
-		//operation::getInstance()->writelog("day Fee before current zone is: "+ Common::getInstance()->SetFeeFormat(dayFee),"DB");
-		//operation::getInstance()->writelog("zone Fee before current zone is: "+Common::getInstance()->SetFeeFormat(zoneFee),"DB");
-		//operation::getInstance()->writelog("currentMin Fee is: "+ Common::getInstance()->SetFeeFormat(currentMin),"DB");
-		//operation::getInstance()->writelog("currentMax Fee is: "+ Common::getInstance()->SetFeeFormat(currentMax),"DB");
-		if((currentMin>0)&&(zoneFee<currentMin))
-		zoneFee=currentMin;
-		if((currentMax>0)&&(zoneFee>currentMax))
-		zoneFee=currentMax;
-		dayFee = dayFee + zoneFee;
-		//operation::getInstance()->writelog("PD = "+PD.DateTimeString(),"DB");
-		//operation::getInstance()->writelog("pt = "+pt.DateTimeString(),"DB");
-		//operation::getInstance()->writelog("zone Fee is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
-		//operation::getInstance()->writelog("day Fee is: "+ Common::getInstance()->SetFeeFormat(dayFee),"DB");
-		//operation::getInstance()->writelog(std::to_string(PD.GetUnixTimestamp()),"DB");
-		//operation::getInstance()->writelog(std::to_string(pt.GetUnixTimestamp()),"DB");
-		timediff=calTime.diffday(PD.GetUnixTimestamp(),pt.GetUnixTimestamp()); 
-		//operation::getInstance()->writelog("diff day is: "+ std::to_string(timediff),"DB");
-		
-		if(timediff>0)
-		{
-		//	operation::getInstance()->writelog("day Feeq is: " + Common::getInstance()->SetFeeFormat(dayFee),"DB");
-		//	operation::getInstance()->writelog("charge Feeq is: " + Common::getInstance()->SetFeeFormat(charge),"DB");
-			if((dayMin>0)&&(dayFee<dayMin))
-			dayFee=dayMin;
-			if((dayMax>0)&&(dayFee>dayMax))
-			dayFee=dayMax;
-			charge=charge+dayFee;
-			dayFee=0;
-			bGotDayInfo= false;
-			PD.SetTime(PD.GetUnixTimestamp()+86400);
-			//operation::getInstance()->writelog("next day PD is:"+PD.DateTimeString(),"DB");
-			//operation::getInstance()->writelog("day Feeb is: "+ Common::getInstance()->SetFeeFormat(dayFee),"DB");
-			//operation::getInstance()->writelog("charge Feeb is: "+ Common::getInstance()->SetFeeFormat(charge),"DB");
-		}
-		timediff=calTime.diffmin(pt.GetUnixTimestamp(),currentTime.GetUnixTimestamp());
-		if(timediff<=0) break;
-		//operation::getInstance()->writelog("loop to start calcuation fee again","DB");
-	}        //end while(1) 
-	
-	if(dayFee>0) // day fee have not add into charge
-	{
-		//operation::getInstance()->writelog("day Fee0 is: " + Common::getInstance()->SetFeeFormat(dayFee),"DB");
-		//operation::getInstance()->writelog("charge Fee0 is: " + Common::getInstance()->SetFeeFormat(charge),"DB");
-		if((dayMin>0)&&(dayFee<dayMin))
-		dayFee=dayMin;
-		if((dayMax>0)&&(dayFee>dayMax))
-		dayFee=dayMax;
-		charge=charge+dayFee;
-		//operation::getInstance()->writelog("day Fee1 is: " + Common::getInstance()->SetFeeFormat(dayFee),"DB");
-		//operation::getInstance()->writelog("charge Fee1 is: " + Common::getInstance()->SetFeeFormat(charge),"DB");
-	}
-	//operation::getInstance()->writelog("After loop 24hr block ="+ std::to_string(b24HourBlock),"DB");
-	
-	if(b24HourBlock==true)
-	{
-	//	operation::getInstance()->writelog("b 24hr block ","DB");
-	//	operation::getInstance()->writelog("b 24hr charge: "+ Common::getInstance()->SetFeeFormat(s24HourCharges),"DB");
-		if(charge> s24HourFee) charge=s24HourFee;
-	//	operation::getInstance()->writelog("b charge: "+ Common::getInstance()->SetFeeFormat(charge),"DB");
-		charge= s24HourCharges+charge;
-	}
-	
-	if(operation::getInstance()->tParas.giTariffFeeMode>0)
-	{
-		iRet=RoundIt(charge, operation::getInstance()->tParas.giTariffFeeMode)/100;
-	}
-	else iRet=charge;
-	
-	//operation::getInstance()->writelog("Total fee is: " + Common::getInstance()->SetFeeFormat(iRet),"DB");
-	//operation::getInstance()->writelog("pt time is: "+pt.DateTimeString(),"DB");
-	
-	return(iRet);
-	
+                                            if(paras.giFirstHourMode==1)
+                                            bFirstFreed=true;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        zoneFee = currentAdd + currentAdd2;
+                                        pt.SetTime(pt.GetUnixTimestamp()+(currentFree2*60));
+                                        //logDbMessage( "2nd New pt time"+pt.DateTimeString(),"DB");
+                                        timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                        if(timediff<=0)
+                                        {
+                                            dayFee=dayFee + zoneFee;
+                                            break;
+                                        }
+                                        else
+                                        {
+                                            if(paras.giFirstHour>2)
+                                            {
+                                                timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                                                if(timediff<= currentFree3)
+                                                {
+                                                    if(iZoneCutoff==1)
+                                                    pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                                                    else
+                                                    pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+                                                    //logDbMessage( "New pt time in first mode 3 "+pt.DateTimeString(),"DB");
+                                                    zoneFee = currentAdd + currentAdd2 + currentAdd3;
+                                                    timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                                    if(timediff<=0)
+                                                    {
+                                                        dayFee=dayFee + zoneFee;
+                                                        break;
+                                                    }
+                                                    else
+                                                    {
+                                                        if(paras.giFirstHourMode==1)
+                                                        bFirstFreed=true;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    
+                                                    zoneFee = currentAdd + currentAdd2 + currentAdd3;
+                                                    pt.SetTime(pt.GetUnixTimestamp()+(currentFree3*60));
+                                                    //logDbMessage( "3rd New pt time"+pt.DateTimeString(),"DB");
+                                                    timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                                                    if(timediff<=0)
+                                                    {
+                                                        dayFee=dayFee + zoneFee;
+                                                        break;
+                                                    }
+                                                    else
+                                                    {
+                                                        if(paras.giFirstHourMode==1)
+                                                        bFirstFreed = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            //logDbMessage("Zone Fee after first hour mode is "+Common::getInstance()->SetFeeFormat(zoneFee),"DB");
+            //  one time zone  while 
+            while(1)
+            {
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                
+                if(timediff<=0) break;
+                
+                if(currentAllowance>0)
+                {
+                    timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                    if(((charge>0)||(dayFee>0)||(zoneFee>0))&&(timediff<=currentAllowance))
+                    {
+                        //logDbMessage("within allowance, no change","DB");
+                    }
+                    else
+                    zoneFee = zoneFee + currentRate;
+                }
+                else
+                zoneFee = zoneFee + currentRate;
+                
+                if((currentMax>0)&&(zoneFee>=currentMax))
+                {
+                    pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                    break;
+                }
+                pt.SetTime(pt.GetUnixTimestamp()+(currentCTB*60));
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                if(timediff<=0) break;
+            }   // end while for one time zone
+            
+            if(iZoneCutoff==1)
+            {
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                if(timediff<0)
+                {
+                    if((paras.giHr2PEAllowance>0)&& (rateType[currentZone+1]==2))
+                    {
+                        timediff=calTime.diffmin(entryTime.GetUnixTimestamp(), payDT.GetUnixTimestamp());
+                        if(timediff>paras.giHr2PEAllowance)
+                        {
+                            pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                        }
+                    }
+                    else
+                    {
+                        pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                    }
+                }
+            };
+            //logDbMessage("zone Fee is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
+            
+        };	
+        
+        if(currentRateType==2)      //per entry charge
+        {
+            //logDbMessage("zone Fee before enter currentRateType is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
+            if((paras.giMCyclePerDay>0)&&(iTransType== 2))
+            {
+                if((bMCPerDayChecked== false)&&(currentRate>0))
+                {
+                    haspaid= HasPaidWithinPeriod(zoneTime[currentZone].DateTimeString(),zoneTime[currentZone+1].DateTimeString());
+                    if(haspaid>0)
+                    {
+                        currentRate=0;
+                    }
+                }
+                bMCPerDayChecked=true;
+            }
+            if(currentAllowance>0)
+            {
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), currentTime.GetUnixTimestamp());
+                
+                if(((charge>0)||(dayFee>0))&&(timediff<=currentAllowance))
+                {
+                    logDbMessage("within allowance, no change","DB");
+                }
+                else
+                zoneFee = zoneFee + currentRate;
+            }
+            else
+            zoneFee = zoneFee + currentRate;
+            
+            //logDbMessage("PEallowance = "+ std::to_string(paras.giPEAllowance),"DB");
+            
+            if(paras.giPEAllowance>0)
+            {
+                //logDbMessage("pt before gi Allowance is : "+pt.DateTimeString(),"DB");
+                timediff=calTime.diffmin(pt.GetUnixTimestamp(), zoneTime[currentZone+1].GetUnixTimestamp());
+                //logDbMessage("time diff in gi is "+std::to_string(timediff),"DB");
+                if(timediff<paras.giPEAllowance)
+                {
+                    pt.SetTime(pt.GetUnixTimestamp()+(paras.giPEAllowance*60));
+                //	logDbMessage("pt in gi Allowance 1 is : "+pt.DateTimeString(),"DB");
+                }
+                else
+                {
+                    pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+                //	logDbMessage("pt in gi Allowance 2 is : "+pt.DateTimeString(),"DB");
+                }
+            //logDbMessage("pt in gi Allowance is : "+pt.DateTimeString(),"DB");
+            }
+            else
+            pt.SetTime(zoneTime[currentZone+1].DateTimeString());
+        //	logDbMessage("pre entry zone Fee is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
+        };
+        //logDbMessage("day Fee before current zone is: "+ Common::getInstance()->SetFeeFormat(dayFee),"DB");
+        //logDbMessage("zone Fee before current zone is: "+Common::getInstance()->SetFeeFormat(zoneFee),"DB");
+        //logDbMessage("currentMin Fee is: "+ Common::getInstance()->SetFeeFormat(currentMin),"DB");
+        //logDbMessage("currentMax Fee is: "+ Common::getInstance()->SetFeeFormat(currentMax),"DB");
+        if((currentMin>0)&&(zoneFee<currentMin))
+        zoneFee=currentMin;
+        if((currentMax>0)&&(zoneFee>currentMax))
+        zoneFee=currentMax;
+        dayFee = dayFee + zoneFee;
+        //logDbMessage("PD = "+PD.DateTimeString(),"DB");
+        //logDbMessage("pt = "+pt.DateTimeString(),"DB");
+        //logDbMessage("zone Fee is: "+ Common::getInstance()->SetFeeFormat(zoneFee),"DB");
+        //logDbMessage("day Fee is: "+ Common::getInstance()->SetFeeFormat(dayFee),"DB");
+        //logDbMessage(std::to_string(PD.GetUnixTimestamp()),"DB");
+        //logDbMessage(std::to_string(pt.GetUnixTimestamp()),"DB");
+        timediff=calTime.diffday(PD.GetUnixTimestamp(),pt.GetUnixTimestamp()); 
+        //logDbMessage("diff day is: "+ std::to_string(timediff),"DB");
+        
+        if(timediff>0)
+        {
+        //	logDbMessage("day Feeq is: " + Common::getInstance()->SetFeeFormat(dayFee),"DB");
+        //	logDbMessage("charge Feeq is: " + Common::getInstance()->SetFeeFormat(charge),"DB");
+            if((dayMin>0)&&(dayFee<dayMin))
+            dayFee=dayMin;
+            if((dayMax>0)&&(dayFee>dayMax))
+            dayFee=dayMax;
+            charge=charge+dayFee;
+            dayFee=0;
+            bGotDayInfo= false;
+            PD.SetTime(PD.GetUnixTimestamp()+86400);
+            //logDbMessage("next day PD is:"+PD.DateTimeString(),"DB");
+            //logDbMessage("day Feeb is: "+ Common::getInstance()->SetFeeFormat(dayFee),"DB");
+            //logDbMessage("charge Feeb is: "+ Common::getInstance()->SetFeeFormat(charge),"DB");
+        }
+        timediff=calTime.diffmin(pt.GetUnixTimestamp(),currentTime.GetUnixTimestamp());
+        if(timediff<=0) break;
+        //logDbMessage("loop to start calcuation fee again","DB");
+    }        //end while(1) 
+    
+    if(dayFee>0) // day fee have not add into charge
+    {
+        //logDbMessage("day Fee0 is: " + Common::getInstance()->SetFeeFormat(dayFee),"DB");
+        //logDbMessage("charge Fee0 is: " + Common::getInstance()->SetFeeFormat(charge),"DB");
+        if((dayMin>0)&&(dayFee<dayMin))
+        dayFee=dayMin;
+        if((dayMax>0)&&(dayFee>dayMax))
+        dayFee=dayMax;
+        charge=charge+dayFee;
+        //logDbMessage("day Fee1 is: " + Common::getInstance()->SetFeeFormat(dayFee),"DB");
+        //logDbMessage("charge Fee1 is: " + Common::getInstance()->SetFeeFormat(charge),"DB");
+    }
+    //logDbMessage("After loop 24hr block ="+ std::to_string(b24HourBlock),"DB");
+    
+    if(b24HourBlock==true)
+    {
+    //	logDbMessage("b 24hr block ","DB");
+    //	logDbMessage("b 24hr charge: "+ Common::getInstance()->SetFeeFormat(s24HourCharges),"DB");
+        if(charge> s24HourFee) charge=s24HourFee;
+    //	logDbMessage("b charge: "+ Common::getInstance()->SetFeeFormat(charge),"DB");
+        charge= s24HourCharges+charge;
+    }
+    
+    if(paras.giTariffFeeMode>0)
+    {
+        iRet=RoundIt(charge, paras.giTariffFeeMode)/100;
+    }
+    else iRet=charge;
+    
+    //logDbMessage("Total fee is: " + Common::getInstance()->SetFeeFormat(iRet),"DB");
+    //logDbMessage("pt time is: "+pt.DateTimeString(),"DB");
+    
+    return(iRet);
+    
 
 }
 
 DBError db::LoadTariffTypeInfo()
 {
+    constexpr int kMaxAttempts = 2;
+    constexpr std::size_t kMaxTariffTypes = 2;
 
-	std::string sqlStmt;
-	std::string tbName="tariff_type_info";
+    try
+    {
+        logDbMessage("Load Tariff Type Info: Started", "DB");
 
-	vector<ReaderItem> selResult;
+        // =====================================================
+        // Try Local DB first.
+        // If no data, download once and retry.
+        // =====================================================
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+        {
+            std::vector<ReaderItem> result;
 
-	std::string sValue;
-	int r,j;
-	int w=-1;
-	int bTried=0;
+            const std::string sqlStmt =
+                "SELECT tariff_type, start_time, end_time "
+                "FROM tariff_type_info "
+                "ORDER BY start_time ASC";
 
-	try
-	{
+            const int ret = localdb->SQLSelect(sqlStmt, &result, true);
 
-		operation::getInstance()->writelog ("Load Tariff Type Info: Started", "DB");
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
 
-		Try_Again:
-		sqlStmt="Select tariff_type, start_time, end_time ";
-		sqlStmt= sqlStmt +  " FROM " + tbName + " Order by start_time ASC";
+                logDbMessage("Load Tariff Type Info failed.", "DB");
 
-		r=localdb->SQLSelect(sqlStmt,&selResult,true);
-		if (r!=0) return iLocalFail;
+                return iLocalFail;
+            }
 
-		if (selResult.size()>0){
-		
-			for(j=0;j<selResult.size();j++){
-				
-				gtarifftypeinfo[j].tariff_type = selResult[j].GetDataItem(0);
-				gtarifftypeinfo[j].start_time = selResult[j].GetDataItem(1);
-				gtarifftypeinfo[j].end_time = selResult[j].GetDataItem(2);
+            m_local_db_err_flag = 0;
 
-			}
+            // =================================================
+            // No Local data - download once and retry
+            // =================================================
+            if (result.empty())
+            {
+                if (attempt == 0)
+                {
+                    downloadtarifftypeinfo();
+                    continue;
+                }
 
-			operation::getInstance()->writelog("Load Tariff Type Info: success", "DB");
+                logDbMessage("Load Tariff Type Info error: no data in local DB.", "DB");
 
-			return iDBSuccess;
-		}
-		else{
-			if(bTried==0)
-			{
-				downloadtarifftypeinfo();
-				bTried=1;
-				goto Try_Again;
-				
-			}
+                return iNoData;
+            }
 
-			return iNoData;
-			operation::getInstance()->writelog("Load Tariff Type Info error: no data in local DB", "DB");
+            // =================================================
+            // Load tariff type information into RAM
+            // =================================================
+            const std::size_t loadCount =
+                std::min(
+                    result.size(),
+                    kMaxTariffTypes);
 
-		}
+            for (std::size_t index = 0; index < loadCount; ++index)
+            {
+                gtarifftypeinfo[index].tariff_type = result[index].GetDataItem(0);
+                gtarifftypeinfo[index].start_time = result[index].GetDataItem(1);
+                gtarifftypeinfo[index].end_time = result[index].GetDataItem(2);
+            }
 
-	}
-	catch(const std::exception &e)
-	{
-		operation::getInstance()->writelog("Load Tariff Type Info error: local DB error", "DB");
-		return iLocalFail;
-	}
+            if (result.size() > kMaxTariffTypes)
+            {
+                logDbMessage("Tariff Type Info contains more than  2 records. Extra records ignored.", "DB");
+            }
 
+            logDbMessage("Load Tariff Type Info: success", "DB");
+
+            return iDBSuccess;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Load Tariff Type Info error: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return iLocalFail;
+    }
+
+    return iNoData;
 }
 
-
-string db::CalParkedTime(long lpt)
+std::string db::CalParkedTime(long parkedMinutes)
 {
-	long pt;
-	int dt,hr,mt,rem1,rem2;
-	//string hr,mt;
-	string ret;
-	
-	if(lpt<0) ret="N/A";
-	else
-	{
-		pt=lpt;
-		dt=lpt/1440;
-		rem1=lpt%1440;
-		rem2=rem1%60;
-		hr=rem1/60;
-		mt=rem2;
-		if(dt>0)
-		{
-			if(hr>10)
-			{
-				if(mt>10)
-				ret= to_string(dt)+"D "+ to_string(hr)+":"+ to_string(mt);
-				else
-				ret= to_string(dt)+"D "+ to_string(hr)+":0"+ to_string(mt);
-			}
-			else
-			{
-				if(mt>10)
-				ret= to_string(dt)+"D 0"+ to_string(hr)+":"+ to_string(mt);
-				else
-				ret= to_string(dt)+"D 0"+ to_string(hr)+":0"+ to_string(mt);
-			}
-		}
-		else
-		{
-			if(hr>10)
-			{
-				if(mt>10)
-				ret= to_string(hr)+":"+ to_string(mt);
-				else
-				ret= to_string(hr)+":0"+ to_string(mt);
-			}
-			else
-			{
-				if(mt>10)
-				ret= to_string(hr)+":"+ to_string(mt);
-				else
-				ret= to_string(hr)+":0"+ to_string(mt);
-			}
-		}
-	}
-	return(ret);
+    if (parkedMinutes < 0)
+    {
+        return "N/A";
+    }
+
+    constexpr long kMinutesPerHour = 60;
+    constexpr long kMinutesPerDay = 24 * kMinutesPerHour;
+
+    const long days = parkedMinutes / kMinutesPerDay;
+    const long remainingMinutes = parkedMinutes % kMinutesPerDay;
+    const long hours = remainingMinutes / kMinutesPerHour;
+    const long minutes = remainingMinutes % kMinutesPerHour;
+
+    std::ostringstream output;
+
+    if (days > 0)
+    {
+        output
+            << days
+            << "D "
+            << std::setfill('0')
+            << std::setw(2)
+            << hours
+            << ":"
+            << std::setw(2)
+            << minutes;
+    }
+    else
+    {
+        output
+            << hours
+            << ":"
+            << std::setfill('0')
+            << std::setw(2)
+            << minutes;
+    }
+
+    return output.str();
 }
 
 DBError db::LoadXTariff()
 {
+    constexpr int kMaxAttempts = 2;
+    constexpr int kTariffSlots = 5;
 
-	std::string sqlStmt;
-	std::string tbName="X_Tariff";
-	struct  XTariff_Struct xtariff;
+    try
+    {
+        logDbMessage("Load XTariff: Started", "DB");
 
-	vector<ReaderItem> selResult;
+        // =====================================================
+        // Try Local DB first.
+        // If no data, download once and retry.
+        // =====================================================
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+        {
+            std::vector<ReaderItem> result;
 
-	std::string sValue;
-	int r,i,j;
-	int w=-1;
-	int bTried=0;
+            const std::string sqlStmt =
+                "SELECT * "
+                "FROM X_Tariff";
 
-	try
-	{
-		operation::getInstance()->writelog ("Load XTariff: Started", "DB");
+            const int ret = localdb->SQLSelect(sqlStmt, &result, true);
 
-		Try_Again:
-		sqlStmt="Select * ";
-		sqlStmt= sqlStmt +  " FROM " + tbName;
+            if (ret != 0)
+            {
+                m_local_db_err_flag = 1;
 
-		r=localdb->SQLSelect(sqlStmt,&selResult,true);
-		if (r!=0) return iLocalFail;
+                logDbMessage("Load XTariff failed.", "DB");
 
-		if (selResult.size()>0){
-			msxtariff.clear();
-			for(j=0;j<selResult.size();j++){
-				xtariff.day_index = selResult[j].GetDataItem(0);
-            	xtariff.autocharge[0] = selResult[j].GetDataItem(1);
-				//operation::getInstance()->writelog("autocharger0: "+ xtariff.autocharge[0], "DB");
-				xtariff.fee[0] = selResult[j].GetDataItem(2);
-				for (i=1; i<5; i++) {
-					xtariff.time[i] = selResult[j].GetDataItem(3+(i-1)*3);
-					if (xtariff.time[i] == "") {xtariff.time[i] = "23:59";}
-					xtariff.autocharge[i] = selResult[j].GetDataItem(4+(i-1) *3);
-					xtariff.fee[i] = selResult[j].GetDataItem(5+(i-1)*3);
-				}
-				msxtariff.push_back(xtariff);
-			}
-			operation::getInstance()->writelog("Load XTariff: success", "DB");
+                return iLocalFail;
+            }
 
-			return iDBSuccess;
-		}
-		else{
-			if(bTried==0)
-			{
-				downloadxtariff(operation::getInstance()->tParas.giGroupID,operation::getInstance()->tParas.giSite, 0);
-				bTried=1;
-				goto Try_Again;
-				
-			}
+            m_local_db_err_flag = 0;
 
-			return iNoData;
-			operation::getInstance()->writelog("Load xtariff error: no data in local DB", "DB");
+            // =================================================
+            // No Local data - download once and retry
+            // =================================================
+            if (result.empty())
+            {
+                if (attempt == 0)
+                {
+                    const auto data = operation::getInstance()->FnGetSharedData();
 
-		}
+                    if (!data)
+                    {
+                        logDbMessage("Unable to get Operation shared data.", "DB");
 
-	}
-	catch(const std::exception &e)
-	{
-		operation::getInstance()->writelog("Load xtariff error: local DB error", "DB");
-		return iLocalFail;
-	}
+                        return iLocalFail;
+                    }
 
-}
+                    downloadxtariff(data->tParas.giGroupID, data->tParas.giSite, 0);
 
-int db::GetXTariff(int &iAutoDebit, float &sAmt, int iVType)
-{
-	int iDayIdx;
-  	string sDayIdx,sDayIndex;
-	CE_Time pDt;
-	int i,j;
-	bool gbfound = false;
-	//------
-	pDt.SetTime();
-	//operation::getInstance()->writelog("PD is:"+pDt.DateTimeString(),"DB");
-  	iDayIdx = GetDayType(pDt);
-    iDayIdx = iDayIdx + iVType * 3;
-    sDayIdx = "," + std::to_string(iDayIdx) + ",";
-	//------
-	for(i=0; i<msxtariff.size();i++){
-		sDayIndex= ","+ msxtariff[i].day_index + ",";	
-		if (sDayIndex.find(sDayIdx) != std::string::npos) {
-			gbfound = true;
-			break;
-		}
-	}
-	if (gbfound == true) {
-		//check time now
-		//operation::getInstance()->writelog("Day Index Record: "+ std::to_string(i), "DB");
-		//operation::getInstance()->writelog("Current Time: "+ pDt.HMTimeString(), "DB");
-		for(j=0; j< 5; j++) {
-        	if (pDt.HMTimeString() <= msxtariff[i].time[j + 1]) {
-            	iAutoDebit = std:: stoi(msxtariff[i].autocharge[j]);
-           	 	sAmt = std::stod(msxtariff[i].fee[j]);
-				//operation::getInstance()->writelog("Autocharge: "+ std::to_string(iAutoDebit), "DB");
-				//operation::getInstance()->writelog("chargeAmt: "+ std::to_string(sAmt), "DB");
-				return(1);
-			}
+                    continue;
+                }
+
+                logDbMessage("Load XTariff error: no data in local DB.", "DB");
+
+                return iNoData;
+            }
+
+            // =================================================
+            // Load XTariff into RAM
+            // =================================================
+            msxtariff.clear();
+
+            for (const auto& row : result)
+            {
+                XTariff_Struct xtariff{};
+
+                xtariff.day_index = row.GetDataItem(0);
+                xtariff.autocharge[0] = row.GetDataItem(1);
+                xtariff.fee[0] = row.GetDataItem(2);
+
+                // Slots 1 - 4 contain:
+                // time, autocharge, fee
+                for (int index = 1; index < kTariffSlots; ++index)
+                {
+                    const int baseColumn = 3 + ((index - 1) * 3);
+
+                    xtariff.time[index] = row.GetDataItem(baseColumn);
+
+                    if (xtariff.time[index].empty())
+                    {
+                        xtariff.time[index] = "23:59";
+                    }
+
+                    xtariff.autocharge[index] = row.GetDataItem(baseColumn + 1);
+                    xtariff.fee[index] = row.GetDataItem(baseColumn + 2);
+                }
+
+                msxtariff.push_back(std::move(xtariff));
+            }
+
+            logDbMessage("Load XTariff: success", "DB");
+
+            return iDBSuccess;
         }
-	}
-   	return(0);
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Load XTariff error: " + std::string(e.what()), "DB");
+
+        m_local_db_err_flag = 1;
+
+        return iLocalFail;
+    }
+
+    return iNoData;
 }
 
-
-int db::FetchEntryinfo(string sIUNo)
+int db::GetXTariff(int& autoDebit, float& amount, int vehicleType)
 {
-	// Return: -1=cannot connect to db
-    // 0=Ok, found, 1=paid, 2=lost card,
-    // 3=no entry, 4=no sale
-    // 5=complimentary
+    constexpr int kTimeCutoffCount = 4;
 
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
-	vector<ReaderItem> selResult2;
-	std::string sValue;
-	int r,i,j;
-	int w=-1;
-	int bTried=0;
-	string gsZoneEntries = operation::getInstance()->tParas.gsZoneEntries;
+    CE_Time currentDateTime;
+    currentDateTime.SetTime();
 
-	sqlStmt = "SELECT Entry_time, trans_type,parking_fee,paid_amt, owe_amt, entry_station FROM Movement_trans_tmp where (iu_tk_no = '"+ sIUNo + "'";
-	if (sIUNo.length() == 16) {
-		sqlStmt = sqlStmt + "or card_mc_no = '" + sIUNo + "')";
-	}else
-	{
-		sqlStmt = sqlStmt + "or entry_lpn = '" + sIUNo + "')";
-	}
-	sqlStmt = sqlStmt + " and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0 ";
-	sqlStmt = sqlStmt + "order by entry_time desc ";
+    // =========================================================
+    // Determine day index
+    // =========================================================
+    const int dayType = GetDayType(currentDateTime);
 
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		goto processLocal;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
+    if (dayType < 0)
+    {
+        logDbMessage("Unable to determine XTariff day type.", "DB");
 
-	if (selResult.size()>0)
-	{
-		operation::getInstance()->tExit.sEntryTime=selResult[0].GetDataItem(0);
-		operation::getInstance()->tExit.iTransType=std::stoi(selResult[0].GetDataItem(1));
-		operation::getInstance()->tExit.sOweAmt=std::stof(selResult[0].GetDataItem(4));
-		operation::getInstance()->tExit.iEntryID=std::stoi(selResult[0].GetDataItem(5));	
-		operation::getInstance()->writelog("Fetch Entry time from central:  " + operation::getInstance()->tExit.sEntryTime, "DB");
-		return r;
-	}
-	else{
-		//no record
-		operation::getInstance()->writelog("No Entry record in Central DB.", "DB");
-	}
-	
-processLocal:
-	sqlStmt = "Select Entry_time,trans_type,paid_amt, Owe_Amt, Station_id From Entry_Trans where Status = 0 and iu_tk_no = '"+ sIUNo +"' order by entry_time desc";
-	
-	r=localdb->SQLSelect(sqlStmt,&selResult2,true);
+        return 0;
+    }
 
-	//operation::getInstance()->writelog(sqlStmt, "DB");
-	if (r!=0)
-	{
-		operation::getInstance()->writelog("Fetch local entry time failed.", "DB");
-		return r;
-	}
-	
-	if (selResult2.size()>0)
-	{            
-		operation::getInstance()->tExit.sEntryTime=selResult2[0].GetDataItem(0);
-		operation::getInstance()->tExit.iTransType=std::stoi(selResult2[0].GetDataItem(1));
-		operation::getInstance()->tExit.sOweAmt=std::stof(selResult2[0].GetDataItem(3));
-		operation::getInstance()->tExit.iEntryID=std::stoi(selResult2[0].GetDataItem(4));	
-	}
-	else
-	{
-		operation::getInstance()->writelog("No entry record in local DB","DB");
-		return 3;
-	}
-	operation::getInstance()->writelog("Fetch Entry time from Local:  " + operation::getInstance()->tExit.sEntryTime, "DB");
-	return r;
+    const int dayIndex = dayType + (vehicleType * 3);
+
+    const std::string targetDayIndex =
+        "," +
+        std::to_string(dayIndex) +
+        ",";
+
+    const std::string currentTime = currentDateTime.HMTimeString();
+
+    // =========================================================
+    // Find matching XTariff record
+    // =========================================================
+    for (const auto& tariff : msxtariff)
+    {
+        const std::string configuredDayIndex =
+            "," +
+            tariff.day_index +
+            ",";
+
+        if (configuredDayIndex.find(targetDayIndex) == std::string::npos)
+        {
+            continue;
+        }
+
+        try
+        {
+            // =================================================
+            // Check first 4 tariff time ranges
+            // =================================================
+            for (int slot = 0; slot < kTimeCutoffCount; ++slot)
+            {
+                if (currentTime <= tariff.time[slot + 1])
+                {
+                    const int selectedAutoDebit = std::stoi(tariff.autocharge[slot]);
+                    const float selectedAmount = std::stof(tariff.fee[slot]);
+
+                    autoDebit = selectedAutoDebit;
+                    amount = selectedAmount;
+
+                    return 1;
+                }
+            }
+        }
+        catch (const std::exception& e)
+        {
+            logDbMessage("GetXTariff invalid tariff data: " + std::string(e.what()), "DB");
+
+            return 0;
+        }
+    }
+
+    return 0;
 }
 
-int db::CheckCardOK(string sCardNo)
+int db::FetchEntryinfo(const std::string& iuNo)
 {
-	//Return: 0=Normal, nothing, 
-	//		1=Blacklist, -1=db error
-    //      2=complimentary
-	//		3=master card
-	//		4=validation complimentary 
-	//		5=master season
-	//		6=vvip	
+    auto* op = operation::getInstance();
 
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> tResult;
+    const auto data = op->FnGetSharedData();
 
-	string gsZoneID = std::to_string(operation::getInstance()->gtStation.iZoneID);
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-	sqlStmt = "SELECT date_from, date_to FROM Season_mst where season_No = '" + sCardNo + "' and (zone_id='0' or charindex(',' + cast(" + gsZoneID + " as varchar(2)) + ',', ',' + zone_id + ',') >0 ) and s_status=1 and (season_type=1 or season_type = 9)" ;
-	//------
-	//operation::getInstance()->writelog(sqlStmt, "DB");
-	//----
-	r = centraldb->SQLSelect(sqlStmt, &tResult, true);
-	//------
-	if (r != 0) return 0;
+        return -1;
+    }
 
-	if (tResult.size()>0)
-	{
-		
-		if (Common::getInstance()->FnGetDateDiffInSeconds(tResult[0].GetDataItem(0)) > 0 && Common::getInstance()->FnGetDateDiffInSeconds(tResult[0].GetDataItem(1)) < 0)
-		{
-			operation::getInstance()->writelog("Master Card!", "DB");
-			return  5;
-		}	
-	}
-	//---------
-	sqlStmt = "select Complimentary_no from Complimentary where Complimentary_no='" + sCardNo + "'and exit_time is null";
-	
-	r = centraldb->SQLSelect(sqlStmt, &tResult, true);
+    const std::string zoneEntries = data->tParas.gsZoneEntries;
 
-	if (r != 0)  return 0;
+    try
+    {
+        // =====================================================
+        // Check Central DB first
+        // =====================================================
+        std::string centralSql =
+            "SELECT Entry_time, trans_type, parking_fee, "
+            "paid_amt, owe_amt, entry_station "
+            "FROM Movement_trans_tmp "
+            "WHERE (iu_tk_no = '" +
+            iuNo +
+            "'";
 
-	if (tResult.size()>0){
-		operation::getInstance()->writelog("Complimentary Card!", "DB");
-		return 2;
-	}
-		
-	return 0;	
+        if (iuNo.length() == 16)
+        {
+            centralSql +=
+                " OR card_mc_no = '" +
+                iuNo +
+                "')";
+        }
+        else
+        {
+            centralSql +=
+                " OR entry_lpn = '" +
+                iuNo +
+                "')";
+        }
+
+        centralSql +=
+            " AND exit_time IS NULL "
+            "AND CHARINDEX("
+            "',' + CAST(entry_station AS varchar(2)) + ',', "
+            "'" +
+            zoneEntries +
+            "') > 0 "
+            "ORDER BY entry_time DESC";
+
+        std::vector<ReaderItem> centralResult;
+
+        const int centralRet = centraldb->SQLSelect(centralSql, &centralResult, true);
+
+        if (centralRet == 0)
+        {
+            m_remote_db_err_flag.store(0);
+
+            if (!centralResult.empty())
+            {
+                auto exitData = data->tExit;
+
+                exitData.sEntryTime = centralResult.front().GetDataItem(0);
+                exitData.iTransType = std::stoi(centralResult.front().GetDataItem(1));
+                exitData.sOweAmt = std::stof(centralResult.front().GetDataItem(4));
+                exitData.iEntryID = std::stoi(centralResult.front().GetDataItem(5));
+                
+                const std::string entryTime = exitData.sEntryTime;
+
+                OperationSharedDataUpdate update;
+                update.tExit = std::move(exitData);
+
+                if (!op->FnUpdateSharedData(std::move(update)))
+                {
+                    logDbMessage("Unable to update Operation shared data.", "DB");
+
+                    return -1;
+                }
+
+                logDbMessage("Fetch Entry time from Central: " + entryTime, "DB");
+
+                return centralRet;
+            }
+
+            logDbMessage("No Entry record in Central DB.", "DB");
+        }
+        else
+        {
+            m_remote_db_err_flag.store(1);
+        }
+
+        // =====================================================
+        // Central failed / no record - check Local DB
+        // =====================================================
+        const std::string localSql =
+            "SELECT Entry_time, trans_type, paid_amt, "
+            "Owe_Amt, Station_id "
+            "FROM Entry_Trans "
+            "WHERE Status = 0 "
+            "AND iu_tk_no = '" +
+            iuNo +
+            "' "
+            "ORDER BY entry_time DESC";
+
+        std::vector<ReaderItem> localResult;
+
+        const int localRet = localdb->SQLSelect(localSql, &localResult, true);
+
+        if (localRet != 0)
+        {
+            logDbMessage("Fetch local entry time failed.", "DB");
+
+            return localRet;
+        }
+
+        if (localResult.empty())
+        {
+            logDbMessage("No entry record in Local DB.", "DB");
+
+            return 3;
+        }
+
+        auto exitData = data->tExit;
+
+        exitData.sEntryTime = localResult.front().GetDataItem(0);
+        exitData.iTransType = std::stoi(localResult.front().GetDataItem(1));
+        exitData.sOweAmt = std::stof(localResult.front().GetDataItem(3));
+        exitData.iEntryID = std::stoi(localResult.front().GetDataItem(4));
+
+        const std::string entryTime = exitData.sEntryTime;
+
+        OperationSharedDataUpdate update;
+        update.tExit = std::move(exitData);
+
+        if (!op->FnUpdateSharedData(std::move(update)))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+
+            return -1;
+        }
+
+        logDbMessage("Fetch Entry time from Local: " + entryTime, "DB");
+
+        return localRet;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("FetchEntryinfo error: " + std::string(e.what()), "DB");
+
+        return -1;
+    }
 }
 
-DBError db::updatemovementtrans(tExitTrans_Struct& tExit) 
+int db::CheckCardOK(const std::string& cardNo)
 {
-	int r;
-	string sqstr="";
-	string sLPRNo = "";
-	string gsZoneEntries = operation::getInstance()->tParas.gsZoneEntries;
-	string gsUpdateTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-	//---------
-	tExit.sFee = operation::getInstance()->GfeeFormat(tExit.sFee);
-	tExit.sPaidAmt = operation::getInstance()->GfeeFormat(tExit.sPaidAmt);
-	tExit.sRedeemAmt = operation::getInstance()->GfeeFormat(tExit.sRedeemAmt);
-	tExit.sGSTAmt = operation::getInstance()->GfeeFormat(tExit.sGSTAmt);
+    const auto data = operation::getInstance()->FnGetSharedData();
 
-	if ((tExit.sLPN[0] != "")|| (tExit.sLPN[1] !=""))
-	{
-		if(tExit.iTransType==7 || tExit.iTransType==8||tExit.iTransType==22)
-		{
-			sLPRNo = tExit.sLPN[1];
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-		}
-		else
-		{
-			sLPRNo = tExit.sLPN[0];
-		}
+        return -1;
+    }
 
-	}
-	//------
-	sqstr="UPDATE movement_trans_tmp set exit_lpn = '"+ sLPRNo + "',";
-	sqstr= sqstr + "exit_station = '" + tExit.xsid + "',";
-	sqstr= sqstr + " exit_time = '" + tExit.sExitTime + "',";
-	sqstr= sqstr + " trans_type = '" + std::to_string(tExit.iTransType) + "',";
-	sqstr= sqstr + " card_mc_no = '" + tExit.sCardNo + "',";
-	sqstr= sqstr + " parking_fee = '" + std::to_string(tExit.sFee) + "',";
-	sqstr= sqstr + " paid_amt = '" + std::to_string(tExit.sPaidAmt) + "',";
-	sqstr= sqstr + " Parked_time = '" + std::to_string(tExit.lParkedTime) + "',";
-	sqstr= sqstr + " receipt_no = '" + tExit.sReceiptNo + "',";
-	sqstr= sqstr + " redeem_amt = '" + std::to_string(tExit.sRedeemAmt) + "',";
-	sqstr= sqstr + " redeem_time = '" + std::to_string(tExit.iRedeemTime) + "',";
-	sqstr= sqstr + " Card_Type = '" + std::to_string(tExit.iCardType) + "',";
-	sqstr= sqstr + " top_up_amt = '" + std::to_string(tExit.sTopupAmt) + "', ";
-	sqstr= sqstr + " update_dt = '" + gsUpdateTime + "'";
-	if (tExit.sEntryTime == tExit.sExitTime)    // CHU or EEP late trans case
-	{
-		sqstr= sqstr + "where iu_tk_no = '" + tExit.sIUNo + "' and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0" ;
-	}else
-	{
-		sqstr= sqstr + "where iu_tk_no = '" + tExit.sIUNo + "' and entry_time = '"+ tExit.sEntryTime + "' and exit_time is null and charindex(','+cast(entry_station as varchar(2))+',','" + gsZoneEntries + "')>0" ;
-	}
+    const std::string zoneId = std::to_string(data->gtStation.iZoneID);
 
-	//------
-//	operation::getInstance()->writelog(sqstr,"DB");
-	//-----
-	r = centraldb->SQLExecutNoneQuery(sqstr);
+    try
+    {
+        // =====================================================
+        // Check Master Season Card
+        // =====================================================
+        const std::string seasonSql =
+            "SELECT date_from, date_to "
+            "FROM Season_mst "
+            "WHERE season_No = '" +
+            cardNo +
+            "' "
+            "AND ("
+            "zone_id = '0' "
+            "OR CHARINDEX("
+            "',' + CAST(" +
+            zoneId +
+            " AS varchar(2)) + ',', "
+            "',' + zone_id + ',') > 0"
+            ") "
+            "AND s_status = 1 "
+            "AND (season_type = 1 OR season_type = 9)";
 
-	if (r==0) 
-	{
-		if (centraldb->NumberOfRowsAffected > 0) {
-			operation::getInstance()->writelog("Success matching MovementTrans_Tmp","DB");
-		}
-		else {
-			operation::getInstance()->writelog("No matching MovementTrans_Tmp to update","DB");
-			insert2movementtrans(tExit);
-		}
-		return iCentralSuccess;
-	}
-	else {
-		operation::getInstance()->writelog("fail to match Movementtrans_Tmp","DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return iCentralFail;
+        std::vector<ReaderItem> seasonResult;
+
+        const int seasonRet = centraldb->SQLSelect(seasonSql, &seasonResult, true);
+
+        if (seasonRet != 0)
+        {
+            // Preserve legacy behavior:
+            // DB failure is treated as normal card.
+            return 0;
+        }
+
+        if (!seasonResult.empty())
+        {
+            const auto& row = seasonResult.front();
+
+            const std::string dateFrom = row.GetDataItem(0);
+            const std::string dateTo = row.GetDataItem(1);
+            const bool hasStarted = Common::getInstance()->FnGetDateDiffInSeconds(dateFrom) > 0;
+            const bool notExpired = Common::getInstance()->FnGetDateDiffInSeconds(dateTo) < 0;
+
+            if (hasStarted && notExpired)
+            {
+                logDbMessage("Master Card!", "DB");
+
+                return 5;
+            }
+        }
+
+        // =====================================================
+        // Check Complimentary Card
+        // =====================================================
+        const std::string complimentarySql =
+            "SELECT Complimentary_no "
+            "FROM Complimentary "
+            "WHERE Complimentary_no = '" +
+            cardNo +
+            "' "
+            "AND exit_time IS NULL";
+
+        std::vector<ReaderItem> complimentaryResult;
+
+        const int complimentaryRet = centraldb->SQLSelect(complimentarySql, &complimentaryResult, true);
+
+        if (complimentaryRet != 0)
+        {
+            // Preserve legacy behavior.
+            return 0;
+        }
+
+        if (!complimentaryResult.empty())
+        {
+            logDbMessage("Complimentary Card!", "DB");
+
+            return 2;
+        }
+
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("CheckCardOK error: " + std::string(e.what()), "DB");
+
+        return -1;
+    }
 }
 
-DBError db::insert2movementtrans(tExitTrans_Struct& tExit) 
+DBError db::updatemovementtrans(tExitTrans_Struct& exitTrans)
 {
-	int r;
-	string sqstr="";
-	string sLPRNo = "";
-	//------
-	tExit.sFee = operation::getInstance()->GfeeFormat(tExit.sFee);
-	tExit.sPaidAmt = operation::getInstance()->GfeeFormat(tExit.sPaidAmt);
-	tExit.sRedeemAmt = operation::getInstance()->GfeeFormat(tExit.sRedeemAmt);
-	tExit.sGSTAmt = operation::getInstance()->GfeeFormat(tExit.sGSTAmt);
-	//-----
-	if ((tExit.sLPN[0] != "")|| (tExit.sLPN[1] !=""))
-	{
-		if(tExit.iTransType==7 || tExit.iTransType==8||tExit.iTransType==22)
-		{
-			sLPRNo = tExit.sLPN[1];
+    auto* op = operation::getInstance();
 
-		}
-		else
-		{
-			sLPRNo = tExit.sLPN[0];
-		}
+    const auto data = op->FnGetSharedData();
 
-	}
-	sqstr = "INSERT INTO movement_trans_tmp (exit_lpn, exit_station, exit_time, trans_type, card_mc_no, iu_tk_no, parking_fee, paid_amt, Parked_time, receipt_no, redeem_amt, redeem_time, Card_Type, top_up_amt";
-	if (tExit.sEntryTime == "") sqstr = sqstr + ")";
-	else sqstr = sqstr + ", entry_time, entry_station)";
-	sqstr = sqstr + " VALUES ('" + sLPRNo + "'," + tExit.xsid + ",'" + tExit.sExitTime + "'," + std::to_string(tExit.iTransType) + ",'" + tExit.sCardNo + "','" + tExit.sIUNo + "'";
-	sqstr = sqstr + "," + std::to_string(tExit.sFee) + "," + std::to_string(tExit.sPaidAmt) + "," + std::to_string(tExit.lParkedTime) + ",'" + tExit.sReceiptNo + "'";
-	sqstr = sqstr + "," + std::to_string(tExit.sRedeemAmt) + "," + std::to_string(tExit.iRedeemTime) + "," + std::to_string(tExit.iCardType) + "," + std::to_string(tExit.sTopupAmt) ;
-	if (tExit.sEntryTime == "") sqstr = sqstr + ")";
-	else sqstr = sqstr + ",'" + tExit.sEntryTime + "'," + std::to_string(tExit.iEntryID) + ")";
-	//------
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-	//std::cout << __func__ << " : " << sqstr << std::endl;
+        return iLocalFail;
+    }
 
-	//operation::getInstance()->writelog(sqstr, "DB");
+    const std::string zoneEntries = data->tParas.gsZoneEntries;
+    const std::string updateTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
 
-	r = centraldb->SQLExecutNoneQuery(sqstr);
-	if (r == 0) 
-	{
-		operation::getInstance()->writelog("Success insert into movement_trans_tmp", "DB");
-		return iCentralSuccess;
-	}
-	else {
-		operation::getInstance()->writelog("fail to insert into movement_trans_tmp", "DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return iCentralFail;
+    // =========================================================
+    // Format fee values
+    // =========================================================
+    exitTrans.sFee = op->GfeeFormat(exitTrans.sFee);
+    exitTrans.sPaidAmt = op->GfeeFormat(exitTrans.sPaidAmt);
+    exitTrans.sRedeemAmt = op->GfeeFormat(exitTrans.sRedeemAmt);
+    exitTrans.sGSTAmt = op->GfeeFormat(exitTrans.sGSTAmt);
+
+    // =========================================================
+    // Determine Exit LPN
+    // =========================================================
+    std::string lprNo;
+
+    if (!exitTrans.sLPN[0].empty() ||
+        !exitTrans.sLPN[1].empty())
+    {
+        if (exitTrans.iTransType == 7 ||
+            exitTrans.iTransType == 8 ||
+            exitTrans.iTransType == 22)
+        {
+            lprNo = exitTrans.sLPN[1];
+        }
+        else
+        {
+            lprNo = exitTrans.sLPN[0];
+        }
+    }
+
+    try
+    {
+        // =====================================================
+        // Build Movement_trans_tmp update
+        // =====================================================
+        std::string sqlStmt =
+            "UPDATE movement_trans_tmp SET "
+            "exit_lpn = '" +
+            lprNo +
+            "', "
+            "exit_station = '" +
+            exitTrans.xsid +
+            "', "
+            "exit_time = '" +
+            exitTrans.sExitTime +
+            "', "
+            "trans_type = '" +
+            std::to_string(exitTrans.iTransType) +
+            "', "
+            "card_mc_no = '" +
+            exitTrans.sCardNo +
+            "', "
+            "parking_fee = '" +
+            std::to_string(exitTrans.sFee) +
+            "', "
+            "paid_amt = '" +
+            std::to_string(exitTrans.sPaidAmt) +
+            "', "
+            "parked_time = '" +
+            std::to_string(exitTrans.lParkedTime) +
+            "', "
+            "receipt_no = '" +
+            exitTrans.sReceiptNo +
+            "', "
+            "redeem_amt = '" +
+            std::to_string(exitTrans.sRedeemAmt) +
+            "', "
+            "redeem_time = '" +
+            std::to_string(exitTrans.iRedeemTime) +
+            "', "
+            "card_type = '" +
+            std::to_string(exitTrans.iCardType) +
+            "', "
+            "top_up_amt = '" +
+            std::to_string(exitTrans.sTopupAmt) +
+            "', "
+            "update_dt = '" +
+            updateTime +
+            "' ";
+
+        // =====================================================
+        // CHU / EEP late transaction
+        // =====================================================
+        if (exitTrans.sEntryTime == exitTrans.sExitTime)
+        {
+            sqlStmt +=
+                "WHERE iu_tk_no = '" +
+                exitTrans.sIUNo +
+                "' "
+                "AND exit_time IS NULL "
+                "AND CHARINDEX("
+                "',' + CAST(entry_station AS varchar(2)) + ',', "
+                "'" +
+                zoneEntries +
+                "') > 0";
+        }
+        else
+        {
+            sqlStmt +=
+                "WHERE iu_tk_no = '" +
+                exitTrans.sIUNo +
+                "' "
+                "AND entry_time = '" +
+                exitTrans.sEntryTime +
+                "' "
+                "AND exit_time IS NULL "
+                "AND CHARINDEX("
+                "',' + CAST(entry_station AS varchar(2)) + ',', "
+                "'" +
+                zoneEntries +
+                "') > 0";
+        }
+
+        // =====================================================
+        // Update Central movement transaction
+        // =====================================================
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to match Movement_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success matching Movement_trans_tmp.", "DB");
+
+            return iCentralSuccess;
+        }
+
+        // =====================================================
+        // No matching entry - insert movement transaction
+        // =====================================================
+        logDbMessage("No matching Movement_trans_tmp to update.", "DB");
+
+        insert2movementtrans(exitTrans);
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("updatemovementtrans error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }
 
-int db::isValidBarCodeTicket(bool isRedemptionTicket, std::string sBarcodeTicket, std::tm& dtExpireTime, float& gbRedeemAmt, int& giRedeemTime)
+DBError db::insert2movementtrans(tExitTrans_Struct& exitTrans)
 {
-	// Valid
-	int iRet = 1;
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    auto* op = operation::getInstance();
 
-	if (isRedemptionTicket == true)
-	{
-		sqlStmt = "SELECT Valid_from, Valid_to, redeem_dt, redeem_amt, redeem_time from Redemption_view WHERE redeem_no='" + sBarcodeTicket + "'";
-	}
-	else
-	{
-		sqlStmt = "SELECT Valid_from, Valid_to, exit_time FROM Complimentary_view WHERE complimentary_no='" + sBarcodeTicket + "'";
-	}
-	//-------
-	operation::getInstance()->writelog(sqlStmt, "DB");
-	//-------
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		// DB Error
-		iRet = -1;
-		return iRet;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-	}
+    // =========================================================
+    // Format fee values
+    // =========================================================
+    exitTrans.sFee = op->GfeeFormat(exitTrans.sFee);
+    exitTrans.sPaidAmt = op->GfeeFormat(exitTrans.sPaidAmt);
+    exitTrans.sRedeemAmt = op->GfeeFormat(exitTrans.sRedeemAmt);
+    exitTrans.sGSTAmt = op->GfeeFormat(exitTrans.sGSTAmt);
 
-	if (selResult.size() > 0)
-	{
-		try
-		{
-			//-----
-			if (selResult[0].GetDataItem(2) == "NULL" || selResult[0].GetDataItem(2) == "")
-			{
-				if (Common::getInstance()->FnGetDateDiffInSeconds(selResult[0].GetDataItem(0)) < 0)
-				{
-					// Not yet valid
-					iRet = 6;
-				}
-				else
-				{
-					if (Common::getInstance()->FnGetDateDiffInSeconds(selResult[0].GetDataItem(1)) > 0)
-					{
-						// Expired
-						iRet = 0;
-					}
-				}
-			}
-			else
-			{
-				// Used
-				iRet = 2;
-			}
-			auto tp = Common::getInstance()->FnParseDateTime(selResult[0].GetDataItem(1));
-			std::time_t tt = std::chrono::system_clock::to_time_t(tp);
-			dtExpireTime = *std::localtime(&tt);
-			// Valid
-			if ((iRet == 1) && (isRedemptionTicket == true))
-			{
-				gbRedeemAmt = std::stof(selResult[0].GetDataItem(3));
-				giRedeemTime = std::stoi(selResult[0].GetDataItem(4));
-			}
-		}
-		catch (const std::exception& e)
-		{
-			operation::getInstance()->writelog("Date time format Exception: " + std::string(e.what()), "DB");
-		}
-	}
-	else
-	{
-		// Not found
-		iRet = 4;
-		operation::getInstance()->writelog("No barcode ticket found in central DB","DB");
-	}
+    // =========================================================
+    // Determine Exit LPN
+    // =========================================================
+    std::string lprNo;
 
-	return iRet;
+    if (!exitTrans.sLPN[0].empty() ||
+        !exitTrans.sLPN[1].empty())
+    {
+        if (exitTrans.iTransType == 7 ||
+            exitTrans.iTransType == 8 ||
+            exitTrans.iTransType == 22)
+        {
+            lprNo = exitTrans.sLPN[1];
+        }
+        else
+        {
+            lprNo = exitTrans.sLPN[0];
+        }
+    }
+
+    const bool hasEntryInfo = !exitTrans.sEntryTime.empty();
+
+    try
+    {
+        // =====================================================
+        // Build INSERT statement
+        // =====================================================
+        std::string sqlStmt =
+            "INSERT INTO movement_trans_tmp ("
+            "exit_lpn, "
+            "exit_station, "
+            "exit_time, "
+            "trans_type, "
+            "card_mc_no, "
+            "iu_tk_no, "
+            "parking_fee, "
+            "paid_amt, "
+            "Parked_time, "
+            "receipt_no, "
+            "redeem_amt, "
+            "redeem_time, "
+            "Card_Type, "
+            "top_up_amt";
+
+        if (hasEntryInfo)
+        {
+            sqlStmt +=
+                ", entry_time, "
+                "entry_station";
+        }
+
+        sqlStmt +=
+            ") VALUES ('" +
+            lprNo +
+            "', " +
+            exitTrans.xsid +
+            ", '" +
+            exitTrans.sExitTime +
+            "', " +
+            std::to_string(exitTrans.iTransType) +
+            ", '" +
+            exitTrans.sCardNo +
+            "', '" +
+            exitTrans.sIUNo +
+            "', " +
+            std::to_string(exitTrans.sFee) +
+            ", " +
+            std::to_string(exitTrans.sPaidAmt) +
+            ", " +
+            std::to_string(exitTrans.lParkedTime) +
+            ", '" +
+            exitTrans.sReceiptNo +
+            "', " +
+            std::to_string(exitTrans.sRedeemAmt) +
+            ", " +
+            std::to_string(exitTrans.iRedeemTime) +
+            ", " +
+            std::to_string(exitTrans.iCardType) +
+            ", " +
+            std::to_string(exitTrans.sTopupAmt);
+
+        if (hasEntryInfo)
+        {
+            sqlStmt +=
+                ", '" +
+                exitTrans.sEntryTime +
+                "', " +
+                std::to_string(exitTrans.iEntryID);
+        }
+
+        sqlStmt += ")";
+
+        // =====================================================
+        // Insert into Central DB
+        // =====================================================
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to insert into movement_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        logDbMessage("Success insert into movement_trans_tmp.", "DB");
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("insert2movementtrans error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
+}
+
+int db::isValidBarCodeTicket(
+    bool isRedemptionTicket,
+    const std::string& barcodeTicket,
+    std::tm& expireTime,
+    float& redeemAmount,
+    int& redeemTime)
+{
+    constexpr int kExpired = 0;
+    constexpr int kValid = 1;
+    constexpr int kUsed = 2;
+    constexpr int kNotFound = 4;
+    constexpr int kNotYetValid = 6;
+    constexpr int kDbError = -1;
+
+    // =========================================================
+    // Build query
+    // =========================================================
+    const std::string sqlStmt =
+        isRedemptionTicket
+            ? "SELECT Valid_from, Valid_to, redeem_dt, "
+              "redeem_amt, redeem_time "
+              "FROM Redemption_view "
+              "WHERE redeem_no = '" +
+                  barcodeTicket + "'"
+            : "SELECT Valid_from, Valid_to, exit_time "
+              "FROM Complimentary_view "
+              "WHERE complimentary_no = '" +
+                  barcodeTicket + "'";
+
+    logDbMessage(sqlStmt, "DB");
+
+    // =========================================================
+    // Query Central DB
+    // =========================================================
+    std::vector<ReaderItem> result;
+
+    const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
+
+    if (ret != 0)
+    {
+        m_remote_db_err_flag.store(1);
+
+        return kDbError;
+    }
+
+    m_remote_db_err_flag.store(0);
+
+    if (result.empty())
+    {
+        logDbMessage("No barcode ticket found in Central DB.", "DB");
+
+        return kNotFound;
+    }
+
+    try
+    {
+        const auto& row = result.front();
+        const std::string validFrom = row.GetDataItem(0);
+        const std::string validTo = row.GetDataItem(1);
+        const std::string usedTime = row.GetDataItem(2);
+
+        int resultCode = kValid;
+
+        // =====================================================
+        // Check ticket status
+        // =====================================================
+        if (usedTime.empty() ||
+            usedTime == "NULL")
+        {
+            if (Common::getInstance()->FnGetDateDiffInSeconds(validFrom) < 0)
+            {
+                resultCode = kNotYetValid;
+            }
+            else if (Common::getInstance()->FnGetDateDiffInSeconds(validTo) > 0)
+            {
+                resultCode = kExpired;
+            }
+        }
+        else
+        {
+            resultCode = kUsed;
+        }
+
+        // =====================================================
+        // Get expiry time
+        // =====================================================
+        const auto timePoint = Common::getInstance()->FnParseDateTime(validTo);
+        const std::time_t expireTimestamp = std::chrono::system_clock::to_time_t(timePoint);
+
+        expireTime = *std::localtime(&expireTimestamp);
+
+        // =====================================================
+        // Valid redemption ticket
+        // =====================================================
+        if (resultCode == kValid &&
+            isRedemptionTicket)
+        {
+            redeemAmount = std::stof(row.GetDataItem(3));
+            redeemTime = std::stoi(row.GetDataItem(4));
+        }
+
+        return resultCode;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("Barcode ticket data format error: " + std::string(e.what()), "DB");
+
+        return kDbError;
+    }
 }
 
 DBError db::update99PaymentTrans()
 {
-	int r;
-	std::string sqlStmt="";
+    const auto data = operation::getInstance()->FnGetSharedData();
 
-	sqlStmt = "UPDATE Exit_trans_tmp set status=0";
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-	if (operation::getInstance()->tExit.sRebateAmt > 0)
-	{
-		sqlStmt = sqlStmt + ",redeem_amt=" + std::to_string(operation::getInstance()->tExit.sRebateAmt);
-		sqlStmt = sqlStmt + ",paid_amt=" + std::to_string(operation::getInstance()->tExit.sPaidAmt);
-		sqlStmt = sqlStmt + ",gst_amt=" + std::to_string(operation::getInstance()->tExit.sGSTAmt);
-		sqlStmt = sqlStmt + ",Trans_Type=" + std::to_string(operation::getInstance()->tExit.iTransType);
-		sqlStmt = sqlStmt + ",Card_mc_no='" + operation::getInstance()->tExit.sCardNo + "'";
-		sqlStmt = sqlStmt + ",redeem_no='" + operation::getInstance()->tExit.sRedeemNo + "'";
-	}
+        return iCentralFail;
+    }
 
-	sqlStmt = sqlStmt + " WHERE iu_tk_no='" + operation::getInstance()->tExit.sIUNo + "' and status = 99 AND Station_ID=" + std::to_string(operation::getInstance()->gtStation.iSID);
+    const auto& exitData = data->tExit;
+    const auto& station = data->gtStation;
 
-	r = centraldb->SQLExecutNoneQuery(sqlStmt);
-	if (r == 0)
-	{
-		operation::getInstance()->writelog("Update 99 Trans to valid for EZpay/VCC","DB");
-		return iDBSuccess;
-	}
-	else
-	{
-		operation::getInstance()->writelog("Failed to updated 99 Trans for EZPay/VCC","DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return iCentralFail;
+    try
+    {
+        // =====================================================
+        // Build UPDATE statement
+        // =====================================================
+        std::string sqlStmt =
+            "UPDATE Exit_trans_tmp "
+            "SET status = 0";
+
+        if (exitData.sRebateAmt > 0)
+        {
+            sqlStmt +=
+                ", redeem_amt = " +
+                std::to_string(exitData.sRebateAmt);
+
+            sqlStmt +=
+                ", paid_amt = " +
+                std::to_string(exitData.sPaidAmt);
+
+            sqlStmt +=
+                ", gst_amt = " +
+                std::to_string(exitData.sGSTAmt);
+
+            sqlStmt +=
+                ", Trans_Type = " +
+                std::to_string(exitData.iTransType);
+
+            sqlStmt +=
+                ", Card_mc_no = '" +
+                exitData.sCardNo +
+                "'";
+
+            sqlStmt +=
+                ", redeem_no = '" +
+                exitData.sRedeemNo +
+                "'";
+        }
+
+        sqlStmt +=
+            " WHERE iu_tk_no = '" +
+            exitData.sIUNo +
+            "' "
+            "AND status = 99 "
+            "AND Station_ID = " +
+            std::to_string(station.iSID);
+
+        // =====================================================
+        // Update Central DB
+        // =====================================================
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            logDbMessage("Failed to update status 99 transaction for EZPay/VCC.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        logDbMessage("Updated status 99 transaction to valid for EZPay/VCC.", "DB");
+
+        return iDBSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("update99PaymentTrans error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }
 
-DBError db::insertUPTFileSummaryLastSettlement(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate)
+DBError db::insertUPTFileSummaryLastSettlement(
+    const std::string& settleDate,
+    const std::string& settleName,
+    int settleType,
+    uint64_t totalTrans,
+    double totalAmt,
+    int sendFlag,
+    const std::string& sendDate)
 {
-	int r;
-	std::string sqlStmt = "";
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO UPT_File_Summary ("
+            "settle_date, "
+            "settle_file, "
+            "settle_type, "
+            "last_total_trans, "
+            "last_total_amt, "
+            "send_flag, "
+            "send_dt"
+            ") VALUES ('" +
+            settleDate +
+            "', '" +
+            settleName +
+            "', '" +
+            std::to_string(settleType) +
+            "', '" +
+            std::to_string(totalTrans) +
+            "', '" +
+            std::to_string(totalAmt) +
+            "', '" +
+            std::to_string(sendFlag) +
+            "', '" +
+            sendDate +
+            "')";
 
-	sqlStmt = "INSERT INTO UPT_File_Summary (settle_date, settle_file, settle_type, last_total_trans, last_total_amt, send_flag, send_dt)";
-	sqlStmt = sqlStmt + " VALUES ('" + sSettleDate + "','" + sSettleName + "','" + std::to_string(iSettleType) + "','" + std::to_string(lTotalTrans) + "','" + std::to_string(dTotalAmt) + "','" + std::to_string(iSendFlag) + "','" + sSendDate + "')";
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
 
-	r = centraldb->SQLExecutNoneQuery(sqlStmt);
-	if (r == 0)
-	{
-		operation::getInstance()->writelog("Success to insert into UPT_File_Summary for: " + sSettleName, "DB");
-		return iCentralSuccess;
-	}
-	else
-	{
-		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return iCentralFail;
+        if (ret != 0)
+        {
+            logDbMessage("Failed to insert into UPT_File_Summary.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        logDbMessage("Success to insert into UPT_File_Summary for: " + settleName, "DB");
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("insertUPTFileSummaryLastSettlement error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }
 
-DBError db::insertUPTFileSummary(const std::string& sSettleDate, const std::string& sSettleName, int iSettleType, uint64_t lTotalTrans, double dTotalAmt, int iSendFlag, const std::string& sSendDate)
+DBError db::insertUPTFileSummary(
+    const std::string& settleDate,
+    const std::string& settleName,
+    int settleType,
+    uint64_t totalTrans,
+    double totalAmt,
+    int sendFlag,
+    const std::string& sendDate)
 {
-	int r;
-	std::string sqlStmt = "";
+    try
+    {
+        const std::string sqlStmt =
+            "INSERT INTO UPT_File_Summary ("
+            "settle_date, "
+            "settle_file, "
+            "settle_type, "
+            "total_trans, "
+            "total_amt, "
+            "send_flag, "
+            "send_dt"
+            ") VALUES ('" +
+            settleDate +
+            "', '" +
+            settleName +
+            "', '" +
+            std::to_string(settleType) +
+            "', '" +
+            std::to_string(totalTrans) +
+            "', '" +
+            std::to_string(totalAmt) +
+            "', '" +
+            std::to_string(sendFlag) +
+            "', '" +
+            sendDate +
+            "')";
 
-	sqlStmt = "INSERT INTO UPT_File_Summary (settle_date, settle_file, settle_type, total_trans, total_amt, send_flag, send_dt)";
-	sqlStmt = sqlStmt + " VALUES ('" + sSettleDate + "','" + sSettleName + "','" + std::to_string(iSettleType) + "','" + std::to_string(lTotalTrans) + "','" + std::to_string(dTotalAmt) + "','" + std::to_string(iSendFlag) + "','" + sSendDate + "')";
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
 
-	r = centraldb->SQLExecutNoneQuery(sqlStmt);
-	if (r == 0)
-	{
-		operation::getInstance()->writelog("Success to insert into UPT_File_Summary for: " + sSettleName, "DB");
-		return iCentralSuccess;
-	}
-	else
-	{
-		operation::getInstance()->writelog("Failed to insert into UPT_File_Summary", "DB");
-		m_remote_db_err_flag.store(1);
-	}
-	return iCentralFail;
+        if (ret != 0)
+        {
+            logDbMessage("Failed to insert into UPT_File_Summary.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        logDbMessage("Success to insert into UPT_File_Summary for: " + settleName, "DB");
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("insertUPTFileSummary error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }
 
-DBError db::DeleteBeforeInsertMT(tExitTrans_Struct& tExit) 
+DBError db::DeleteBeforeInsertMT(const tExitTrans_Struct& exitTrans)
 {
-	int r;
-	std::string sqstr = "";
+    try
+    {
+        const std::string sqlStmt =
+            "DELETE FROM movement_trans_tmp "
+            "WHERE iu_tk_no = '" +
+            exitTrans.sIUNo +
+            "' "
+            "AND entry_time = '" +
+            exitTrans.sEntryTime +
+            "' "
+            "AND exit_time IS NULL";
 
-	sqstr= "Delete from movement_trans_tmp where iu_tk_no = '" + tExit.sIUNo + "' and entry_time = '"+ tExit.sEntryTime + "' and exit_time is null" ;
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
 
-	r = centraldb->SQLExecutNoneQuery(sqstr);
+        if (ret != 0)
+        {
+            logDbMessage("Failed to delete existing movement_trans_tmp record.", "DB");
 
-	if (r == 0)
-	{
-		return iCentralSuccess;
-	}
-	return iCentralFail;
-	
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("DeleteBeforeInsertMT error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }
 
-int db::UpdateEEPExitTrans(string OBU, string sDSerialNo,string sCardNo,float sfee, float sTopupAmt,int TransRoute,int Result) 
+int db::UpdateEEPExitTrans(
+    const std::string& obu,
+    const std::string& dSerialNo,
+    const std::string& cardNo,
+    float fee,
+    float topupAmt,
+    int transRoute,
+    int result)
 {
+    const auto data = operation::getInstance()->FnGetSharedData();
 
-	int r=0;
-	string sqstr="";
-	string giStationID = std::to_string(operation::getInstance()->gtStation.iSID);
-	string sGSTAmt = std::to_string(sfee * operation::getInstance()->tParas.gfGSTRate / (1 + operation::getInstance()->tParas.gfGSTRate));
-	// upate central exit trans tmp table
-	sqstr="UPDATE Exit_trans_tmp set paid_amt = "+ std::to_string(sfee);
-	sqstr = sqstr + ",card_mc_no = '" + sCardNo + "'";
-	sqstr = sqstr + ",EEPTransRoute = " + std::to_string(TransRoute);
-	sqstr = sqstr + ",EEPPaymentResult = " + std::to_string(Result);
-	sqstr = sqstr + ",Top_up_amt = " + std::to_string(sTopupAmt);
-	sqstr = sqstr + ",Gst_amt = " + sGSTAmt;
-	//----------
-	sqstr = sqstr +  " where EEPDSerialNo = '"+ sDSerialNo + "' and iu_tk_no = '" + OBU + "' and Station_id = " + giStationID;
-	sqstr = sqstr +  " and EEPPaymentResult != 1 and EEPPaymentResult ! = 2";
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-	if (r==0) 
-	{
-		if (centraldb->NumberOfRowsAffected > 0){
-			operation::getInstance()->writelog("Success update EEP Trans to Exit_Trans_Tmp","DB");
-		}else
-		{
-			sqstr="UPDATE Exit_trans set paid_amt = "+ std::to_string(sfee);
-			sqstr = sqstr + ",card_mc_no = '" + sCardNo + "'";
-			sqstr = sqstr + ",EEPTransRoute = " + std::to_string(TransRoute);
-			sqstr = sqstr + ",EEPPaymentResult = " + std::to_string(Result);
-			sqstr = sqstr + ",Top_up_amt = " + std::to_string(sTopupAmt);
-			sqstr = sqstr + ",Gst_amt = " + sGSTAmt;
-			//----------
-			sqstr = sqstr +  " where EEPDSerialNo = '"+ sDSerialNo + "' and iu_tk_no = '" + OBU + "' and Station_id = " + giStationID;
-			sqstr = sqstr +  " and EEPPaymentResult != 1 and EEPPaymentResult ! = 2";
-			
-			r = centraldb->SQLExecutNoneQuery(sqstr);
+        return -1;
+    }
 
-			if (r==0) {
-				if (centraldb->NumberOfRowsAffected > 0)
-				{
-					operation::getInstance()->writelog("Success update EEP Trans to Exit_Trans","DB");
-					m_remote_db_err_flag.store(0);
-				} else operation::getInstance()->writelog("No TransID for update EEP Trans","DB");
-			} else
-			{
-			operation::getInstance()->writelog("fail to update EEP Trans to Exit_trans","DB");
-		 	m_remote_db_err_flag.store(1);
-			}
-		}
-	}
-	else {
-		operation::getInstance()->writelog("fail to update EEP trans to Exit_trans_Tmp","DB");
-		m_remote_db_err_flag.store(1);
-		
-	}
-	return r;
+    const float gstRate = data->tParas.gfGSTRate;
+    const int stationId = data->gtStation.iSID;
+    const float gstAmount = fee * gstRate / (1.0F + gstRate);
+
+    // =========================================================
+    // Build EEP transaction UPDATE statement
+    // =========================================================
+    const auto buildUpdateSql =
+        [&](const std::string& tableName)
+        {
+            return
+                "UPDATE " +
+                tableName +
+                " SET "
+                "paid_amt = " +
+                std::to_string(fee) +
+                ", card_mc_no = '" +
+                cardNo +
+                "'" +
+                ", EEPTransRoute = " +
+                std::to_string(transRoute) +
+                ", EEPPaymentResult = " +
+                std::to_string(result) +
+                ", Top_up_amt = " +
+                std::to_string(topupAmt) +
+                ", Gst_amt = " +
+                std::to_string(gstAmount) +
+                " WHERE EEPDSerialNo = '" +
+                dSerialNo +
+                "'"
+                " AND iu_tk_no = '" +
+                obu +
+                "'"
+                " AND Station_id = " +
+                std::to_string(stationId) +
+                " AND EEPPaymentResult != 1"
+                " AND EEPPaymentResult != 2";
+        };
+
+    try
+    {
+        // =====================================================
+        // Try Exit_trans_tmp first
+        // =====================================================
+        const std::string tmpSql = buildUpdateSql("Exit_trans_tmp");
+
+        int ret = centraldb->SQLExecutNoneQuery(tmpSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update EEP Trans to Exit_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update EEP Trans to Exit_trans_tmp.", "DB");
+
+            m_remote_db_err_flag.store(0);
+
+            return ret;
+        }
+
+        // =====================================================
+        // Not found in tmp, try Exit_trans
+        // =====================================================
+        const std::string exitSql = buildUpdateSql("Exit_trans");
+
+        ret = centraldb->SQLExecutNoneQuery(exitSql);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update EEP Trans to Exit_trans.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return ret;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (centraldb->NumberOfRowsAffected > 0)
+        {
+            logDbMessage("Success update EEP Trans to Exit_trans.", "DB");
+        }
+        else
+        {
+            logDbMessage("No transaction found for EEP update.", "DB");
+        }
+
+        return ret;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("UpdateEEPExitTrans error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
 }
 
-int db::HasValidTicket(std::string sIUNo, std::string sLPN)
+int db::HasValidTicket(const std::string& iuNo, const std::string& lpn)
 {
-	// Valid
-	int iRet = 0;
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    auto* op = operation::getInstance();
 
-	sqlStmt = "SELECT complimentary_no from complimentary WHERE valid_from <= getdate() AND valid_to >= getdate() AND "; 
-	
-	if (sIUNo != "") {
-		sqlStmt = sqlStmt + "IU = '" + sIUNo + "' and exit_time is null order by valid_to" ;
-	} else{
-		sqlStmt = sqlStmt + "LPN = '" + sLPN + "' and exit_time is null order by valid_to" ;
-	}
-	//operation::getInstance()->writelog(sqlStmt,"DB");
+    const auto data = op->FnGetSharedData();
 
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		// DB Error
-		iRet = -1;
-		return iRet;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-		if (selResult.size() > 0)
-		{
-			operation::getInstance()->tExit.iTransType = 10;
-			operation::getInstance()->tExit.sPaidAmt = 0;
-			operation::getInstance()->tExit.sCardNo = selResult[0].GetDataItem(0);
-			operation::getInstance()->writelog("Complimentary Ticket: " + selResult[0].GetDataItem(0),"DB");
-		}
-		else
-		{
-			sqlStmt = "SELECT redeem_no,redeem_amt,redeem_time from redemption WHERE valid_from <= getdate() AND valid_to >= getdate() AND "; 
-	
-			if (sIUNo != "") {
-				sqlStmt = sqlStmt + "IU = '" + sIUNo + "' and exit_time is null order by valid_to" ;
-			} else{
-				sqlStmt = sqlStmt + "LPN = '" + sLPN + "' and exit_time is null order by valid_to" ;
-			}
-			//operation::getInstance()->writelog(sqlStmt,"DB");
+    if (!data)
+    {
+        logDbMessage("Unable to get Operation shared data.", "DB");
 
-			r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-			if (r != 0)
-			{
-				m_remote_db_err_flag.store(1);
-				// DB Error
-				iRet = -1;
-				return iRet;
-			}
-			else
-			{
-				m_remote_db_err_flag.store(0);
-				if (selResult.size() > 0) {
-					operation::getInstance()->tExit.sRedeemNo = selResult[0].GetDataItem(0);
-					operation::getInstance()->tExit.sRedeemAmt = std::stod(selResult[0].GetDataItem(1));
-					operation::getInstance()->tExit.iRedeemTime = std::stoi(selResult[0].GetDataItem(2));
-					//----------
-					operation::getInstance()->writelog("Redemption Ticket: " + selResult[0].GetDataItem(0),"DB");
-					if (operation::getInstance()->tExit.sRedeemAmt >= 0.01){
-						operation::getInstance()->writelog("Redemption Amt: "+ Common::getInstance()->SetFeeFormat(operation::getInstance()->tExit.sRedeemAmt) ,"DB");
-					}else{
-						operation::getInstance()->writelog("Redemption time: "+ std::to_string(operation::getInstance()->tExit.iRedeemTime),"DB");
-					}
-				}else
-				{
-					iRet = -1;
-				}
-			}
-		}
-	}		
-	return iRet;
+        return -1;
+    }
+
+    try
+    {
+        // =====================================================
+        // Build IU / LPN condition
+        // =====================================================
+        const std::string ticketCondition =
+            !iuNo.empty()
+                ? "IU = '" + iuNo + "'"
+                : "LPN = '" + lpn + "'";
+
+        // =====================================================
+        // Check Complimentary ticket first
+        // =====================================================
+        const std::string complimentarySql =
+            "SELECT complimentary_no "
+            "FROM complimentary "
+            "WHERE valid_from <= GETDATE() "
+            "AND valid_to >= GETDATE() "
+            "AND " +
+            ticketCondition +
+            " AND exit_time IS NULL "
+            "ORDER BY valid_to";
+
+        std::vector<ReaderItem> complimentaryResult;
+
+        const int complimentaryRet =
+            centraldb->SQLSelect(complimentarySql, &complimentaryResult, true);
+
+        if (complimentaryRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            return -1;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (!complimentaryResult.empty())
+        {
+            const std::string complimentaryNo = complimentaryResult.front().GetDataItem(0);
+
+            auto exitData = data->tExit;
+
+            exitData.iTransType = 10;
+            exitData.sPaidAmt = 0;
+            exitData.sCardNo = complimentaryNo;
+
+            OperationSharedDataUpdate update;
+            update.tExit = std::move(exitData);
+
+            if (!op->FnUpdateSharedData(std::move(update)))
+            {
+                logDbMessage("Unable to update Operation shared data.", "DB");
+
+                return -1;
+            }
+
+            logDbMessage("Complimentary Ticket: " + complimentaryNo, "DB");
+
+            return 0;
+        }
+
+        // =====================================================
+        // No Complimentary ticket - check Redemption ticket
+        // =====================================================
+        const std::string redemptionSql =
+            "SELECT redeem_no, redeem_amt, redeem_time "
+            "FROM redemption "
+            "WHERE valid_from <= GETDATE() "
+            "AND valid_to >= GETDATE() "
+            "AND " +
+            ticketCondition +
+            " AND exit_time IS NULL "
+            "ORDER BY valid_to";
+
+        std::vector<ReaderItem> redemptionResult;
+
+        const int redemptionRet = centraldb->SQLSelect(redemptionSql, &redemptionResult, true);
+
+        if (redemptionRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            return -1;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (redemptionResult.empty())
+        {
+            return -1;
+        }
+
+        const auto& row = redemptionResult.front();
+
+        auto exitData = data->tExit;
+        exitData.sRedeemNo = row.GetDataItem(0);
+        exitData.sRedeemAmt = std::stof(row.GetDataItem(1));
+        exitData.iRedeemTime = std::stoi(row.GetDataItem(2));
+
+        const std::string redeemNo = exitData.sRedeemNo;
+        const float redeemAmount = exitData.sRedeemAmt;
+        const int redeemTime = exitData.iRedeemTime;
+
+        OperationSharedDataUpdate update;
+        update.tExit = std::move(exitData);
+
+        if (!op->FnUpdateSharedData(std::move(update)))
+        {
+            logDbMessage("Unable to update Operation shared data.", "DB");
+
+            return -1;
+        }
+
+        logDbMessage("Redemption Ticket: " + redeemNo, "DB");
+
+        if (redeemAmount >= 0.01F)
+        {
+            logDbMessage("Redemption Amt: " + Common::getInstance()->SetFeeFormat(redeemAmount), "DB");
+        }
+        else
+        {
+            logDbMessage("Redemption time: " + std::to_string(redeemTime), "DB");
+        }
+
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("HasValidTicket error: " + std::string(e.what()), "DB");
+
+        return -1;
+    }
 }
 
-DBError db::updateUsedTicket(tExitTrans_Struct& tExit) 
+DBError db::updateUsedTicket(tExitTrans_Struct& exitTrans)
 {
-	int r=0;
-	string sqstr="";
-	//------ added on 31/07/2026
-	if (tExit.iUsedTicketBy == 0) tExit.iUsedTicketBy = 1;
-	//-------
-	if (operation::getInstance()->tExit.iTransType == 10 )
-	{
-		sqstr="UPDATE complimentary set used_by = "+ std::to_string(tExit.iUsedTicketBy) + ",";
-		sqstr= sqstr + " exit_station = '" + tExit.xsid + "',";
-		sqstr= sqstr + " exit_time = '" + tExit.sExitTime + "',";
-		sqstr= sqstr + " parking_fee = '" + std::to_string(tExit.sFee) + "',";
-		sqstr= sqstr + " Parked_time = '" + std::to_string(tExit.lParkedTime) + "',";
-		sqstr= sqstr + " iu_tk_no = '" + tExit.sIUNo + "'";
-		sqstr=sqstr + " WHERE complimentary_no = '"+ tExit.sCardNo + "'";
-	} 
-	else 
-	{
-		sqstr="UPDATE redemption set used_by = "+ std::to_string(tExit.iUsedTicketBy) + "," ;
-		sqstr= sqstr + " exit_station = '" + tExit.xsid + "',";
-		sqstr= sqstr + " exit_time = '" + tExit.sExitTime + "',";
-		sqstr= sqstr + " parking_fee = '" + std::to_string(tExit.sFee) + "',";
-		sqstr= sqstr + " Parked_time = '" + std::to_string(tExit.lParkedTime) + "',";
-		sqstr= sqstr + " iu_tk_no = '" + tExit.sIUNo + "'";
-		sqstr= sqstr + " WHERE redeem_no = '" + tExit.sRedeemNo + "'";
-	}
-	
-	r = centraldb->SQLExecutNoneQuery(sqstr);
+    // =========================================================
+    // Default used_by
+    // =========================================================
+    if (exitTrans.iUsedTicketBy == 0)
+    {
+        exitTrans.iUsedTicketBy = 1;
+    }
 
-	if (r==0) 
-	{
-		operation::getInstance()->writelog("Update Used Ticket: " + std::to_string( operation::getInstance()->tExit.iUsedTicketBy),"DB");
-		m_remote_db_err_flag.store(0);
-		
-		return iCentralSuccess;
-		
-	}
-	else {
-		operation::getInstance()->writelog("fail to update used ticket.","DB");
-		m_remote_db_err_flag.store(1);
-		
-		return iCentralFail;;
-		
-	}
+    try
+    {
+        const bool isComplimentary = (exitTrans.iTransType == 10);
+
+        const std::string tableName =
+            isComplimentary
+                ? "complimentary"
+                : "redemption";
+
+        const std::string ticketColumn =
+            isComplimentary
+                ? "complimentary_no"
+                : "redeem_no";
+
+        const std::string ticketNo =
+            isComplimentary
+                ? exitTrans.sCardNo
+                : exitTrans.sRedeemNo;
+
+        // =====================================================
+        // Update used ticket
+        // =====================================================
+        const std::string sqlStmt =
+            "UPDATE " +
+            tableName +
+            " SET "
+            "used_by = " +
+            std::to_string(exitTrans.iUsedTicketBy) +
+            ", exit_station = '" +
+            exitTrans.xsid +
+            "', exit_time = '" +
+            exitTrans.sExitTime +
+            "', parking_fee = '" +
+            std::to_string(exitTrans.sFee) +
+            "', Parked_time = '" +
+            std::to_string(exitTrans.lParkedTime) +
+            "', iu_tk_no = '" +
+            exitTrans.sIUNo +
+            "' "
+            "WHERE " +
+            ticketColumn +
+            " = '" +
+            ticketNo +
+            "'";
+
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update used ticket.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        logDbMessage("Update Used Ticket: " + std::to_string(exitTrans.iUsedTicketBy), "DB");
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("updateUsedTicket error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }
 
-int db::GetSeasonHolder(std::string sIUNo)
+int db::GetSeasonHolder(const std::string& iuNo)
 {
-	// Valid
-	int iRet = 0;
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    try
+    {
+        const std::string sqlStmt =
+            "SELECT Holder_Type "
+            "FROM season_mst "
+            "WHERE season_no = '" +
+            iuNo +
+            "'";
 
-	sqlStmt = "SELECT Holder_Type from season_mst WHERE season_no = '" + sIUNo+ "'"; 
-	
-	//operation::getInstance()->writelog(sqlStmt,"DB");
+        std::vector<ReaderItem> result;
 
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		// DB Error
-		iRet = -1;
-		return iRet;
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
-		
-		if (selResult.size() > 0) iRet = std::stoi(selResult[0].GetDataItem(0));
-	}
-	return iRet;
+        const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
+
+        if (ret != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            return -1;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (result.empty())
+        {
+            return 0;
+        }
+
+        return std::stoi(result.front().GetDataItem(0));
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("GetSeasonHolder error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
 }
 
-int db::HasEZpay(std::string sIUNo)
+int db::HasEZpay(const std::string& iuNo)
 {
-	// Valid
-	int iRet = 0;
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    try
+    {
+        const std::string sqlStmt =
+            "SELECT * "
+            "FROM tblIUList_mst "
+            "WHERE valid_from <= GETDATE() "
+            "AND valid_to >= GETDATE() "
+            "AND iu_no = '" +
+            iuNo +
+            "'";
 
-	sqlStmt = "SELECT * from tblIUList_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no ='" + sIUNo + "'";
-	 
-	//operation::getInstance()->writelog(sqlStmt,"DB");
+        std::vector<ReaderItem> result;
 
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		// DB Error
-		iRet = -1;
-		
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
+        const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
 
-		if (selResult.size() > 0) iRet = 1;
-	}
-	return iRet;
+        if (ret != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            return -1;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        return result.empty() ? 0 : 1;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("HasEZpay error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
 }
 
-int db::HasAXS(std::string sIUNo)
+int db::HasAXS(const std::string& iuNo)
 {
-	// Valid
-	int iRet = 0;
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    try
+    {
+        const std::string sqlStmt =
+            "SELECT *"
+            "FROM tblwhitelist_mst "
+            "WHERE valid_from <= GETDATE() "
+            "AND valid_to >= GETDATE() "
+            "AND iu_no = '" +
+            iuNo +
+            "'";
 
-	sqlStmt = "SELECT * from tblwhitelist_mst WHERE valid_from <= getdate() AND valid_to >= getdate() AND iu_no ='" + sIUNo + "'"; 
-	
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-		// DB Error
-		iRet = -1;
-		
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
+        std::vector<ReaderItem> result;
 
-		if (selResult.size() > 0) iRet = 1;
-	}
-	return iRet;
+        const int ret = centraldb->SQLSelect(sqlStmt, &result, true);
+
+        if (ret != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            return -1;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        return result.empty() ? 0 : 1;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("HasAXS error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return -1;
+    }
 }
 
-string db::GetIUByLPN(std::string sLPN)
+std::string db::GetIUByLPN(const std::string& lpn)
 {
-	// Valid
-	std::string sRet = "";
-	int r;
-	std::string sqlStmt;
-	vector<ReaderItem> selResult;
+    try
+    {
+        // =====================================================
+        // Check Season first
+        // =====================================================
+        const std::string seasonSql =
+            "SELECT season_no "
+            "FROM season_mst "
+            "WHERE vehicle_no = '" +
+            lpn +
+            "'";
 
-	sqlStmt = "SELECT season_no from season_mst WHERE vehicle_no ='" + sLPN + "'"; 
-	//-------
-	operation::getInstance()->writelog(sqlStmt,"DB");
-	//--------
-	r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-	if (r != 0)
-	{
-		m_remote_db_err_flag.store(1);
-	}
-	else
-	{
-		m_remote_db_err_flag.store(0);
+        logDbMessage(seasonSql, "DB");
 
-		if (selResult.size() > 0) sRet = selResult[0].GetDataItem(0);
-	}
+        std::vector<ReaderItem> seasonResult;
 
-	if (sRet == "" &&  operation::getInstance()->gtStation.iType == tiExit)
-	{
-		sqlStmt = "SELECT iu_tk_no from movement_trans_tmp WHERE entry_lpn ='" + sLPN + "'"; 
-		//-----
-		operation::getInstance()->writelog(sqlStmt,"DB");
-		//-------
-		r = centraldb->SQLSelect(sqlStmt, &selResult, true);
-		if (r != 0)
-		{
-			m_remote_db_err_flag.store(1);
-		}
-		else
-		{
-			m_remote_db_err_flag.store(0);
+        const int seasonRet = centraldb->SQLSelect(seasonSql, &seasonResult, true);
 
-			if (selResult.size() > 0) sRet = selResult[0].GetDataItem(0);
-		}
+        if (seasonRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+        }
+        else
+        {
+            m_remote_db_err_flag.store(0);
 
-	}
+            if (!seasonResult.empty())
+            {
+                return seasonResult.front().GetDataItem(0);
+            }
+        }
 
-	return sRet;
+        // =====================================================
+        // Only Exit station checks movement_trans_tmp
+        // =====================================================
+        const auto data = operation::getInstance()->FnGetSharedData();
+
+        if (!data)
+        {
+            logDbMessage("Unable to get Operation shared data.", "DB");
+
+            return "";
+        }
+
+        if (data->gtStation.iType != tiExit)
+        {
+            return "";
+        }
+
+        // =====================================================
+        // Check Movement transaction
+        // =====================================================
+        const std::string movementSql =
+            "SELECT iu_tk_no "
+            "FROM movement_trans_tmp "
+            "WHERE entry_lpn = '" +
+            lpn +
+            "'";
+
+        logDbMessage(movementSql, "DB");
+
+        std::vector<ReaderItem> movementResult;
+
+        const int movementRet = centraldb->SQLSelect(movementSql, &movementResult, true);
+
+        if (movementRet != 0)
+        {
+            m_remote_db_err_flag.store(1);
+
+            return "";
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        if (movementResult.empty())
+        {
+            return "";
+        }
+
+        return movementResult.front().GetDataItem(0);
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("GetIUByLPN error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return "";
+    }
+}
+
+DBError db::FnUpdateStationSwVersion(const std::string& sid)
+{
+    try
+    {
+        const std::string sqlStmt =
+            "UPDATE parameter_mst "
+            "SET s" +
+            sid +
+            "_value = '" +
+            std::string(SW_VERSION) +
+            "' "
+            "WHERE name = 'StationVersion'";
+
+        const int ret = centraldb->SQLExecutNoneQuery(sqlStmt);
+
+        if (ret != 0)
+        {
+            logDbMessage("Fail to update station software version.", "DB");
+
+            m_remote_db_err_flag.store(1);
+
+            return iCentralFail;
+        }
+
+        m_remote_db_err_flag.store(0);
+
+        logDbMessage("Update station software version: " + std::string(SW_VERSION), "DB");
+
+        return iCentralSuccess;
+    }
+    catch (const std::exception& e)
+    {
+        logDbMessage("FnUpdateStationSwVersion error: " + std::string(e.what()), "DB");
+
+        m_remote_db_err_flag.store(1);
+
+        return iCentralFail;
+    }
 }

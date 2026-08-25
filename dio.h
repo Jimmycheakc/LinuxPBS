@@ -43,7 +43,7 @@ public:
 
     static DIO* getInstance();
     
-    void FnDIOInit();
+    void FnDIOInit(int barrierOpenTooLongTime);
     void FnDIOShutdown();
 
     void FnStartDIOMonitoring();

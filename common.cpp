@@ -21,18 +21,6 @@ Common* Common::getInstance()
     return &instance;
 }
 
-void Common::FnLogExecutableInfo(const std::string& str)
-{
-    std::ostringstream info;
-    info << "start "
-         << FnGetFileName(str)
-         << " , Version="
-         << SW_VERSION
-         << " , Build="
-         << BUILD_TIMESTAMP;
-    Logger::getInstance()->FnLog(info.str());
-}
-
 std::string Common::FnGetDateTime()
 {
     auto now = std::chrono::system_clock::now();

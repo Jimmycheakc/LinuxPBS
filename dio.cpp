@@ -1,5 +1,6 @@
 #include <chrono>
 #include <exception>
+#include <optional>
 #include <sstream>
 
 #if defined(__linux__)
@@ -96,7 +97,7 @@ void DIO::logDIChange(const char* name, int pinNumber, int oldValue, int newValu
     Logger::getInstance()->FnLog(oss.str(), logFileName_, "DIO");
 }
 
-void DIO::FnDIOInit()
+void DIO::FnDIOInit(int barrierOpenTooLongTime)
 {
     std::lock_guard<std::mutex> lock(lifecycleMutex_);
 
@@ -109,7 +110,7 @@ void DIO::FnDIOInit()
     Logger::getInstance()->FnCreateLogFile(logFileName_);
     Logger::getInstance()->FnLog("[INIT] Starting", logFileName_, "DIO");
 
-    iBarrierOpenTooLongTime_ = operation::getInstance()->tParas.giBarrierOpenTooLongTime;
+    iBarrierOpenTooLongTime_ = barrierOpenTooLongTime;
 
     loop_a_di_ = getInputPinNum(IniParser::getInstance()->FnGetLoopA());
     loop_b_di_ = getInputPinNum(IniParser::getInstance()->FnGetLoopB());
@@ -541,26 +542,22 @@ void DIO::processDIOChanges(const InputSnapshot& current)
     // Start -- Check the input pin status for Loop A and Loop B and send to Monitor
     if (loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
     {
-        operation::getInstance()->tProcess.gbLoopAIsOn = true;
         // Send to Input Pin Status to Monitor
         operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopA(), 1);
     }
     else if (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
     {
-        operation::getInstance()->tProcess.gbLoopAIsOn = false;
         // Send to Input Pin Status to Monitor
         operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopA(), 0);
     }
 
     if (loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW)
     {
-        operation::getInstance()->tProcess.gbLoopBIsOn = true;
         // Send to Input Pin Status to Monitor
         operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopB(), 1);
     }
     else if (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH)
     {
-        operation::getInstance()->tProcess.gbLoopBIsOn = false;
         // Send to Input Pin Status to Monitor
         operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopB(), 0);
     }
@@ -570,7 +567,6 @@ void DIO::processDIOChanges(const InputSnapshot& current)
     {
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_ON_EVENT));
         
-        operation::getInstance()->tProcess.gbLoopCIsOn = true;
         // Send to Input Pin Status to Monitor
         operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopC(), 1);
     }
@@ -578,7 +574,6 @@ void DIO::processDIOChanges(const InputSnapshot& current)
     {
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_C_OFF_EVENT));
         
-        operation::getInstance()->tProcess.gbLoopCIsOn = false;
         // Send to Input Pin Status to Monitor
         operation::getInstance()->FnSendDIOInputStatusToMonitor(IniParser::getInstance()->FnGetLoopC(), 0);
     }
@@ -674,7 +669,6 @@ void DIO::processDIOChanges(const InputSnapshot& current)
 
     if (lorry_sensor_curr_val == GPIOManager::GPIO_HIGH && lorry_sensor_di_last_val_ == GPIOManager::GPIO_LOW)
     {
-        operation::getInstance()->tProcess.gbLorrySensorIsOn = true;
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LORRY_SENSOR_ON_EVENT));
 
         // Send to Input Pin Status to Monitor
@@ -682,7 +676,6 @@ void DIO::processDIOChanges(const InputSnapshot& current)
     }
     else if (lorry_sensor_curr_val == GPIOManager::GPIO_LOW && lorry_sensor_di_last_val_ == GPIOManager::GPIO_HIGH)
     {
-        operation::getInstance()->tProcess.gbLorrySensorIsOn = false;
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LORRY_SENSOR_OFF_EVENT));
 
         // Send to Input Pin Status to Monitor

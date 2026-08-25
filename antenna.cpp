@@ -48,9 +48,10 @@ Antenna::Antenna()
     IUNumber_.clear();
     IUNumberPrev_.clear();
     
-    antennaCmdTimeoutInMillisec_ = operation::getInstance()->tParas.giAntInqTO;//IniParser::getInstance()->FnGetAntennaInqTO();
-    antennaCmdMaxRetry_ = 3; //operation::getInstance()->tParas.giAntMaxRetry;//IniParser::getInstance()->FnGetAntennaMaxRetry();
-    antennaIUCmdMinOKtimes_ = operation::getInstance()->tParas.giAntMinOKTimes;//IniParser::getInstance()->FnGetAntennaMinOKtimes();
+    antennaId_ = 0;
+    antennaCmdTimeoutInMillisec_ = 0;
+    antennaCmdMaxRetry_ = 3;
+    antennaIUCmdMinOKtimes_ = 0;
     logFileName_ = "antenna";
 }
 
@@ -66,8 +67,17 @@ Antenna* Antenna::getInstance()
     return &instance;
 }
 
-void Antenna::FnAntennaInit(unsigned int baudRate, const std::string& comPortName)
+void Antenna::FnAntennaInit(
+    unsigned int baudRate,
+    const std::string& comPortName,
+    int antennaId,
+    int antennaInqTO,
+    int antennaMinOkTimes)
 {
+    antennaId_ = antennaId;
+    antennaCmdTimeoutInMillisec_ = antennaInqTO;
+    antennaIUCmdMinOKtimes_ = antennaMinOkTimes;
+
     // If a previous Antenna run already exited, make sure its std::thread
     // object is joined before assigning a new worker thread.
     if (!moduleRunning_.load() && ioThread_.joinable())
@@ -379,7 +389,7 @@ boost::asio::awaitable<Antenna::AntCmdRetCode> Antenna::antennaCmdAsync(AntCmdID
     int antennaCmdTimeoutInMs = 1000;
     std::vector<unsigned char> dataBuffer;
 
-    const unsigned char antennaID = operation::getInstance()->gtStation.iAntID;
+    const unsigned char antennaID = antennaId_;
     const unsigned char destID = static_cast<unsigned char>(0xB0 + antennaID);
     const unsigned char sourceID = 0x00;
 

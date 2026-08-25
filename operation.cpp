@@ -1,5 +1,10 @@
-
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <sys/mount.h>
+
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <memory>
@@ -9,8 +14,20 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <utility>
+#include <future>
 #include <cstdio>
 #include <map>
+#include <charconv>
+#include <cctype>
+#include <optional>
+#include <string_view>
+#include <vector>
+#include <boost/asio/post.hpp>
+
+#if defined(__linux__)
+#include <pthread.h>
+#endif
 #include "common.h"
 #include "gpio.h"
 #include "operation.h"
@@ -22,6 +39,7 @@
 #include "lcd.h"
 #include "log.h"
 #include "udp.h"
+#include "udp_protocol.h"
 #include "antenna.h"
 #include "lcsc.h"
 #include "dio.h"
@@ -34,290 +52,2338 @@
 #include "eep_client.h"
 #include "chu_client.h"
 #include "ping.h"
+#include "shutdown_manager.h"
+#include "mount.h"
 
-operation* operation::operation_ = nullptr;
-std::mutex operation::mutex_;
+
+namespace
+{
+
+std::string_view trimUdpField(std::string_view text) noexcept
+{
+    while (!text.empty() &&
+           std::isspace(static_cast<unsigned char>(text.front())) != 0)
+    {
+        text.remove_prefix(1);
+    }
+
+    while (!text.empty() &&
+           std::isspace(static_cast<unsigned char>(text.back())) != 0)
+    {
+        text.remove_suffix(1);
+    }
+
+    return text;
+}
+
+std::optional<int> parseUdpInt(std::string_view text) noexcept
+{
+    text = trimUdpField(text);
+
+    if (text.empty())
+    {
+        return std::nullopt;
+    }
+
+    int value{};
+
+    const auto [ptr, ec] =
+        std::from_chars(text.data(), text.data() + text.size(), value);
+
+    if (ec != std::errc{} || ptr != text.data() + text.size())
+    {
+        return std::nullopt;
+    }
+
+    return value;
+}
+
+std::vector<std::string> splitUdpCsv(std::string_view text)
+{
+    std::vector<std::string> tokens;
+    std::size_t tokenBegin = 0;
+
+    while (tokenBegin <= text.size())
+    {
+        const std::size_t separatorPos = text.find(',', tokenBegin);
+
+        if (separatorPos == std::string_view::npos)
+        {
+            tokens.emplace_back(text.substr(tokenBegin));
+            break;
+        }
+
+        tokens.emplace_back(text.substr(tokenBegin, separatorPos - tokenBegin));
+        tokenBegin = separatorPos + 1;
+
+        if (tokenBegin == text.size())
+        {
+            tokens.emplace_back();
+            break;
+        }
+    }
+
+    return tokens;
+}
+
+void logInvalidUdpPacket(const std::string& reason)
+{
+    Logger::getInstance()->FnLog("[RX] Invalid packet | " + reason, "", "UDP");
+}
+
+void logReceivedUdpPacket(std::string_view packet)
+{
+    Logger::getInstance()->FnLog("Received data:" + std::string(packet), "", "UDP");
+}
+
+template <typename T>
+T* getOperationEventData(OperationEvent& event)
+{
+    return std::get_if<T>(&event.data);
+}
+
+template <typename T>
+const T* getOperationEventData(const OperationEvent& event)
+{
+    return std::get_if<T>(&event.data);
+}
+
+void logInvalidOperationEventData(OperationEventType type)
+{
+    std::stringstream ss;
+    ss << "operation::handleEventOnIo | Invalid payload for event type " << static_cast<int>(type);
+    Logger::getInstance()->FnLogExceptionError(ss.str());
+}
+
+std::string_view dioEventToString(DIO::DIO_EVENT event)
+{
+    switch (event)
+    {
+        case DIO::DIO_EVENT::LOOP_A_ON_EVENT:                 return "LOOP_A_ON";
+        case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:                return "LOOP_A_OFF";
+        case DIO::DIO_EVENT::LOOP_B_ON_EVENT:                 return "LOOP_B_ON";
+        case DIO::DIO_EVENT::LOOP_B_OFF_EVENT:                return "LOOP_B_OFF";
+        case DIO::DIO_EVENT::LOOP_C_ON_EVENT:                 return "LOOP_C_ON";
+        case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:                return "LOOP_C_OFF";
+        case DIO::DIO_EVENT::INTERCOM_ON_EVENT:               return "INTERCOM_ON";
+        case DIO::DIO_EVENT::INTERCOM_OFF_EVENT:              return "INTERCOM_OFF";
+        case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:         return "STATION_DOOR_OPEN";
+        case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:        return "STATION_DOOR_CLOSE";
+        case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:         return "BARRIER_DOOR_OPEN";
+        case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:        return "BARRIER_DOOR_CLOSE";
+        case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:         return "BARRIER_STATUS_ON";
+        case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:        return "BARRIER_STATUS_OFF";
+        case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT:    return "MANUAL_OPEN_BARRIER_ON";
+        case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT:   return "MANUAL_OPEN_BARRIER_OFF";
+        case DIO::DIO_EVENT::LORRY_SENSOR_ON_EVENT:           return "LORRY_SENSOR_ON";
+        case DIO::DIO_EVENT::LORRY_SENSOR_OFF_EVENT:          return "LORRY_SENSOR_OFF";
+        case DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT:             return "ARM_BROKEN_ON";
+        case DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT:            return "ARM_BROKEN_OFF";
+        case DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT:          return "PRINT_RECEIPT_ON";
+        case DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT:         return "PRINT_RECEIPT_OFF";
+        case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_ON_EVENT:  return "BARRIER_OPEN_TOO_LONG_ON";
+        case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_OFF_EVENT: return "BARRIER_OPEN_TOO_LONG_OFF";
+    }
+
+    return "UNKNOWN";
+}
+
+} // namespace
+
 
 operation::operation()
-    : m_db(nullptr), m_udp(nullptr), m_Monitorudp(nullptr)
 {
     isOperationInitialized_.store(false);
     lastActionTimeAfterLoopA_ = std::chrono::steady_clock::now();
 }
 
-operation* operation::getInstance()
+operation::~operation()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (operation_ == nullptr)
+    // Normal shutdown must be performed through FnClose(). This destructor is
+    // only an emergency/static-destruction fallback.
+    stopping_.store(true);
+    workGuard_.reset();
+    ioContext_.stop();
+
+    if (ioContextThread_.joinable() &&
+        ioContextThread_.get_id() != std::this_thread::get_id())
     {
-        operation_ = new operation();
+        ioContextThread_.join();
     }
-    return operation_;
+
+    pLCDIdleTimer_.reset();
+    pLoopATimer_.reset();
+    pDailyProcessTimer_.reset();
+
+    monitorUdpClient_.reset();
+    pmsUdpClient_.reset();
 }
 
-void operation::OperationInit(boost::asio::io_context& ioContext)
+operation* operation::getInstance()
+{
+    static operation instance;
+    return &instance;
+}
+
+bool operation::postEvent(std::function<void()> handler)
+{
+    if (!handler || stopping_.load() || !running_.load())
+    {
+        return false;
+    }
+
+    // Internal OP_IO callers may execute immediately. External callers are
+    // always serialized by posting to Operation's single io_context thread.
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        if (!stopping_.load())
+        {
+            handler();
+            return true;
+        }
+
+        return false;
+    }
+
+    boost::asio::post(
+        ioContext_,
+        [this, handler = std::move(handler)]() mutable
+        {
+            if (stopping_.load())
+            {
+                return;
+            }
+
+            handler();
+        });
+
+    return true;
+}
+
+std::optional<OperationSharedData> operation::FnGetSharedData()
+{
+    // Never wait for OP_IO from OP_IO itself.
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        return makeSharedDataSnapshotOnIo();
+    }
+
+    // Serialize against FnOperationInit()/FnClose() so the context cannot be
+    // torn down while this synchronous snapshot request is waiting.
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+
+    if (!running_.load() || stopping_.load())
+    {
+        return std::nullopt;
+    }
+
+    auto snapshotTask =
+        std::make_shared<std::packaged_task<OperationSharedData()>>(
+            [this]()
+            {
+                return makeSharedDataSnapshotOnIo();
+            });
+
+    auto snapshotFuture = snapshotTask->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [snapshotTask]() mutable
+        {
+            (*snapshotTask)();
+        });
+
+    try
+    {
+        return snapshotFuture.get();
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLogExceptionError(std::string("operation::FnGetSharedData | Exception: ") + e.what());
+    }
+    catch (...)
+    {
+        Logger::getInstance()->FnLogExceptionError("operation::FnGetSharedData | Unknown exception");
+    }
+
+    return std::nullopt;
+}
+
+bool operation::FnUpdateSharedData(OperationSharedDataUpdate update)
+{
+    return postEvent(
+        [this, update = std::move(update)]() mutable
+        {
+            applySharedDataUpdateOnIo(std::move(update));
+        });
+}
+
+OperationSharedData operation::makeSharedDataSnapshotOnIo() const
+{
+    OperationSharedData data;
+
+    data.isOperationInitialized = isOperationInitialized_.load();
+    data.gtStation = gtStation;
+    data.tEntry = tEntry;
+    data.tExit = tExit;
+    data.tExit1 = tExit1;
+    data.tProcess = tProcess;
+    data.tParas = tParas;
+    data.tMsg = tMsg;
+    data.tExitMsg = tExitMsg;
+    data.tSeason = tSeason;
+    data.tVType = tVType;
+    data.tTR = tTR;
+
+    for (std::size_t i = 0; i < data.tPBSError.size(); ++i)
+    {
+        data.tPBSError[i] = tPBSError[i];
+    }
+
+    return data;
+}
+
+void operation::applySharedDataUpdateOnIo(OperationSharedDataUpdate update)
+{
+    if (update.gtStation)
+    {
+        gtStation = std::move(*update.gtStation);
+    }
+
+    if (update.tEntry)
+    {
+        tEntry = std::move(*update.tEntry);
+    }
+
+    if (update.tExit)
+    {
+        tExit = std::move(*update.tExit);
+    }
+
+    if (update.tExit1)
+    {
+        tExit1 = std::move(*update.tExit1);
+    }
+
+    if (update.tProcess)
+    {
+        tProcess = std::move(*update.tProcess);
+    }
+
+    if (update.tParas)
+    {
+        tParas = std::move(*update.tParas);
+    }
+
+    if (update.tMsg)
+    {
+        tMsg = std::move(*update.tMsg);
+    }
+
+    if (update.tExitMsg)
+    {
+        tExitMsg = std::move(*update.tExitMsg);
+    }
+
+    if (update.tPBSError)
+    {
+        for (std::size_t i = 0; i < update.tPBSError->size(); ++i)
+        {
+            tPBSError[i] = std::move((*update.tPBSError)[i]);
+        }
+    }
+
+    if (update.tSeason)
+    {
+        tSeason = std::move(*update.tSeason);
+    }
+
+    if (update.tVType)
+    {
+        tVType = std::move(*update.tVType);
+    }
+
+    if (update.tTR)
+    {
+        tTR = std::move(*update.tTR);
+    }
+}
+
+bool operation::FnOnEvent(OperationEvent event)
+{
+    return postEvent(
+        [this, event = std::move(event)]() mutable
+        {
+            handleEventOnIo(std::move(event));
+        });
+}
+
+void operation::handleEventOnIo(OperationEvent event)
+{
+    // This function always runs on OP_IO. EventHandler has already copied the
+    // short-lived BaseEvent payload into OperationEvent.
+    switch (event.type)
+    {
+        // -----------------------------------------------------
+        // Antenna
+        // -----------------------------------------------------
+        case OperationEventType::AntennaFail:
+        {
+            const auto* value = getOperationEventData<int>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleAntennaFailOnIo(*value);
+            break;
+        }
+
+        case OperationEventType::AntennaPower:
+        {
+            const auto* value = getOperationEventData<bool>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleAntennaPowerOnIo(*value);
+            break;
+        }
+
+        case OperationEventType::AntennaIUCome:
+        {
+            auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleAntennaIUComeOnIo(std::move(*value));
+            break;
+        }
+
+        // -----------------------------------------------------
+        // LCSC
+        // -----------------------------------------------------
+        case OperationEventType::LcscReaderStatus:
+        case OperationEventType::LcscReaderGetCardID:
+        case OperationEventType::LcscReaderGetCardBalance:
+        case OperationEventType::LcscReaderGetCardDeduct:
+        case OperationEventType::LcscReaderGetCardRecord:
+        {
+            const auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            ProcessLCSC(*value);
+            break;
+        }
+
+        case OperationEventType::LcscReaderLogin:
+        case OperationEventType::LcscReaderLogout:
+        case OperationEventType::LcscReaderGetCardFlush:
+        case OperationEventType::LcscReaderGetTime:
+        case OperationEventType::LcscReaderSetTime:
+        case OperationEventType::LcscReaderUploadCFGFile:
+        case OperationEventType::LcscReaderUploadCILFile:
+        case OperationEventType::LcscReaderUploadBLFile:
+        {
+            // These events were log-only in the previous EventHandler design.
+            // No Operation business action is currently required.
+            if (getOperationEventData<std::string>(event) == nullptr)
+            {
+                logInvalidOperationEventData(event.type);
+            }
+            break;
+        }
+
+        // -----------------------------------------------------
+        // DIO
+        // -----------------------------------------------------
+        case OperationEventType::DioEvent:
+        {
+            const auto* value = getOperationEventData<int>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleDioEventOnIo(*value);
+            break;
+        }
+
+        // -----------------------------------------------------
+        // KSM Reader
+        // -----------------------------------------------------
+        case OperationEventType::KsmReaderInit:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmReaderInitOnIo(*success);
+            break;
+        }
+
+        case OperationEventType::KsmReaderGetStatus:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Get Status", KsmFailureAction::EnableError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderEjectToFront:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Eject To Front", KsmFailureAction::EnableError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardAllowed:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Card Allowed", KsmFailureAction::EnableError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardProhibited:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Card Prohibited", KsmFailureAction::EnableError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardOnIc:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Card On Ic", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderIcPowerOn:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Ic Power On", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderWarmReset:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Warm Reset", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderSelectFile1:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Select File 1", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderSelectFile2:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Select File 2", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderReadCardInfo:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Read Card Info", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderReadCardBalance:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Read Card Balance", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderIcPowerOff:
+        {
+            const auto* success = getOperationEventData<bool>(event);
+            if (success == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleKsmResultOnIo(*success, "KSM Reader Ic Power Off", KsmFailureAction::CardReadError);
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardIn:
+        {
+            if (getOperationEventData<bool>(event) == nullptr)
+            {
+                logInvalidOperationEventData(event.type);
+                break;
+            }
+
+            // Preserve previous behavior: the completion flag was ignored.
+            KSM_CardIn();
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardOut:
+        {
+            if (getOperationEventData<bool>(event) == nullptr)
+            {
+                logInvalidOperationEventData(event.type);
+                break;
+            }
+
+            writelog("card out", "OPR");
+            KSM_Reader::getInstance()->FnKSMReaderStartGetStatus();
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardTakeAway:
+        {
+            if (getOperationEventData<bool>(event) == nullptr)
+            {
+                logInvalidOperationEventData(event.type);
+                break;
+            }
+
+            KSM_CardTakeAway();
+            break;
+        }
+
+        case OperationEventType::KsmReaderCardInfo:
+        {
+            if (getOperationEventData<bool>(event) == nullptr)
+            {
+                logInvalidOperationEventData(event.type);
+                break;
+            }
+
+            const std::string cardNo = KSM_Reader::getInstance()->FnKSMReaderGetCardNum();
+            const long cardBalance = KSM_Reader::getInstance()->FnKSMReaderGetCardBalance();
+            const bool cardExpired = KSM_Reader::getInstance()->FnKSMReaderGetCardExpired();
+
+            KSM_CardInfo(cardNo, cardBalance, cardExpired);
+            break;
+        }
+
+        // -----------------------------------------------------
+        // LPR
+        // -----------------------------------------------------
+        case OperationEventType::LprReceive:
+        {
+            auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleLprReceiveOnIo(std::move(*value));
+            break;
+        }
+
+        // -----------------------------------------------------
+        // UPT
+        // -----------------------------------------------------
+        case OperationEventType::UptCardDetect:
+        case OperationEventType::UptPaymentAuto:
+        case OperationEventType::UptDeviceSettlement:
+        case OperationEventType::UptRetrieveLastSettlement:
+        case OperationEventType::UptDeviceLogon:
+        case OperationEventType::UptDeviceStatus:
+        case OperationEventType::UptDeviceTimeSync:
+        case OperationEventType::UptDeviceTMS:
+        case OperationEventType::UptDeviceReset:
+        case OperationEventType::UptCommandCancel:
+        {
+            const auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+
+            Upt::UPT_CMD command{};
+
+            switch (event.type)
+            {
+                case OperationEventType::UptCardDetect:
+                    command = Upt::UPT_CMD::CARD_DETECT_REQUEST;
+                    break;
+                case OperationEventType::UptPaymentAuto:
+                    command = Upt::UPT_CMD::PAYMENT_MODE_AUTO_REQUEST;
+                    break;
+                case OperationEventType::UptDeviceSettlement:
+                    command = Upt::UPT_CMD::DEVICE_SETTLEMENT_REQUEST;
+                    break;
+                case OperationEventType::UptRetrieveLastSettlement:
+                    command = Upt::UPT_CMD::DEVICE_RETRIEVE_LAST_SETTLEMENT_REQUEST;
+                    break;
+                case OperationEventType::UptDeviceLogon:
+                    command = Upt::UPT_CMD::DEVICE_LOGON_REQUEST;
+                    break;
+                case OperationEventType::UptDeviceStatus:
+                    command = Upt::UPT_CMD::DEVICE_STATUS_REQUEST;
+                    break;
+                case OperationEventType::UptDeviceTimeSync:
+                    command = Upt::UPT_CMD::DEVICE_TIME_SYNC_REQUEST;
+                    break;
+                case OperationEventType::UptDeviceTMS:
+                    command = Upt::UPT_CMD::DEVICE_TMS_REQUEST;
+                    break;
+                case OperationEventType::UptDeviceReset:
+                    command = Upt::UPT_CMD::DEVICE_RESET_REQUEST;
+                    break;
+                case OperationEventType::UptCommandCancel:
+                    command = Upt::UPT_CMD::CANCEL_COMMAND_REQUEST;
+                    break;
+                default:
+                    break;
+            }
+
+            processUPT(command, *value);
+            break;
+        }
+
+        // -----------------------------------------------------
+        // Printer / Barcode
+        // -----------------------------------------------------
+        case OperationEventType::PrinterStatus:
+        {
+            const auto* value = getOperationEventData<int>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handlePrinterStatusOnIo(*value);
+            break;
+        }
+
+        case OperationEventType::BarcodeReceived:
+        {
+            auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            ProcessBarcodeData(std::move(*value));
+            break;
+        }
+
+        // -----------------------------------------------------
+        // EEP
+        // -----------------------------------------------------
+        case OperationEventType::EepClientResponse:
+        {
+            const auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            processEEP(*value);
+            break;
+        }
+
+        case OperationEventType::EepClientConnectionState:
+        {
+            const auto* value = getOperationEventData<bool>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleEepConnectionStateOnIo(*value);
+            break;
+        }
+
+        // -----------------------------------------------------
+        // CHU
+        // -----------------------------------------------------
+        case OperationEventType::ChuReceived:
+        {
+            const auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            processCHU(*value);
+            break;
+        }
+
+        case OperationEventType::ChuClientConnectionState:
+        {
+            const auto* value = getOperationEventData<std::string>(event);
+            if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
+            handleChuConnectionStateOnIo(*value);
+            break;
+        }
+    }
+}
+
+void operation::handleKsmResultOnIo(
+    bool success,
+    const char* description,
+    KsmFailureAction failureAction)
+{
+    writelog(std::string(description) + (success ? " : Ok." : " : Error."), "OPR");
+
+    if (success)
+    {
+        return;
+    }
+
+    switch (failureAction)
+    {
+        case KsmFailureAction::EnableError:
+            handleKSM_EnableError();
+            break;
+
+        case KsmFailureAction::CardReadError:
+            handleKSM_CardReadError();
+            break;
+    }
+}
+
+void operation::handleLprReceiveOnIo(std::string eventData)
+{
+    const Lpr::LPREventData parsedEvent = Lpr::getInstance()->deserializeEventData(eventData);
+
+    std::stringstream ss;
+    ss << "[OP_IO] LPR Receive"
+       << " | camType : " << static_cast<int>(parsedEvent.camType)
+       << ", LPN : " << parsedEvent.LPN
+       << ", TransID : " << parsedEvent.TransID
+       << ", imagePath : " << parsedEvent.imagePath;
+
+    writelog(ss.str(), "OPR");
+
+    ReceivedLPR(
+        parsedEvent.camType,
+        parsedEvent.LPN,
+        parsedEvent.TransID,
+        parsedEvent.imagePath);
+}
+
+bool operation::FnOnPmsUdpPacket(std::string senderIp, std::string packet)
+{
+    if (packet.empty())
+    {
+        return false;
+    }
+
+    return postEvent(
+        [this,
+         senderIp = std::move(senderIp),
+         packet = std::move(packet)]()
+        {
+            processPmsUdpPacketOnIo(senderIp, packet);
+        });
+}
+
+bool operation::FnOnMonitorUdpPacket(std::string senderIp, std::string packet)
+{
+    if (packet.empty())
+    {
+        return false;
+    }
+
+    return postEvent(
+        [this,
+         senderIp = std::move(senderIp),
+         packet = std::move(packet)]()
+        {
+            processMonitorUdpPacketOnIo(senderIp, packet);
+        });
+}
+
+
+
+void operation::processMonitorUdpPacketOnIo(const std::string& senderIp, const std::string& packet)
+{
+    if (senderIp == tParas.gsLocalIP)
+    {
+        return;
+    }
+
+	if (packet.empty())
+    {
+        return;
+    }
+
+	try
+    {
+		// ParseData accepts std::string_view, so the UDP datagram can be
+        // parsed directly without requiring a null terminator or temporary
+        // std::string copy. Parsed fields are owned by ParseData.
+        ParseData fields('[', ']', '|');
+        const std::size_t fieldCount = fields.Parse(packet);
+
+		if (fieldCount < 4)
+        {
+            logInvalidUdpPacket("Monitor field count < 4");
+            return;
+        }
+
+		const auto commandValue = parseUdpInt(fields.FieldView(2));
+
+		if (!commandValue)
+        {
+            logInvalidUdpPacket("Invalid monitor command");
+            return;
+        }
+
+        const auto command = static_cast<MonitorUdpRxCommand>(*commandValue);
+
+		switch (command)
+        {
+            case MonitorUdpRxCommand::MonitorStatus:
+            {
+                logReceivedUdpPacket(packet);
+
+                const auto status = parseUdpInt(fields.FieldView(3));
+                if (!status)
+                {
+                    logInvalidUdpPacket("Invalid monitor status");
+                    break;
+                }
+
+                if (monitorUdpClient_ != nullptr)
+                {
+                    monitorUdpClient_->FnSetMonitorStatus(*status == 1);
+                }
+                break;
+            }
+
+            case MonitorUdpRxCommand::MonitorEnquiry:
+            {
+                logReceivedUdpPacket(packet);
+                sendMyStatusToMonitor();
+                break;
+            }
+
+            case MonitorUdpRxCommand::MonitorFeeTest:
+            {
+                logReceivedUdpPacket(packet);
+                break;
+            }
+
+            case MonitorUdpRxCommand::MonitorOutput:
+            {
+                logReceivedUdpPacket(packet);
+
+                const auto tokens = splitUdpCsv(fields.FieldView(3));
+                if (tokens.size() != 2)
+                {
+                    logInvalidUdpPacket("Monitor output requires pin,value");
+                    break;
+                }
+
+                const auto pinNumber = parseUdpInt(tokens[0]);
+                const auto pinValue = parseUdpInt(tokens[1]);
+
+                if (!pinNumber || !pinValue || (*pinValue != 0 && *pinValue != 1))
+                {
+                    writelog("Invalid DIO", "UDP");
+                    break;
+                }
+
+                const int actualPin = DIO::getInstance()->FnGetOutputPinNum(*pinNumber);
+
+                if (actualPin == 0)
+                {
+                    writelog("Invalid DIO", "UDP");
+                    break;
+                }
+
+                auto* gpio = GPIOManager::getInstance()->FnGetGPIO(actualPin);
+
+                if (gpio == nullptr)
+                {
+                    writelog("Nullptr, Invalid DIO", "UDP");
+                    break;
+                }
+
+                gpio->FnSetValue(*pinValue);
+                break;
+            }
+
+            case MonitorUdpRxCommand::DownloadIni:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download INI file", "UDP");
+
+                const bool success = CopyIniFile(fields.Field(0), fields.Field(3));
+
+                sendCmdDownloadIniAckToMonitor(success);
+                break;
+            }
+
+            case MonitorUdpRxCommand::DownloadParam:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download Parameter", "UDP");
+
+                db::getInstance()->downloadparameter();
+
+                if (db::getInstance()->FnGetDatabaseErrorFlag() == 0)
+                {
+                    db::getInstance()->loadParam();
+                    sendCmdDownloadParamAckToMonitor(true);
+                }
+                else
+                {
+                    sendCmdDownloadParamAckToMonitor(false);
+                }
+
+                break;
+            }
+
+            case MonitorUdpRxCommand::MonitorSyncTime:
+            {
+                logReceivedUdpPacket(packet);
+                syncCentralDBTime();
+                break;
+            }
+
+            case MonitorUdpRxCommand::StopStationSoftware:
+            {
+                logReceivedUdpPacket(packet);
+                SendMsg2Monitor("11", "99");
+
+                // Use the application shutdown path instead of std::exit().
+                ShutdownManager::getInstance()->FnRequestShutdown();
+                break;
+            }
+
+            case MonitorUdpRxCommand::MonitorStationVersion:
+            {
+                logReceivedUdpPacket(packet);
+                SendMsg2Monitor("313", SW_VERSION);
+                break;
+            }
+
+            case MonitorUdpRxCommand::MonitorGetStationCurrLog:
+            {
+                logReceivedUdpPacket(packet);
+                sendCmdGetStationCurrLogToMonitor();
+                break;
+            }
+
+            default:
+                break;
+        }
+	}
+	catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLogExceptionError(std::string("operation::processMonitorUdpPacketOnIo | Exception: ") + e.what());
+    }
+    catch (...)
+    {
+        Logger::getInstance()->FnLogExceptionError("operation::processMonitorUdpPacketOnIo | Unknown exception");
+    }
+}
+
+void operation::processPmsUdpPacketOnIo(const std::string& senderIp, const std::string& packet)
+{
+    if (senderIp == tParas.gsLocalIP)
+    {
+        return;
+    }
+
+    if (packet.empty())
+    {
+        return;
+    }
+
+    try
+    {
+        ParseData fields('[', ']', '|');
+        const std::size_t fieldCount = fields.Parse(packet);
+
+        if (fieldCount < 4)
+        {
+            logInvalidUdpPacket("PMS field count < 4");
+            return;
+        }
+
+        const auto commandValue = parseUdpInt(fields.FieldView(2));
+
+        if (!commandValue)
+        {
+            logInvalidUdpPacket("Invalid PMS command");
+            return;
+        }
+
+        const auto command = static_cast<UdpRxCommand>(*commandValue);
+
+        switch (command)
+        {
+            case UdpRxCommand::StopStationSoftware:
+            {
+                logReceivedUdpPacket(packet);
+                SendMsg2Server("09", "11Stopping...");
+                writelog("Exit by PMS", "UDP");
+                ShutdownManager::getInstance()->FnRequestShutdown();
+                break;
+            }
+
+            case UdpRxCommand::StatusEnquiry:
+            {
+                logReceivedUdpPacket(packet);
+                Sendmystatus();
+                break;
+            }
+
+            case UdpRxCommand::StatusOnline:
+            {
+                logReceivedUdpPacket(packet);
+
+                if (tProcess.giSystemOnline != 0)
+                {
+                    std::stringstream stream;
+                    stream
+                        << "Status: "
+                        << (tProcess.giSystemOnline == 0
+                                ? "Online"
+                                : "Offline");
+
+                    writelog(stream.str(), "UDP");
+
+                    tProcess.giSystemOnline = 0;
+
+                    if (tProcess.glNoofOfflineData > 0)
+                    {
+                        db::getInstance()->moveOfflineTransToCentral();
+                    }
+                }
+
+                SendMsg2Server("99", "");
+                break;
+            }
+
+            case UdpRxCommand::UpdateSeason:
+            {
+                logReceivedUdpPacket(packet);
+
+                const int result = db::getInstance()->downloadseason();
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Season";
+                    SendMsg2Server("99", stream.str());
+                }
+                break;
+            }
+
+            case UdpRxCommand::DownloadMsg:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download LED message", "UDP");
+
+                const int result = db::getInstance()->downloadledmessage();
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Messages";
+                    SendMsg2Server("99", stream.str());
+                }
+
+                db::getInstance()->loadmessage();
+                db::getInstance()->loadExitmessage();
+
+                if (!tProcess.gbcarparkfull)
+                {
+                    if (gtStation.iType == tientry)
+                    {
+                        tProcess.IdleMsg[0] = tMsg.Msg_DefaultLED[0];
+                        tProcess.IdleMsg[1] = tMsg.Msg_Idle[1];
+                    }
+                    else
+                    {
+                        tProcess.IdleMsg[0] = tExitMsg.MsgExit_XDefaultLED[0];
+                        tProcess.IdleMsg[1] = tExitMsg.MsgExit_XIdle[1];
+                    }
+                }
+                break;
+            }
+
+            case UdpRxCommand::FeeTest:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("Fee test command", "UDP");
+
+                const auto tokens = splitUdpCsv(fields.FieldView(3));
+                if (tokens.size() < 3)
+                {
+                    logInvalidUdpPacket("Fee test requires at least 3 values");
+                    break;
+                }
+
+                const auto feeType = parseUdpInt(tokens[2]);
+                if (!feeType)
+                {
+                    logInvalidUdpPacket("Fee test has invalid fee type");
+                    break;
+                }
+
+                const float parkingFee = db::getInstance()->CalFeeRAM2G(tokens[0], tokens[1], *feeType);
+
+                if (parkingFee >= 0)
+                {
+                    std::string response = fields.Field(3);
+                    response += "," + Common::getInstance()->SetFeeFormat(parkingFee) + ", Fee OK";
+
+                    SendMsg2Server("302", response);
+                }
+                break;
+            }
+
+            case UdpRxCommand::DownloadXTariff:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download XTariff", "UDP");
+
+                const int result = db::getInstance()->downloadxtariff( tParas.giGroupID, tParas.giSite, 0);
+
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " XTariff";
+                    SendMsg2Server("99", stream.str());
+                    db::getInstance()->LoadXTariff();
+                }
+                break;
+            }
+
+            case UdpRxCommand::DownloadTariff:
+            {
+                logReceivedUdpPacket(packet);
+
+                writelog("download Tariff Type Info", "UDP");
+
+                int result = db::getInstance()->downloadtarifftypeinfo();
+                if (result > 0)
+                {
+                    db::getInstance()->LoadTariffTypeInfo();
+                }
+
+                writelog("download Tariff", "UDP");
+
+                result = db::getInstance()->downloadtariffsetup(tParas.giGroupID, tParas.giSite, 0);
+
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Tariff";
+                    SendMsg2Server("99", stream.str());
+                    db::getInstance()->LoadTariff();
+                }
+                break;
+            }
+
+            case UdpRxCommand::DownloadHoliday:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download Holiday", "UDP");
+
+                const int result = db::getInstance()->downloadholidaymst(1);
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Holiday";
+                    SendMsg2Server("99", stream.str());
+                }
+
+                db::getInstance()->LoadHoliday();
+                break;
+            }
+
+            case UdpRxCommand::UpdateParam:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download Parameter", "UDP");
+
+                const int result = db::getInstance()->downloadparameter();
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Parameter";
+                    SendMsg2Server("99", stream.str());
+                }
+
+                db::getInstance()->loadParam();
+                break;
+            }
+
+            case UdpRxCommand::DownloadType:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download Vehicle Type", "UDP");
+
+                const int result = db::getInstance()->downloadvehicletype();
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Vehicle Type";
+                    SendMsg2Server("99", stream.str());
+                }
+
+                db::getInstance()->loadvehicletype();
+                break;
+            }
+
+            case UdpRxCommand::OpenBarrier:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("open barrier from PMS", "UDP");
+                ManualOpenBarrier(true);
+                break;
+            }
+
+            case UdpRxCommand::CloseBarrier:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("Close barrier from PMS", "UDP");
+
+                ManualCloseBarrier();
+
+                if (db::getInstance()->writeparameter2local("LockBarrier", "0") == 0)
+                {
+                    writelog("Update the parameter 'LockBarrier' successfully", "UDP");
+                    tParas.gbLockBarrier = false;
+                }
+
+                SendMsg2Server("99", "Close Barrier");
+                break;
+            }
+
+            case UdpRxCommand::ContinueOpenBarrier:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("Continue open barrier from PMS", "UDP");
+
+                continueOpenBarrier();
+
+                if (db::getInstance()->writeparameter2local("LockBarrier", "1") == 0)
+                {
+                    writelog("Update the parameter 'LockBarrier' successfully", "UDP");
+                    tParas.gbLockBarrier = true;
+                }
+
+                SendMsg2Server("99", "Continue Open Barrier");
+                break;
+            }
+
+            case UdpRxCommand::SetTime:
+            {
+                logReceivedUdpPacket(packet);
+                syncCentralDBTime();
+                break;
+            }
+
+            case UdpRxCommand::CarparkFull:
+            {
+                logReceivedUdpPacket(packet);
+
+                const auto rawValue = parseUdpInt(fields.FieldView(3));
+                if (!rawValue)
+                {
+                    logInvalidUdpPacket("Invalid carpark-full value");
+                    break;
+                }
+
+                const bool carparkFull = (*rawValue != 0);
+
+                if (carparkFull != tProcess.gbcarparkfull)
+                {
+                    tProcess.gbcarparkfull = carparkFull;
+
+                    if (!carparkFull)
+                    {
+                        const std::string iuNumber = tEntry.sIUTKNo;
+
+                        if (tProcess.gbLoopApresent && !iuNumber.empty())
+                        {
+                            PBSEntry(iuNumber);
+                        }
+
+                        if (gtStation.iType == tientry)
+                        {
+                            tProcess.IdleMsg[0] = tMsg.Msg_DefaultLED[0];
+                            tProcess.IdleMsg[1] = tMsg.Msg_Idle[1];
+                        }
+                        else
+                        {
+                            tProcess.IdleMsg[0] = tExitMsg.MsgExit_XDefaultLED[0];
+                            tProcess.IdleMsg[1] = tExitMsg.MsgExit_XIdle[1];
+                        }
+                    }
+                    else
+                    {
+                        tProcess.IdleMsg[0] = tMsg.Msg_CarParkFull2LED[0];
+                        tProcess.IdleMsg[1] = tMsg.Msg_CarParkFull2LED[1];
+                    }
+                }
+                break;
+            }
+
+            case UdpRxCommand::ClearSeason:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("Clear Local season.", "UDP");
+                db::getInstance()->clearseason();
+                break;
+            }
+
+            case UdpRxCommand::UpdateSetting:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download station set up", "UDP");
+
+                const int result = db::getInstance()->downloadstationsetup();
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " Station Setup";
+                    SendMsg2Server("99", stream.str());
+                }
+
+                db::getInstance()->loadstationsetup();
+                break;
+            }
+
+            case UdpRxCommand::DownloadTR:
+            {
+                logReceivedUdpPacket(packet);
+                writelog("download TR", "UDP");
+
+                const int result = db::getInstance()->downloadTR();
+                if (result > 0)
+                {
+                    std::stringstream stream;
+                    stream << "Download " << result << " TR";
+                    SendMsg2Server("99", stream.str());
+                }
+
+                db::getInstance()->loadTR();
+                break;
+            }
+
+            case UdpRxCommand::TimeForNoEntry:
+            {
+                logReceivedUdpPacket(packet);
+
+                if (tProcess.gbLoopApresent)
+                {
+                    const auto tokens = splitUdpCsv(fields.FieldView(3));
+                    if (tokens.size() < 2)
+                    {
+                        logInvalidUdpPacket("Time-for-no-entry requires at least 2 values");
+                        break;
+                    }
+
+                    tExit.sEntryTime = tokens[1];
+                    writelog("Received Entry time: " + tExit.sEntryTime + " from PMS.", "UDP");
+
+                    tExit.bNoEntryRecord = 0;
+                    ReceivedEntryRecord();
+                }
+                else
+                {
+                    writelog("No Vehicle on the Loop.", "DB");
+                }
+                break;
+            }
+
+            case UdpRxCommand::SetLotCount:
+                break;
+
+            case UdpRxCommand::AvailableLots:
+            {
+                logReceivedUdpPacket(packet);
+                ShowTotalLots(fields.Field(3));
+                break;
+            }
+
+            case UdpRxCommand::SetDioOutput:
+            {
+                logReceivedUdpPacket(packet);
+
+                // This command accesses Field(4), unlike most 4-field
+                // commands, so validate the extra field explicitly.
+                if (fieldCount < 5)
+                {
+                    logInvalidUdpPacket("Set-DIO-output requires 5 fields");
+                    break;
+                }
+
+                const auto pinNumber = parseUdpInt(fields.FieldView(3));
+                const auto pinValue = parseUdpInt(fields.FieldView(4));
+
+                if (!pinNumber || !pinValue || (*pinValue != 0 && *pinValue != 1))
+                {
+                    writelog("Invalid DIO", "UDP");
+                    break;
+                }
+
+                const int actualPin = DIO::getInstance()->FnGetOutputPinNum(*pinNumber);
+
+                if (actualPin == 0)
+                {
+                    writelog("Invalid DIO", "UDP");
+                    break;
+                }
+
+                auto* gpio = GPIOManager::getInstance()->FnGetGPIO(actualPin);
+
+                if (gpio == nullptr)
+                {
+                    writelog("Nullptr, Invalid DIO", "UDP");
+                    break;
+                }
+
+                gpio->FnSetValue(*pinValue);
+                break;
+            }
+
+            case UdpRxCommand::BroadcastSaveTrans:
+            {
+                const std::string fieldData = fields.Field(3);
+
+                if (fieldData.find("Entry OK") != std::string::npos)
+                {
+                    logReceivedUdpPacket(packet);
+
+                    const std::string stationId = "," + fields.Field(1) + ",";
+
+                    const std::string zoneEntries = tParas.gsZoneEntries;
+
+                    if (zoneEntries.find(stationId) != std::string::npos)
+                    {
+                        const auto tokens = splitUdpCsv(fieldData);
+                        if (tokens.empty())
+                        {
+                            logInvalidUdpPacket("Entry broadcast has no data");
+                            break;
+                        }
+
+                        db::getInstance()->insertbroadcasttrans(fields.Field(1), tokens[0]);
+                    }
+                }
+                else if (fieldData.find("Exit OK") != std::string::npos)
+                {
+                    logReceivedUdpPacket(packet);
+
+                    const auto tokens = splitUdpCsv(fieldData);
+                    if (tokens.empty())
+                    {
+                        logInvalidUdpPacket("Exit broadcast has no data");
+                        break;
+                    }
+
+                    db::getInstance()->UpdateLocalEntry(tokens[0]);
+                }
+                break;
+            }
+
+            case UdpRxCommand::EEPStatus:
+            {
+                logReceivedUdpPacket(packet);
+                SendMsg2Server("801", EEPClient::getInstance()->FnGetStatusData());
+                break;
+            }
+
+            default:
+                break;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        Logger::getInstance()->FnLogExceptionError(std::string("operation::processPmsUdpPacketOnIo | Exception: ") + e.what());
+    }
+    catch (...)
+    {
+        Logger::getInstance()->FnLogExceptionError("operation::processPmsUdpPacketOnIo | Unknown exception");
+    }
+}
+
+void operation::handleAntennaFailOnIo(int errorCode)
+{
+    if (errorCode == 2 && tProcess.gbLoopApresent)
+    {
+        if (tProcess.sEnableReader == false)
+        {
+            writelog("No IU detected!", "OPR");
+            ShowLEDMsg("No IU Detected!^Insert/Tap Card", "No IU Detected!^Insert/Tap Card");
+            EnableCashcard(true);
+        }
+
+        return;
+    }
+
+    if (tProcess.gbLoopApresent)
+    {
+        HandlePBSError(AntennaError, errorCode);
+        Antenna::getInstance()->FnAntennaStopRead();
+
+        writelog("No IU detected! Antenna Error", "OPR");
+
+        ShowLEDMsg("Antenna Error!^Insert/Tap Card", "Antenna Error!^Insert/Tap Card");
+
+        EnableCashcard(true);
+    }
+}
+
+void operation::handleAntennaPowerOnIo(bool poweredOn)
+{
+    HandlePBSError(AntennaPowerOnOff, poweredOn ? 1 : 0);
+}
+
+void operation::handleAntennaIUComeOnIo(std::string iuNo)
+{
+    const auto sameAsLastIUDuration =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() -
+            tProcess.lastIUEntryTime);
+
+    if (iuNo.length() == 10 &&
+        tProcess.gsLastIUNo == iuNo &&
+        sameAsLastIUDuration.count() <= tParas.giMaxTransInterval &&
+        gtStation.iType == tientry)
+    {
+        std::stringstream ss;
+        ss << "Same as last IU, duration :"
+           << sameAsLastIUDuration.count()
+           << " less than Maximum interval: "
+           << tParas.giMaxTransInterval;
+
+        writelog(ss.str(), "OPR");
+
+        ShowLEDMsg("Same as last IU^Please Proceed", "Same as last IU^Please Proceed");
+
+        Openbarrier();
+    }
+    else
+    {
+        VehicleCome(std::move(iuNo));
+    }
+
+    if (tPBSError[iAntenna].ErrNo != 0)
+    {
+        HandlePBSError(AntennaNoError);
+    }
+}
+
+void operation::handleDioEventOnIo(int eventValue)
+{
+    const auto dioEvent = static_cast<DIO::DIO_EVENT>(eventValue);
+
+    // Log every received DIO event once.
+    {
+        std::stringstream ss;
+        ss << "DIO Event::"
+           << dioEventToString(dioEvent)
+           << "(" << eventValue << ")";
+
+        writelog(ss.str(), "OPR");
+    }
+
+    auto updateBarrierStatus =
+        [this](int errorCode, const char* message)
+        {
+            HandlePBSError(BarrierStatus, errorCode);
+            db::getInstance()->AddSysEvent(message);
+        };
+
+    switch (dioEvent)
+    {
+        case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
+            tProcess.gbLoopApresent = true;
+            LoopACome();
+            break;
+
+        case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
+            tProcess.gbLoopApresent = false;
+            LoopAGone();
+            break;
+
+        case DIO::DIO_EVENT::LOOP_C_ON_EVENT:
+            LoopCCome();
+            break;
+
+        case DIO::DIO_EVENT::LOOP_C_OFF_EVENT:
+            LoopCGone();
+            break;
+
+        case DIO::DIO_EVENT::STATION_DOOR_OPEN_EVENT:
+            HandlePBSError(SDoorError);
+            break;
+
+        case DIO::DIO_EVENT::STATION_DOOR_CLOSE_EVENT:
+            HandlePBSError(SDoorNoError);
+            break;
+
+        case DIO::DIO_EVENT::BARRIER_DOOR_OPEN_EVENT:
+            HandlePBSError(BDoorError);
+            break;
+
+        case DIO::DIO_EVENT::BARRIER_DOOR_CLOSE_EVENT:
+            HandlePBSError(BDoorNoError);
+            break;
+
+        case DIO::DIO_EVENT::BARRIER_STATUS_ON_EVENT:
+        {
+            if (tProcess.gbBarrierOpened)
+            {
+                break;
+            }
+
+            if (DIO::getInstance()->FnGetManualOpenBarrierStatusFlag() == 1)
+            {
+                DIO::getInstance()->FnSetManualOpenBarrierStatusFlag(0);
+            }
+
+            db::getInstance()->AddSysEvent("Barrier up");
+            ManualOpenBarrier(false);
+            break;
+        }
+
+        case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_ON_EVENT:
+            writelog("Open barrier action(by operator)", "OPR");
+            break;
+
+        case DIO::DIO_EVENT::ARM_BROKEN_ON_EVENT:
+            updateBarrierStatus(3, "Arm failure detected.");
+            break;
+
+        case DIO::DIO_EVENT::ARM_BROKEN_OFF_EVENT:
+            updateBarrierStatus(0, "Arm recovered successfully.");
+            break;
+
+        case DIO::DIO_EVENT::PRINT_RECEIPT_ON_EVENT:
+            tExit.iflag4Receipt = 1;
+            PrintReceipt();
+            break;
+
+        case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_ON_EVENT:
+            updateBarrierStatus(2, "Barrier open too long detected.");
+            break;
+
+        case DIO::DIO_EVENT::BARRIER_OPEN_TOO_LONG_OFF_EVENT:
+            updateBarrierStatus(0, "Barrier open too long - closed successfully.");
+            break;
+
+        // Currently no business action required.
+        case DIO::DIO_EVENT::LOOP_B_ON_EVENT:
+        case DIO::DIO_EVENT::LOOP_B_OFF_EVENT:
+        case DIO::DIO_EVENT::INTERCOM_ON_EVENT:
+        case DIO::DIO_EVENT::INTERCOM_OFF_EVENT:
+        case DIO::DIO_EVENT::BARRIER_STATUS_OFF_EVENT:
+        case DIO::DIO_EVENT::MANUAL_OPEN_BARRIED_OFF_EVENT:
+        case DIO::DIO_EVENT::LORRY_SENSOR_ON_EVENT:
+        case DIO::DIO_EVENT::LORRY_SENSOR_OFF_EVENT:
+        case DIO::DIO_EVENT::PRINT_RECEIPT_OFF_EVENT:
+        default:
+            break;
+    }
+}
+
+void operation::handleKsmReaderInitOnIo(bool success)
+{
+    writelog(success ? "KSM Reader Init : Ok." : "KSM Reader Init : Error.", "OPR");
+
+    if (!success)
+    {
+        handleKSM_EnableError();
+        return;
+    }
+
+    HandlePBSError(ReaderNoError);
+}
+
+void operation::handlePrinterStatusOnIo(int status)
+{
+    switch (status)
+    {
+        case 0:
+            HandlePBSError(PrinterNoError);
+            break;
+
+        case 1:
+            HandlePBSError(PrinterNoPaper);
+            break;
+
+        case -1:
+        default:
+            HandlePBSError(PrinterError);
+            break;
+    }
+}
+
+void operation::handleEepConnectionStateOnIo(bool connected)
+{
+    if (connected)
+    {
+        if (tPBSError[0].ErrNo == -1)
+        {
+            tPBSError[0].ErrNo = 0;
+            Sendmystatus();
+
+            writelog("DSRC is connected!", "OPR");
+        }
+
+        return;
+    }
+
+    if (tPBSError[0].ErrNo == 0)
+    {
+        tPBSError[0].ErrNo = -1;
+        Sendmystatus();
+
+        writelog("DSRC connection is lost!", "OPR");
+    }
+}
+
+void operation::handleChuConnectionStateOnIo(const std::string& status)
+{
+    if (status == "connected")
+    {
+        if (tPBSError[8].ErrNo == -1)
+        {
+            tPBSError[8].ErrNo = 0;
+            Sendmystatus();
+
+            writelog("CHU Gateway is connected!", "OPR");
+        }
+
+        return;
+    }
+
+    if (tPBSError[8].ErrNo == 0)
+    {
+        tPBSError[8].ErrNo = -1;
+        Sendmystatus();
+
+        writelog("CHU Gateway connection is lost", "OPR");
+    }
+}
+
+bool operation::startIoContextThread()
+{
+    if (ioContextThread_.joinable())
+    {
+        return true;
+    }
+
+    try
+    {
+        ioContextThread_ =
+            std::thread(
+                [this]()
+                {
+#if defined(__linux__)
+                    ::pthread_setname_np(::pthread_self(), "OP_IO");
+#endif
+                    ioContext_.run();
+                });
+
+        running_.store(true);
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        writelog(std::string("OPERATION: [THREAD] Start failed | Error=") + e.what(), "OPR");
+        return false;
+    }
+}
+
+bool operation::FnOperationInit()
+{
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+
+    if (running_.load() || ioContextThread_.joinable())
+    {
+        writelog("OPERATION: [INIT] Ignored | Reason=Already running", "OPR");
+        return true;
+    }
+
+    stopping_.store(false);
+    isOperationInitialized_.store(false);
+
+    ioContext_.restart();
+    workGuard_.emplace(ioContext_.get_executor());
+
+    if (!startIoContextThread())
+    {
+        workGuard_.reset();
+        return false;
+    }
+
+    auto initPromise = std::make_shared<std::promise<bool>>();
+    auto initFuture = initPromise->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [this, initPromise]()
+        {
+            bool success = false;
+
+            try
+            {
+                success = initializeOnIoThread();
+            }
+            catch (const std::exception& e)
+            {
+                writelog(std::string("OPERATION: [INIT] Exception | Error=") + e.what(), "OPR");
+            }
+            catch (...)
+            {
+                writelog("OPERATION: [INIT] Exception | Error=Unknown exception", "OPR");
+            }
+
+            initPromise->set_value(success);
+        });
+
+    const bool initialized = initFuture.get();
+
+    if (!initialized)
+    {
+        stopping_.store(true);
+
+        auto shutdownPromise = std::make_shared<std::promise<void>>();
+        auto shutdownFuture = shutdownPromise->get_future();
+
+        boost::asio::post(
+            ioContext_,
+            [this, shutdownPromise]()
+            {
+                shutdownOnIoThread();
+                shutdownPromise->set_value();
+            });
+
+        shutdownFuture.wait();
+        workGuard_.reset();
+
+        if (ioContextThread_.joinable())
+        {
+            ioContextThread_.join();
+        }
+
+        pLCDIdleTimer_.reset();
+        pLoopATimer_.reset();
+        pDailyProcessTimer_.reset();
+        monitorUdpClient_.reset();
+        pmsUdpClient_.reset();
+        running_.store(false);
+        stopping_.store(false);
+
+        return false;
+    }
+
+    writelog("OPERATION: [INIT] OP_IO started", "OPR");
+
+    return true;
+}
+
+bool operation::initializeOnIoThread()
 {
     Setdefaultparameter();
-    operationStrand_ = std::make_unique<boost::asio::io_context::strand>(ioContext);
+
     gtStation.iSID = std::stoi(IniParser::getInstance()->FnGetStationID());
     tParas.gsCentralDBName = IniParser::getInstance()->FnGetCentralDBName();
     tParas.gsCentralDBServer = IniParser::getInstance()->FnGetCentralDBServer();
-    //
-    iCurrentContext = &ioContext;
-    //--- broad cast UDP
+
+    // Broadcast UDP and monitor UDP are passive async transports bound to the
+    // Operation-owned io_context. Exactly one OP_IO thread runs this context.
     tProcess.gsBroadCastIP = getIPAddress();
+
     if (!tProcess.gsBroadCastIP.empty())
     {
         try
         {
-            unsigned short remoteUDPPort_ = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetRemoteUDPPort()));
-            unsigned short localUDPPort_ = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetLocalUDPPort()));
-            m_udp = new udpclient(ioContext, tProcess.gsBroadCastIP, remoteUDPPort_, localUDPPort_, true);
-            m_udp->start();
+            const unsigned short remoteUDPPort = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetRemoteUDPPort()));
+            const unsigned short localUDPPort = static_cast<unsigned short>(std::stoi(IniParser::getInstance()->FnGetLocalUDPPort()));
+
+            pmsUdpClient_ = std::make_unique<udpclient>(ioContext_, tProcess.gsBroadCastIP, remoteUDPPort, localUDPPort, true);
+            pmsUdpClient_->start();
         }
-        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        catch (const boost::system::system_error& e)
         {
-            std::string cppString(e.what());
-            writelog ("Boost.Asio Exception during PMS UDP initialization: "+ cppString,"OPR");
+            writelog("Boost.Asio Exception during PMS UDP initialization: " + std::string(e.what()), "OPR");
         }
-        catch (const std::exception& e) {
-            std::string cppString(e.what());
-            writelog ("Exception during PMS UDP initialization: "+ cppString,"OPR");
+        catch (const std::exception& e)
+        {
+            writelog("Exception during PMS UDP initialization: " + std::string(e.what()), "OPR");
         }
         catch (...)
         {
-            writelog ("Unknown Exception during PMS UDP initialization.","OPR");
+            writelog("Unknown Exception during PMS UDP initialization.", "OPR");
         }
 
-        // monitor UDP
         try
         {
-            m_Monitorudp = new udpclient(ioContext, tParas.gsCentralDBServer, 2008,2008);
-            m_Monitorudp->start();
+            monitorUdpClient_ = std::make_unique<udpclient>(ioContext_, tParas.gsCentralDBServer, 2008, 2008);
+            monitorUdpClient_->start();
         }
-        catch (const boost::system::system_error& e) // Catch Boost.Asio system errors
+        catch (const boost::system::system_error& e)
         {
-            std::string cppString1(e.what());
-            writelog ("Boost.Asio Exception during Monitor UDP initialization: "+ cppString1,"OPR");
+            writelog("Boost.Asio Exception during Monitor UDP initialization: " + std::string(e.what()), "OPR");
         }
-        catch (const std::exception& e) {
-            std::string cppString1(e.what());
-            writelog ("Exception during Monitor UDP initialization: "+ cppString1,"OPR");
+        catch (const std::exception& e)
+        {
+            writelog("Exception during Monitor UDP initialization: " + std::string(e.what()), "OPR");
         }
         catch (...)
         {
-            writelog ("Unknown Exception during Monitor UDP initialization.","OPR");
+            writelog("Unknown Exception during Monitor UDP initialization.", "OPR");
         }
     }
-    //
-    int iRet = 0;
-    m_db = db::getInstance();
 
-    //iRet = m_db->connectlocaldb("DSN={MariaDB-server};DRIVER={MariaDB ODBC 3.0 Driver};SERVER=127.0.0.1;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;",2,2,1);
-    iRet = m_db->connectlocaldb("DRIVER={MariaDB ODBC 3.0 Driver};SERVER=localhost;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;",2,2,1);
-    if (iRet != 1) {
-        writelog ("Unable to connect local DB.","OPR");
-        exit(0); 
+    int iRet = 0;
+
+    iRet = db::getInstance()->connectlocaldb("DRIVER={MariaDB ODBC 3.0 Driver};SERVER=localhost;PORT=3306;DATABASE=linux_pbs;UID=linuxpbs;PWD=SJ2001;", 2, 2, 1);
+    if (iRet != 1)
+    {
+        writelog("Unable to connect local DB.", "OPR");
+        return false;
     }
+
     string m_connstring;
-    writelog ("Connect Central (" +tParas.gsCentralDBServer +  ") DB:"+tParas.gsCentralDBName,"OPR");
-    for (int i = 0 ; i < 5; ++i ) {
-      //  m_connstring = "DSN=mssqlserver;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
+
+    writelog("Connect Central (" + tParas.gsCentralDBServer + ") DB:" + tParas.gsCentralDBName, "OPR");
+
+    for (int i = 0; i < 5; ++i)
+    {
         m_connstring = "DRIVER=FreeTDS;SERVER=" + tParas.gsCentralDBServer + ";PORT=1433;DATABASE=" + tParas.gsCentralDBName + ";UID=sa;PWD=yzhh2007";
-        iRet = m_db->connectcentraldb(m_connstring,tParas.gsCentralDBServer,2,2,1);
-        if (iRet == 1) break;
+
+        iRet = db::getInstance()->connectcentraldb(m_connstring, tParas.gsCentralDBServer, 2, 2, 1);
+        if (iRet == 1)
+        {
+            break;
+        }
+
+        // Startup-only blocking retry. This remains intentionally unchanged in
+        // Phase 1 and will move to DB_WORK in a later phase.
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
-    // sync central time
-    if (iRet == 1) {
-        m_db->synccentraltime();
-    } else
+
+    if (iRet == 1)
+    {
+        db::getInstance()->synccentraltime();
+        db::getInstance()->FnUpdateStationSwVersion(IniParser::getInstance()->FnGetStationID());
+    }
+    else
     {
         tProcess.giSystemOnline = 1;
     }
-    //
-    if (LoadParameter()) {
-        Initdevice(ioContext);
+
+    if (LoadParameter())
+    {
+        initDeviceOnIoThread();
         HandlePBSError(ParamOk);
-        //----
-        writelog("EPS in operation","OPR");
-        //------
+
+        writelog ("**** EPS: " + std::to_string(tParas.giEPS) + " in operation ****", "OPR");
+
         if (gtStation.iType == tientry)
         {
-            tProcess.setIdleMsg(0, operation::getInstance()->tMsg.Msg_DefaultLED[0]);
-            tProcess.setIdleMsg(1, operation::getInstance()->tMsg.Msg_Idle[1]);
+            tProcess.IdleMsg[0] = tMsg.Msg_DefaultLED[0];
+            tProcess.IdleMsg[1] = tMsg.Msg_Idle[1];
         }
         else
         {
-            tProcess.setIdleMsg(0, operation::getInstance()->tExitMsg.MsgExit_XDefaultLED[0]);
-            tProcess.setIdleMsg(1, operation::getInstance()->tExitMsg.MsgExit_XIdle[1]);
+            tProcess.IdleMsg[0] = tExitMsg.MsgExit_XDefaultLED[0];
+            tProcess.IdleMsg[1] = tExitMsg.MsgExit_XIdle[1];
         }
-        //-------
+
         Clearme();
         CheckReader();
         isOperationInitialized_.store(true);
-        DIO::getInstance()->FnStartDIOMonitoring();
-        SendMsg2Server("90",",,,,,Starting OK");
-        //-----
-        m_db->downloadseason();
-        m_db->moveOfflineTransToCentral();
 
-        // Check Barrier
+        DIO::getInstance()->FnStartDIOMonitoring();
+        SendMsg2Server("90", ",,,,,Starting OK");
+
+        db::getInstance()->downloadseason();
+        db::getInstance()->moveOfflineTransToCentral();
+
         writelog("Check barrier", "OPR");
+
         if (tParas.gbLockBarrier == true)
         {
             writelog("Startup: continue open barrier", "OPR");
             continueOpenBarrier();
         }
-        //-----
-    }else {
+    }
+    else
+    {
         tProcess.gbInitParamFail = 1;
         HandlePBSError(ParamError);
         writelog("Unable to load parameter, Please download or check!", "OPR");
+
         if (iRet == 1)
         {
-            m_db->downloadstationsetup();
-            m_db->loadstationsetup();
+            db::getInstance()->downloadstationsetup();
+            db::getInstance()->loadstationsetup();
         }
     }
-    //----- testing
-   // tExit.sIUNo = "1220024193";
-  //  tExit.sEntryTime = "2026-06-30 13:55:00";
-  //  tExit.sExitTime = "2026-06-30 14:55:00";
-  // iRet = db::getInstance()->GetSeasonHolder("1043126506");
-  //writelog("Season Holder: "+ std::to_string(iRet), "OPR");
+
+    // This maintenance timer belongs to Operation and runs on the single
+    // OP_IO thread. The first tick preserves the old 1-second startup delay.
+    startDailyProcessTimer();
+
+    return true;
+}
+
+void operation::startDailyProcessTimer()
+{
+    if (stopping_.load())
+    {
+        return;
+    }
+
+    if (pDailyProcessTimer_)
+    {
+        boost::system::error_code ec;
+        pDailyProcessTimer_->cancel(ec);
+    }
+
+    pDailyProcessTimer_ = std::make_unique<boost::asio::steady_timer>(ioContext_);
+
+    // Preserve the previous Main timer semantics.
+    lastDailyProcessSyncTime_ = std::chrono::steady_clock::now();
+    lastUPTSettleTime_ = Common::getInstance()->FnGetDate();
+
+    scheduleDailyProcessTimer(std::chrono::seconds(1));
+}
+
+void operation::scheduleDailyProcessTimer(std::chrono::seconds delay)
+{
+    if (stopping_.load() || !pDailyProcessTimer_)
+    {
+        return;
+    }
+
+    pDailyProcessTimer_->expires_after(delay);
+    pDailyProcessTimer_->async_wait(
+        [this](const boost::system::error_code& ec)
+        {
+            handleDailyProcessTimer(ec);
+        });
+}
+
+void operation::handleDailyProcessTimer(const boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::operation_aborted ||
+        stopping_.load())
+    {
+        return;
+    }
+
+    if (ec)
+    {
+        writelog("Daily process timer error: " + ec.message(), "OPR");
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto durationSinceSync = std::chrono::duration_cast<std::chrono::hours>(now - lastDailyProcessSyncTime_);
+
+    // Transitional Phase 1 behaviour: Ping and DB calls below are still
+    // synchronous, so they can temporarily block OP_IO. They should move to
+    // DB_WORK / a blocking worker in the next refactoring phase.
+    if (FnIsOperationInitialized())
+    {
+        if (tProcess.gbLoopApresent == false)
+        {
+            std::string details;
+
+            if (tProcess.giSystemOnline == 1)
+            {
+                if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details))
+                {
+                    tProcess.giSystemOnline = 0;
+                }
+            }
+
+            if (db::getInstance()->FnGetDatabaseErrorFlag() == 0)
+            {
+                if (!tProcess.gbLastDBConnected)
+                {
+                    HandlePBSError(DBNoError);
+                }
+
+                tProcess.gbLastDBConnected = true;
+            }
+            else
+            {
+                if (tProcess.gbLastDBConnected)
+                {
+                    HandlePBSError(DBFailed);
+                }
+
+                tProcess.gbLastDBConnected = false;
+            }
+
+            if (tProcess.giSystemOnline == 0 && tProcess.glNoofOfflineData > 0)
+            {
+                db::getInstance()->moveOfflineTransToCentral();
+            }
+
+            if (durationSinceSync >= std::chrono::hours(1))
+            {
+                db::getInstance()->synccentraltime();
+                lastDailyProcessSyncTime_ = now;
+                CheckReader();
+            }
+
+            const int currentDay = Common::getInstance()->FnGetCurrentDay();
+
+            if (tProcess.giLastHousekeepingDate != currentDay)
+            {
+                db::getInstance()->HouseKeeping();
+                tProcess.giLastHousekeepingDate = currentDay;
+            }
+
+            // LCSC performs its blocking CD file work on its own file worker.
+            LCSCReader::getInstance()->FnUploadLCSCCDFiles();
+
+            const std::string currentDate = Common::getInstance()->FnGetDate();
+
+            if (gtStation.iType == tiExit && lastUPTSettleTime_ != currentDate)
+            {
+                Upt::getInstance()->FnUptSendDeviceRetrieveLastSettlementRequest();
+                lastUPTSettleTime_ = currentDate;
+            }
+        }
+
+        sendDateTimeToMonitor();
+    }
+    else if (tProcess.gbInitParamFail == 1 && LoadedparameterOK())
+    {
+        tProcess.gbInitParamFail = 0;
+
+        initDeviceOnIoThread();
+        isOperationInitialized_.store(true);
+
+        if (gtStation.iType == tientry)
+        {
+            tProcess.IdleMsg[0] =  tMsg.Msg_DefaultLED[0];
+            tProcess.IdleMsg[1] = tMsg.Msg_Idle[1];
+        }
+        else
+        {
+            tProcess.IdleMsg[0] = tExitMsg.MsgExit_XDefaultLED[0];
+            tProcess.IdleMsg[1] = tExitMsg.MsgExit_XIdle[1];
+        }
+
+        writelog("EPS in operation", "OPR");
+    }
+
+    if (!stopping_.load())
+    {
+        // Same behaviour as before: five seconds after this handler finishes.
+        scheduleDailyProcessTimer(std::chrono::seconds(5));
+    }
 }
 
 bool operation::LoadParameter()
 {
-    DBError iReturn;
-    bool gbLoadParameter = true;
+    auto* database = db::getInstance();
+
+    bool loadParameterOk = true;
+
     //------
-    iReturn = m_db->loadstationsetup();
-    if (iReturn != 0) {
-        if (iReturn ==1) {
-            writelog ("No data for station setup table", "OPR");
-        }else{
-            writelog ("Error for loading station setup", "OPR");
-        }
-        gbLoadParameter = false; 
-    } 
-    iReturn = m_db->loadmessage();
-    if (iReturn != 0) {
-        if (iReturn ==1) {
-            writelog ("No data for LED message table", "OPR");
-        }else{
-            writelog ("Error for loading LED message", "OPR");
-        }
-        gbLoadParameter = false; 
-    }
+    const auto checkLoadResult =
+        [this, &loadParameterOk](
+            DBError result,
+            const std::string& noDataMessage,
+            const std::string& errorMessage)
+        {
+            if (result == iDBSuccess)
+            {
+                return;
+            }
 
-    iReturn = m_db->loadExitmessage();
-    if (iReturn != 0) {
-        if (iReturn ==1) {
-            writelog ("No data for LED Exit message table", "OPR");
-        }else{
-            writelog ("Error for loading LED Exit message", "OPR");
-        }
-        gbLoadParameter = false; 
-    }
+            if (result == iNoData)
+            {
+                writelog(noDataMessage, "OPR");
+            }
+            else
+            {
+                writelog(errorMessage, "OPR");
+            }
 
-    iReturn = m_db->loadParam();
-    if (iReturn != 0) {
-        if (iReturn ==1) {
-            writelog ("No data for Parameter table", "OPR");
-        }else{
-            writelog ("Error for loading parameter", "OPR");
-        }
-        gbLoadParameter = false; 
-    }
-    iReturn = m_db->loadvehicletype();
-    if (iReturn != 0) {
-        if (iReturn ==1) {
-            writelog ("No data for vehicle type table", "OPR");
-        }else{
-            writelog ("Error for loading vehicle type", "OPR");
-        }
-       gbLoadParameter = false; 
-    }
-    iReturn = m_db->loadTR(2);
-    if (iReturn != 0)
-    {
-        if (iReturn == 1)
-        {
-            writelog("No data for TR table", "OPR");
-        }
-        else
-        {
-            writelog("Error for loading TR", "OPR");
-        }
-        gbLoadParameter = false;
-    }
-     iReturn = m_db->LoadTariffTypeInfo();
-     if (iReturn != 0)
-    {
-        if (iReturn == 1)
-        {
-            writelog("No data for Tariff Type Info table", "OPR");
-        }
-        else
-        {
-            writelog("Error for loading Tariff Type Info", "OPR");
-        }
-        gbLoadParameter = false;
-    }
+            loadParameterOk = false;
+        };
 
-    iReturn = m_db->LoadHoliday();
-    
-    if (iReturn != 0)
-    {
-        if (iReturn == 1)
-        {
-            writelog("No data for holiday table", "OPR");
-        }
-        else
-        {
-            writelog("Error for loading holiday", "OPR");
-        }
-        gbLoadParameter = false;
-    }
+    checkLoadResult(
+        database->loadstationsetup(),
+        "No data for station setup table",
+        "Error for loading station setup");
 
-    iReturn = m_db->LoadTariff();
+    checkLoadResult(
+        database->loadmessage(),
+        "No data for LED message table",
+        "Error for loading LED message");
 
-     if (iReturn != 0)
-    {
-        if (iReturn == 1)
-        {
-            writelog("No data for Tariff table", "OPR");
-        }
-        else
-        {
-            writelog("Error for loading Tariff", "OPR");
-        }
-        gbLoadParameter = false;
-    }
+    checkLoadResult(
+        database->loadExitmessage(),
+        "No data for LED Exit message table",
+        "Error for loading LED Exit message");
 
-    iReturn = m_db->LoadXTariff();
+    checkLoadResult(
+        database->loadParam(),
+        "No data for Parameter table",
+        "Error for loading parameter");
 
-     if (iReturn != 0)
-    {
-        if (iReturn == 1)
-        {
-            writelog("No data for XTariff table", "OPR");
-        }
-        else
-        {
-            writelog("Error for loading XTariff", "OPR");
-        }
-        gbLoadParameter = false;
-    }
-    return gbLoadParameter;
+    checkLoadResult(
+        database->loadvehicletype(),
+        "No data for vehicle type table",
+        "Error for loading vehicle type");
+
+    checkLoadResult(
+        database->loadTR(2),
+        "No data for TR table",
+        "Error for loading TR");
+
+    checkLoadResult(
+        database->LoadTariffTypeInfo(),
+        "No data for Tariff Type Info table",
+        "Error for loading Tariff Type Info");
+
+    checkLoadResult(
+        database->LoadHoliday(),
+        "No data for holiday table",
+        "Error for loading holiday");
+
+    checkLoadResult(
+        database->LoadTariff(),
+        "No data for Tariff table",
+        "Error for loading Tariff");
+
+    checkLoadResult(
+        database->LoadXTariff(),
+        "No data for XTariff table",
+        "Error for loading XTariff");
+
+    return loadParameterOk;
 }
 
-bool operation:: LoadedparameterOK()
+bool operation::LoadedparameterOK()
 {
-    if (tProcess.gbloadedLEDMsg == true && tProcess.gbloadedLEDExitMsg == true && tProcess.gbloadedParam==true && tProcess.gbloadedStnSetup==true && tProcess.gbloadedVehtype ==true) return true;
-    else return false;
+    return tProcess.gbloadedLEDMsg &&
+           tProcess.gbloadedLEDExitMsg &&
+           tProcess.gbloadedParam &&
+           tProcess.gbloadedStnSetup &&
+           tProcess.gbloadedVehtype;
+}
+
+void operation::FnStopDailyProcessTimer()
+{
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        if (pDailyProcessTimer_)
+        {
+            boost::system::error_code ec;
+            pDailyProcessTimer_->cancel(ec);
+        }
+        return;
+    }
+
+    if (!ioContextThread_.joinable())
+    {
+        return;
+    }
+
+    // Use a small lifecycle barrier: when this function returns, any currently
+    // executing daily-process handler has finished and the timer has been
+    // cancelled on OP_IO. Main can then safely begin closing device modules.
+    auto stopPromise = std::make_shared<std::promise<void>>();
+    auto stopFuture = stopPromise->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [this, stopPromise]()
+        {
+            if (pDailyProcessTimer_)
+            {
+                boost::system::error_code ec;
+                pDailyProcessTimer_->cancel(ec);
+
+                if (ec)
+                {
+                    writelog("Daily process timer cancel error: " + ec.message(), "OPR");
+                }
+            }
+
+            stopPromise->set_value();
+        });
+
+    stopFuture.wait();
 }
 
 bool operation::FnIsOperationInitialized() const
@@ -325,32 +2391,38 @@ bool operation::FnIsOperationInitialized() const
     return isOperationInitialized_.load();
 }
 
-void operation::FnSetLastActionTimeAfterLoopA()
+void operation::setLastActionTimeAfterLoopA()
 {
     lastActionTimeAfterLoopA_ = std::chrono::steady_clock::now();
 }
 
-std::chrono::steady_clock::time_point operation::FnGetLastActionTimeAfterLoopA()
+std::chrono::steady_clock::time_point operation::getLastActionTimeAfterLoopA()
 {
     return lastActionTimeAfterLoopA_;
 }
 
 void operation::stopLoopAPeriodicTimer()
 {
-    Logger::getInstance()->FnLog(__func__, "", "OPR");
-    if (pLoopATimer_)
+    writelog(__func__, "OPR");
+
+    if (!pLoopATimer_)
     {
-        pLoopATimer_->cancel();
+        writelog("Unable to stop Loop A periodic timer due to pLoopATimer is nullptr.", "OPR");
+        return;
     }
-    else
+
+    boost::system::error_code ec;
+    pLoopATimer_->cancel(ec);
+
+    if (ec)
     {
-        Logger::getInstance()->FnLog("Unable to stop Loop A periodic timer due to pLoopATimer is nullptr.", "", "OPR");
+        writelog("Loop A timer cancel error: " + ec.message(), "OPR");
     }
 }
 
-void operation::FnLoopATimeoutHandler()
+void operation::loopATimeoutHandler()
 {
-    Logger::getInstance()->FnLog("Loop A Operation Timeout handler.", "", "OPR");
+    writelog("Loop A Operation Timeout handler.", "OPR");
     Antenna::getInstance()->FnAntennaStopRead();
     EnableCashcard(false);
     LoopACome();
@@ -358,45 +2430,61 @@ void operation::FnLoopATimeoutHandler()
 
 void operation::handleLoopAPeriodicTimerTimeout(const boost::system::error_code &ec)
 {
-    if (!ec)
+    if (ec == boost::asio::error::operation_aborted ||
+        stopping_.load())
     {
-        auto now = std::chrono::steady_clock::now();
-        auto lastAction = FnGetLastActionTimeAfterLoopA();
-        auto timeout = std::chrono::seconds(tParas.giOperationTO);
+        return;
+    }
 
-        if ((now - lastAction) > timeout)
+    if (ec)
+    {
+        writelog("Loop A timer error: " + ec.message(), "OPR");
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto lastAction = getLastActionTimeAfterLoopA();
+    const auto timeout = std::chrono::seconds(tParas.giOperationTO);
+
+    if ((now - lastAction) > timeout)
+    {
+        loopATimeoutHandler();
+        return;
+    }
+
+    if (stopping_.load() || !pLoopATimer_)
+    {
+        return;
+    }
+
+    pLoopATimer_->expires_after(std::chrono::seconds(1));
+    pLoopATimer_->async_wait(
+        [this](const boost::system::error_code& waitEc)
         {
-            FnLoopATimeoutHandler();
-            return;
-        }
-
-        pLoopATimer_->expires_after(std::chrono::seconds(1));
-        pLoopATimer_->async_wait(boost::asio::bind_executor(*operationStrand_, std::bind(&operation::handleLoopAPeriodicTimerTimeout, this, std::placeholders::_1)));
-    }
-    else if (ec == boost::asio::error::operation_aborted)
-    {
-        Logger::getInstance()->FnLog("Loop A periodic timer cancelled.", "", "OPR");
-    }
-    else
-    {
-        std::stringstream ss;
-        ss << "Loop A periodic timer timeout error :" << ec.message();
-        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-    }
+            handleLoopAPeriodicTimerTimeout(waitEc);
+        });
 }
 
 void operation::startLoopAPeriodicTimer()
 {
-    Logger::getInstance()->FnLog(__func__, "", "OPR");
-    if (pLoopATimer_)
+    if (stopping_.load())
     {
-        pLoopATimer_->expires_after(std::chrono::seconds(1));
-        pLoopATimer_->async_wait(boost::asio::bind_executor(*operationStrand_, std::bind(&operation::handleLoopAPeriodicTimerTimeout, this, std::placeholders::_1)));
+        return;
     }
-    else
+
+    writelog(__func__, "OPR");
+    if (!pLoopATimer_)
     {
-        Logger::getInstance()->FnLog("Unable to start Loop A periodic timer due to pLoopATimer is nullptr.", "", "OPR");
+        writelog("Unable to start Loop A periodic timer due to pLoopATimer is nullptr.", "OPR");
+        return;
     }
+
+    pLoopATimer_->expires_after(std::chrono::seconds(1));
+    pLoopATimer_->async_wait(
+        [this](const boost::system::error_code& waitEc)
+        {
+            handleLoopAPeriodicTimerTimeout(waitEc);
+        });
 }
 
 void operation::LoopACome()
@@ -406,7 +2494,7 @@ void operation::LoopACome()
 
     // Loop A timer - To prevent loop A hang
     startLoopAPeriodicTimer();
-    FnSetLastActionTimeAfterLoopA();
+    setLastActionTimeAfterLoopA();
 
     if (gtStation.iType == tientry)
     {
@@ -416,7 +2504,9 @@ void operation::LoopACome()
     {
         ShowLEDMsg(tExitMsg.MsgExit_XLoopA[0], tExitMsg.MsgExit_XLoopA[1]);
     }
+
     Clearme();
+
     //---- added on 02/03/2026
     tProcess.gsTailgateOBU = "";
     DIO::getInstance()->FnSetLCDBacklight(1);
@@ -457,16 +2547,13 @@ void operation::LoopACome()
         Lpr::getInstance()->FnSendTransIDToLPR(tProcess.gsTransID, useFrontCamera);
     }
 
-    //---- added on 01/12/2025
-    writelog ("EPS:" + std::to_string(tParas.giEPS), "OPR");
-
     if (tParas.giEPS == 3) {
         EEPInq();
         ShowLEDMsg("Reading OBU...^Please wait", "Reading OBU...^Please wait");
     }
     else if (tParas.giEPS == 0)
     {
-        operation::getInstance()->EnableCashcard(true);
+        EnableCashcard(true);
         ShowLEDMsg("Insert/Tap Card", "Insert/Tap Card");
     }
     else if (AntennaOK() == true)
@@ -476,7 +2563,7 @@ void operation::LoopACome()
     }
     else
     {
-        operation::getInstance()->EnableCashcard(true);
+        EnableCashcard(true);
         ShowLEDMsg("Antenna Error!^Insert/Tap Card", "Antenna Error!^Insert/Tap Card");
     }
 }
@@ -490,113 +2577,168 @@ void operation::LoopAGone()
     //------
     DIO::getInstance()->FnSetLCDBacklight(0);
      //
-    if (gtStation.iType == tientry ) {
-        if (tEntry.sIUTKNo == "") {
+    if (gtStation.iType == tientry)
+    {
+        if (tEntry.sIUTKNo.empty())
+        {
             Antenna::getInstance()->FnAntennaStopRead();
         }
-    }else{
-        if (tExit.sIUNo == "") {
+    }
+    else
+    {
+        if (tExit.sIUNo.empty())
+        {
             Antenna::getInstance()->FnAntennaStopRead();
         }
+
         //------
-        if (tExit.sRedeemAmt == 0) {
-            if (tExit.bPayByEZPay == true) {
+        if (tExit.sRedeemAmt == 0 && !tProcess.gbsavedtrans)
+        {
+            if (tExit.bPayByEZPay)
+            {
                 EnableCashcard(false);
                 CloseExitOperation(EZPayParking);
             }
-            else if (tExit.bPayByAXS == true) {
-                    EnableCashcard(false);
-                    CloseExitOperation(AXSParking);
+            else if (tExit.bPayByAXS)
+            {
+                EnableCashcard(false);
+                CloseExitOperation(AXSParking);
             }
         }
     }
+
     EnableCashcard(false);
+
     //------- added on 01/12/2025
-   if (tParas.giEPS == 3) {
+    if (tParas.giEPS == 3)
+    {
         writelog ("Send OBU information stop request" ,"OPR");
         EEPClient::getInstance()->FnSendGetOBUInfoStopReq();
-    } 
+    }
 }
+
 void operation::LoopCCome()
 {
     writelog ("Loop C Come","OPR");
-
 }
+
 void operation::LoopCGone()
 {
     writelog ("Loop C End","OPR");
+
+    if (!tProcess.gbsavedtrans && tProcess.gbLoopApresent)
+    {
+        return;
+    }
     //-----
     Clearme();
     //------
-    if (tProcess.gbLoopApresent.load() == true)
+    if (tProcess.gbLoopApresent)
     {
        writelog("Loop C gone, Loop A come", "OPR");
        if(tParas.giEPS == 3) 
        {
             for (int i = 0; i < 50; ++i)
             {
-                if (tProcess.fiLastEEPCmd == EEPClient:: CommandType::EEP_idle) break;
+                if (tProcess.fiLastEEPCmd == EEPClient::CommandType::EEP_idle)
+                {
+                    break;
+                }
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
+
             writelog("Send stop Request of related information distribution", "OPR");
-            EEPClient::getInstance()->FnSendStopReqOfRelatedInfoDistributionReq(tProcess.getLastIUNo());
+
+            EEPClient::getInstance()->FnSendStopReqOfRelatedInfoDistributionReq(tProcess.gsLastIUNo);
             for (int i = 0; i < 50; ++i)
             {
-                if (tProcess.fiLastEEPCmd == EEPClient:: CommandType::EEP_idle) break;
+                if (tProcess.fiLastEEPCmd == EEPClient::CommandType::EEP_idle)
+                {
+                    break;
+                }
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
        }
-        LoopACome();
-    }else{
+       
+       LoopACome();
+    }
+    else
+    {
         //shwo default Msg
     }
 }
-void operation::VehicleCome(string sNo)
-{
 
-    if (sNo == "") return;
-    //--------------------
-    if (sNo.length() == 10) {
-        writelog ("Received IU: "+sNo,"OPR");
+void operation::VehicleCome(const std::string& sNo)
+{
+    if (sNo.empty())
+    {
+        return;
     }
-    else {
-        writelog ("Received Card: "+sNo,"OPR");
+
+    const bool isIU = (sNo.length() == 10);
+    //--------------------
+    if (isIU)
+    {
+        writelog("Received IU: " + sNo, "OPR");
+    }
+    else
+    {
+        writelog("Received Card: " + sNo, "OPR");
         Antenna::getInstance()->FnAntennaStopRead();
     }
 
-    if (sNo.length()==10 && sNo == tProcess.gsDefaultIU) {
+    if (isIU && sNo == tProcess.gsDefaultIU)
+    {
         SendMsg2Server ("90",sNo+",,,,,Default IU");
         writelog ("Default IU: "+sNo,"OPR");
         //---------
         return;
     }
-    //-----
-    if (sNo.length() == 10) EnableCashcard(false);
+
+    if (isIU)
+    {
+        EnableCashcard(false);
+    }
+
     //----
-    if (gtStation.iType == tientry) {
-        auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tProcess.getLastIUEntryTime());
-        if ((sNo.length() == 10) && (tProcess.getLastIUNo() == sNo) && (sameAsLastIUDuration.count() <= tParas.giMaxTransInterval))
+    if (gtStation.iType == tientry)
+    {
+        const auto sameAsLastIUDuration =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tProcess.lastIUEntryTime);
+
+        if (isIU &&
+            tProcess.gsLastIUNo == sNo &&
+            sameAsLastIUDuration.count() <= tParas.giMaxTransInterval)
         {
             writelog ("Same as last OBU", "OPR");
-            ShowLEDMsg("Same as last OBU^Please Proceed","Same as last OBU^Please Proceed");
+            ShowLEDMsg("Same as last OBU^Please Proceed", "Same as last OBU^Please Proceed");
             Openbarrier(2);
-        }else {
-            if(tEntry.gbEntryOK == false) PBSEntry (sNo);
-        }  
-    } 
-    else{
+        }
+        else
+        {
+            if (tEntry.gbEntryOK == false)
+            {
+                PBSEntry(sNo);
+            }
+        }
+    }
+    else
+    {
         //check IU or card status
         CheckIUorCardStatus(sNo, Ant);
     }
-    return;
 }
 
 //---- default 0, 2-- same as last card
 void operation::Openbarrier(int iReason)
 {
     stopLoopAPeriodicTimer();
-    if (tProcess.giCardIsIn == 1) {
-        ShowLEDMsg ("Please Take^CashCard.","Please Take^Cashcard.");
+    
+    if (tProcess.giCardIsIn == 1)
+    {
+        ShowLEDMsg ("Please Take^CashCard.", "Please Take^Cashcard.");
         return;
     }
 
@@ -604,10 +2746,15 @@ void operation::Openbarrier(int iReason)
     {
         return;
     }
-    writelog ("Open Barrier","OPR");
+
+    writelog("Open Barrier","OPR");
+
     tProcess.gbBarrierOpened = true;
 
-    if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
+    if (tParas.gsBarrierPulse <= 0)
+    {
+        tParas.gsBarrierPulse = 500;
+    }
 
     DIO::getInstance()->FnSetOpenBarrier(1);
     
@@ -615,14 +2762,20 @@ void operation::Openbarrier(int iReason)
     
     DIO::getInstance()->FnSetOpenBarrier(0);
     //------ added on 08/01/2025
-    if (tParas.giEPS == 3) EndEEPprocess(iReason);
+    if (tParas.giEPS == 3)
+    {
+        EndEEPprocess(iReason);
+    }
 }
 
 void operation::closeBarrier()
 {
-    writelog ("Close barrier.", "OPR");
+    writelog("Close barrier.", "OPR");
     
-    if (tParas.gsBarrierPulse == 0){tParas.gsBarrierPulse = 500;}
+    if (tParas.gsBarrierPulse <= 0)
+    {
+        tParas.gsBarrierPulse = 500;
+    }
 
     // Reset the continue open barrier
     DIO::getInstance()->FnSetOpenBarrier(0);
@@ -638,7 +2791,7 @@ void operation::closeBarrier()
 
 void operation::continueOpenBarrier()
 {
-    Logger::getInstance()->FnLog("Continue Open Barrier", "OPR");
+    writelog("Continue Open Barrier", "OPR");
 
     DIO::getInstance()->FnSetOpenBarrier(1);
 
@@ -783,17 +2936,33 @@ std::string operation::getSerialPort(const std::string& key)
     }
 }
 
-void operation::Initdevice(boost::asio::io_context& ioContext)
+void operation::initDeviceOnIoThread()
 {
-    if (tParas.giCommPortAntenna > 0 && tParas.giEPS != 3)
+    if (tParas.giCommPortAntenna > 0 && tParas.giEPS > 0 && tParas.giEPS < 3)
     {
-        Antenna::getInstance()->FnAntennaInit(19200, getSerialPort(std::to_string(tParas.giCommPortAntenna)));
+        Antenna::getInstance()->FnAntennaInit(
+                                    19200,
+                                    getSerialPort(std::to_string(tParas.giCommPortAntenna)),
+                                    gtStation.iAntID,
+                                    tParas.giAntInqTO,
+                                    tParas.giAntMinOKTimes);
     }
 
     if (tParas.giCommPortLCSC > 0)
     {
-        int iRet = LCSCReader::getInstance()->FnLCSCReaderInit(115200, getSerialPort(std::to_string(tParas.giCommPortLCSC)));
-        if (iRet == -35) { 
+        const int iRet = LCSCReader::getInstance()->FnLCSCReaderInit(
+                                                        115200,
+                                                        getSerialPort(std::to_string(tParas.giCommPortLCSC)),
+                                                        tParas.giCommPortLCSC,
+                                                        gtStation.iSID,
+                                                        tParas.gsCPOID,
+                                                        tParas.gsCPID,
+                                                        tParas.giEPS,
+                                                        tParas.gsCSCRcdackFolder,
+                                                        tParas.gsCSCRcdfFolder);
+
+        if (iRet == -35)
+        {
             tPBSError[iLCSC].ErrNo = -4;
             HandlePBSError(LCSCError);
         }
@@ -801,28 +2970,29 @@ void operation::Initdevice(boost::asio::io_context& ioContext)
 
     if (tParas.giCommPortLED > 0)
     {
-        int max_char_per_row = 0;
+        int maxCharPerRow = 0;
 
         if (tParas.giLEDMaxChar < 20)
         {
-            max_char_per_row =  LED::LED216_MAX_CHAR_PER_ROW;
+            maxCharPerRow = LED::LED216_MAX_CHAR_PER_ROW;
         }
         else
         {
-            max_char_per_row =  LED::LED226_MAX_CHAR_PER_ROW;
+            maxCharPerRow = LED::LED226_MAX_CHAR_PER_ROW;
         }
-        LEDManager::getInstance()->createLED(9600, getSerialPort(std::to_string(tParas.giCommPortLED)), max_char_per_row);
+
+        LEDManager::getInstance()->createLED(9600, getSerialPort(std::to_string(tParas.giCommPortLED)), maxCharPerRow);
     }
 
     if (tParas.giCommportLED401 > 0)
     {
         LEDManager::getInstance()->createLED(9600, getSerialPort(std::to_string(tParas.giCommportLED401)), LED::LED614_MAX_CHAR_PER_ROW);
     }
-    
+
     if (tParas.giCommPortKDEReader > 0 && gtStation.iType == tientry)
     {
-        int iRet = KSM_Reader::getInstance()->FnKSMReaderInit(9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
-        //  -4 KDE comm port error
+        const int iRet = KSM_Reader::getInstance()->FnKSMReaderInit(9600, getSerialPort(std::to_string(tParas.giCommPortKDEReader)));
+
         if (iRet == -4)
         {
             tPBSError[iReader].ErrNo = -4;
@@ -832,31 +3002,21 @@ void operation::Initdevice(boost::asio::io_context& ioContext)
     if (tParas.giCommPortUPOS > 0 && gtStation.iType == tiExit)
     {
         Upt::getInstance()->FnUptInit(115200, getSerialPort(std::to_string(tParas.giCommPortUPOS)));
+
         Upt::getInstance()->FnUptSendDeviceTimeSyncRequest();
     }
 
     if (LCD::getInstance()->FnLCDInit())
     {
-        pLCDIdleTimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);
-
-        pLCDIdleTimer_->expires_after(std::chrono::seconds(1));
-        pLCDIdleTimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
+        if (pLCDIdleTimer_)
         {
-            if (!ec)
-            {
-                this->LcdIdleTimerTimeoutHandler();
-            }
-            else if (ec == boost::asio::error::operation_aborted)
-            {
-                Logger::getInstance()->FnLog("LCD Idle timer cancelled.", "", "OPR");
-            }
-            else
-            {
-                std::stringstream ss;
-                ss << "LCD Idle timer timeout error :" << ec.message();
-                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-            }
-        }));
+            boost::system::error_code ec;
+            pLCDIdleTimer_->cancel(ec);
+        }
+
+        pLCDIdleTimer_ = std::make_unique<boost::asio::steady_timer>(ioContext_);
+
+        scheduleLcdIdleTimer();
     }
 
     if (tParas.giCommPortPrinter > 0 && gtStation.iType == tiExit)
@@ -864,73 +3024,107 @@ void operation::Initdevice(boost::asio::io_context& ioContext)
         Printer::getInstance()->FnSetPrintMode(2);
         Printer::getInstance()->FnSetDefaultAlign(Printer::CBM_ALIGN::CBM_LEFT);
         Printer::getInstance()->FnSetDefaultFont(2);
-        //Printer::getInstance()->FnSetLeftMargin(0);
         Printer::getInstance()->FnSetSelfTestInterval(2000);
         Printer::getInstance()->FnSetSiteID(10);
         Printer::getInstance()->FnSetPrinterType(Printer::PRINTER_TYPE::CBM1000);
         Printer::getInstance()->FnPrinterInit(9600, getSerialPort(std::to_string(tParas.giCommPortPrinter)));
     }
 
-    DIO::getInstance()->FnDIOInit();
+    DIO::getInstance()->FnDIOInit(tParas.giBarrierOpenTooLongTime);
     Lpr::getInstance()->FnLprInit();
+
     if (gtStation.iType == tiExit)
     {
         BARCODE_READER::getInstance()->FnBarcodeReaderInit();
     }
 
-    if (tParas.giEPS  == 3) 
+    if (tParas.giEPS == 3)
     {
-        EEPClient::getInstance()->FnEEPClientInit(IniParser::getInstance()->FnGetEEPClientIp(), IniParser::getInstance()->FnGetEEPClientPort(), IniParser::getInstance()->FnGetStationID());
-    } 
-    else if (tParas.giEPS == 2) {
-        CHUClient::getInstance()->FnCHUClientInit(tParas.gsCHUIP,gtStation.iCHUPort);
+        EEPClient::getInstance()->FnEEPClientInit(
+                                    IniParser::getInstance()->FnGetEEPClientIp(),
+                                    IniParser::getInstance()->FnGetEEPClientPort(),
+                                    IniParser::getInstance()->FnGetStationID(),
+                                    tParas.gsCPOID,
+                                    tParas.gsCPID);
+    }
+    else if (tParas.giEPS == 2)
+    {
+        CHUClient::getInstance()->FnCHUClientInit(tParas.gsCHUIP, gtStation.iCHUPort);
     }
 
-    // Loop A timer
-    pLoopATimer_ = std::make_unique<boost::asio::steady_timer>(ioContext);
+    if (pLoopATimer_)
+    {
+        boost::system::error_code ec;
+        pLoopATimer_->cancel(ec);
+    }
+
+    pLoopATimer_ = std::make_unique<boost::asio::steady_timer>(ioContext_);
 }
 
-void operation::LcdIdleTimerTimeoutHandler()
+void operation::scheduleLcdIdleTimer()
 {
-    if ((tProcess.gbcarparkfull.load() == false) && (tProcess.gbLoopApresent.load() == false))
+    if (stopping_.load() || !pLCDIdleTimer_)
     {
-        ShowLEDMsg(tProcess.getIdleMsg(0), tProcess.getIdleMsg(1));
-        std::string LCDMsg = "";
-        if (IniParser::getInstance()->FnGetShowTime())
-        {
-            LCDMsg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
-        }
-        else
-        {
-            LCDMsg = tParas.gsCompany;
-        }
-        char * sLCDMsg = const_cast<char*>(LCDMsg.data());
-        LCD::getInstance()->FnLCDDisplayRow(2, sLCDMsg);
-    }
-    else if ((tProcess.gbcarparkfull.load() == true) && (tProcess.gbLoopApresent.load() == false))
-    {
-        ShowLEDMsg(tProcess.getIdleMsg(0), tProcess.getIdleMsg(1));
+        return;
     }
 
-    // Restart the lcd idle timer
-    pLCDIdleTimer_->expires_at(pLCDIdleTimer_->expiry() + std::chrono::seconds(1));
-    pLCDIdleTimer_->async_wait(boost::asio::bind_executor(*operationStrand_, [this] (const boost::system::error_code &ec)
+    pLCDIdleTimer_->expires_after(std::chrono::seconds(1));
+    pLCDIdleTimer_->async_wait(
+        [this](const boost::system::error_code& ec)
+        {
+            handleLcdIdleTimer(ec);
+        });
+}
+
+void operation::handleLcdIdleTimer(const boost::system::error_code& ec)
+{
+    if (ec == boost::asio::error::operation_aborted ||
+        stopping_.load())
     {
-        if (!ec)
+        return;
+    }
+
+    if (ec)
+    {
+        writelog("LCD Idle timer timeout error: " + ec.message(), "OPR");
+        return;
+    }
+
+    lcdIdleTimerTimeoutHandler();
+
+    if (!stopping_.load())
+    {
+        scheduleLcdIdleTimer();
+    }
+}
+
+void operation::lcdIdleTimerTimeoutHandler()
+{
+    if (stopping_.load())
+    {
+        return;
+    }
+
+    if (!tProcess.gbcarparkfull && !tProcess.gbLoopApresent)
+    {
+        ShowLEDMsg(tProcess.IdleMsg[0], tProcess.IdleMsg[1]);
+        
+        std::string lcdMsg;
+        
+        if (IniParser::getInstance()->FnGetShowTime())
         {
-            this->LcdIdleTimerTimeoutHandler();
-        }
-        else if (ec == boost::asio::error::operation_aborted)
-        {
-            Logger::getInstance()->FnLog("LCD Idle timer cancelled.", "", "OPR");
+            lcdMsg = Common::getInstance()->FnGetDateTimeFormat_ddmmyyy_hhmmss();
         }
         else
         {
-            std::stringstream ss;
-            ss << "LCD Idle timer timeout error :" << ec.message();
-            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+            lcdMsg = tParas.gsCompany;
         }
-    }));
+        LCD::getInstance()->FnLCDDisplayRow(2, lcdMsg.data());
+    }
+    else if (tProcess.gbcarparkfull && tProcess.gbLoopApresent)
+    {
+        ShowLEDMsg(tProcess.IdleMsg[0], tProcess.IdleMsg[1]);
+    }
 }
 
 void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
@@ -940,22 +3134,23 @@ void operation::ShowLEDMsg(string LEDMsg, string LCDMsg)
 
     if (sLastLEDMsg != LEDMsg)
     {
-        sLastLEDMsg = LEDMsg;
-        writelog ("LED Message:" + LEDMsg,"OPR");
+        writelog("LED Message:" + LEDMsg,"OPR");
 
-        if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED))) != nullptr)
+        auto* led = LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)));
+        if (led != nullptr)
         {
-            LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommPortLED)))->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
+            led->FnLEDSendLEDMsg("***", LEDMsg, LED::Alignment::CENTER);
+            sLastLEDMsg = LEDMsg;
         }
     }
 
     if (sLastLCDMsg != LCDMsg)
     {
-        sLastLCDMsg = LCDMsg;
         writelog ("LCD Message:" + LCDMsg,"OPR");
 
-        char* sLCDMsg = const_cast<char*>(LCDMsg.data());
-        LCD::getInstance()->FnLCDDisplayScreen(sLCDMsg);
+        std::string lcdMessage = LCDMsg;
+        LCD::getInstance()->FnLCDDisplayScreen(lcdMessage.data());
+        sLastLCDMsg = LCDMsg;
     }
 }
 
@@ -969,7 +3164,7 @@ void operation::PBSEntry(string sIU)
     if (sIU == "") return;
     //check blacklist
     SendMsg2Server("90",","+sIU+",,"+tEntry.sLPN[0]+ ",,PMS_DVR");
-    iRet = m_db->IsBlackListIU(sIU);
+    iRet = db::getInstance()->IsBlackListIU(sIU);
     if (iRet >= 0){
         ShowLEDMsg(tMsg.MsgBlackList[0], tMsg.MsgBlackList[1]);
         SendMsg2Server("90",sIU+",,,,,Blacklist IU");
@@ -1002,7 +3197,7 @@ void operation::PBSEntry(string sIU)
         Openbarrier();
         return;
     }
-    if (tProcess.gbcarparkfull.load() == true && tParas.giFullAction == iLock)
+    if (tProcess.gbcarparkfull && tParas.giFullAction == iLock)
     {   
         ShowLEDMsg(tMsg.Msg_LockStation[0], tMsg.Msg_LockStation[1]);
         writelog("Loop A while station Locked","OPR");
@@ -1018,14 +3213,14 @@ void operation::PBSEntry(string sIU)
         return;
      }
 
-    if (tProcess.gbcarparkfull.load() == true && iRet == 1 && (std::stoi(tSeason.rate_type) !=0) && tParas.giFullAction ==iNoPartial )
+    if (tProcess.gbcarparkfull && iRet == 1 && (std::stoi(tSeason.rate_type) !=0) && tParas.giFullAction ==iNoPartial )
     {   
         writelog ("VIP Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^VIP Season Only", "Carpark Full!^VIP Season Only");
         if (tParas.giEPS == 3) SendMsg2OBU(tExit.sIUNo,0,"Car Park Full", "","","","");
         return;
     } 
-    if (tProcess.gbcarparkfull.load() == true && iRet != 1 )
+    if (tProcess.gbcarparkfull && iRet != 1 )
     {   
         writelog ("Season Only.", "OPR");
         ShowLEDMsg("Carpark Full!^Season only", "Carpark Full!^Season only");
@@ -1084,8 +3279,8 @@ void operation:: Setdefaultparameter()
         tPBSError[i].ErrCode =0;
 	    tPBSError[i].ErrMsg = "";
     }
-    tProcess.gbcarparkfull.store(false);
-    tProcess.gbLoopApresent.store(false);
+    tProcess.gbcarparkfull = false;
+    tProcess.gbLoopApresent = false;
     tProcess.gbLoopAIsOn = false;
     tProcess.gbLoopBIsOn = false;
     tProcess.gbLoopCIsOn = false;
@@ -1102,18 +3297,18 @@ void operation:: Setdefaultparameter()
     tProcess.giCardIsIn = 0;
     //-------
     tProcess.giLastHousekeepingDate = 0;
-    tProcess.setLastIUNo("");
+    tProcess.gsLastIUNo = "";
 
-    tProcess.setLastIUEntryTime(std::chrono::steady_clock::now());
-    tProcess.setLastTransTime(std::chrono::steady_clock::now());
+    tProcess.lastIUEntryTime = std::chrono::steady_clock::now();
+    tProcess.lastTransTime = std::chrono::steady_clock::now();
     //---
-    tProcess.fbReadIUfromAnt.store(false);
+    tProcess.fbReadIUfromAnt = false;
     tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
     tProcess.gsLastDebitFailTime = "";
     tProcess.gsLastPaidTrans = "";
 	tProcess.gsLastCardNo = "";
 	tProcess.gfLastCardBal = 0;
-    tProcess.gbLastPaidStatus.store(false);
+    tProcess.gbLastPaidStatus = false;
     tProcess.glLastSerialNo = 0;
     //----
     tProcess.gbUPOSStatus = Init;
@@ -1121,67 +3316,132 @@ void operation:: Setdefaultparameter()
     tProcess.giBarrierContinueOpened = 0;
 }
 
-string operation:: getIPAddress() 
-
+std::string operation::getIPAddress()
 {
-    FILE* pipe = popen("ifconfig", "r");
-    if (!pipe) {
-        std::cerr << "Error in popen\n";
+    struct ifaddrs* ifAddrList = nullptr;
+
+    std::string result;
+    std::string broadcastIP;
+
+    if (getifaddrs(&ifAddrList) == -1)
+    {
+        std::cerr << "Error in getifaddrs\n";
         return "";
     }
 
-    char buffer[128];
-    std::string result = "";
-    int iRet = 0;
-
     // Read the output of the 'ifconfig' command
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result = buffer;
-         if (iRet == 1) {
-             size_t pos = result.find("inet addr:");
-             result = result.substr(pos + 10);
-             result.erase(result.find(' '));
-            break;
-         }
+    // Legacy comment retained. Network information is now obtained using getifaddrs().
+    for (struct ifaddrs* ifAddr = ifAddrList; ifAddr != nullptr; ifAddr = ifAddr->ifa_next)
+    {
+        if (ifAddr->ifa_addr == nullptr)
+        {
+            continue;
+        }
 
-         if (result.find("eth0") != std::string::npos) {
-             iRet = 1;
-         }
+        if (ifAddr->ifa_addr->sa_family != AF_INET)
+        {
+            continue;
+        }
+
+        if (std::strcmp(ifAddr->ifa_name, "eth0") != 0)
+        {
+            continue;
+        }
+
+        const auto* ipv4Address = reinterpret_cast<const struct sockaddr_in*>(ifAddr->ifa_addr);
+
+        char ipBuffer[INET_ADDRSTRLEN] = {};
+
+        if (inet_ntop(
+                AF_INET,
+                &(ipv4Address->sin_addr),
+                ipBuffer,
+                sizeof(ipBuffer)) == nullptr)
+        {
+            continue;
+        }
+
+        result = ipBuffer;
+
+        if ((ifAddr->ifa_flags & IFF_BROADCAST) != 0 &&
+            ifAddr->ifa_broadaddr != nullptr)
+        {
+            const auto* broadcastAddress = reinterpret_cast<const struct sockaddr_in*>(ifAddr->ifa_broadaddr);
+
+            char broadcastBuffer[INET_ADDRSTRLEN] = {};
+
+            if (inet_ntop(
+                    AF_INET,
+                    &(broadcastAddress->sin_addr),
+                    broadcastBuffer,
+                    sizeof(broadcastBuffer)) != nullptr)
+            {
+                broadcastIP = broadcastBuffer;
+            }
+        }
+
+        if (broadcastIP.empty() &&
+            ifAddr->ifa_netmask != nullptr)
+        {
+            const auto* netmaskAddress = reinterpret_cast<const struct sockaddr_in*>(ifAddr->ifa_netmask);
+            const uint32_t ip = ntohl(ipv4Address->sin_addr.s_addr);
+            const uint32_t netmask = ntohl(netmaskAddress->sin_addr.s_addr);
+
+            struct in_addr calculatedBroadcast{};
+            calculatedBroadcast.s_addr = htonl(ip | ~netmask);
+
+            char broadcastBuffer[INET_ADDRSTRLEN] = {};
+
+            if (inet_ntop(
+                    AF_INET,
+                    &calculatedBroadcast,
+                    broadcastBuffer,
+                    sizeof(broadcastBuffer)) != nullptr)
+            {
+                broadcastIP = broadcastBuffer;
+            }
+        }
+
+        break;
     }
-    
-    pclose(pipe);
+
+    freeifaddrs(ifAddrList);
+
     //------
     tParas.gsLocalIP = result;
     writelog ("local IP address: " + result, "OPR");
-    //-----
-    if (result != "")
-    {
-        size_t lastDotPosition = result.find_last_of('.');
-        result = result.substr(0, lastDotPosition + 1)+ "255";
-    }
-    // Output the result
-    return result;
 
+    //-----
+    if (result.empty())
+    {
+        return "";
+    }
+
+    // Output the result
+    return broadcastIP;
 }
 
 void operation:: Sendmystatus()
 {
-  //EPS error index:  0=antenna,     1=printer,   2=DB, 3=Reader, 4=UPOS
-  //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10= LCSC
-  //11= station door status, 12 = barrier door status, 13= TGD controll status
-  //14 = TGD sensor status 15=Arm drop status,16=barrier status,17=ticket status d DateTime
+    //EPS error index:  0=antenna,     1=printer,   2=DB, 3=Reader, 4=UPOS
+    //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10= LCSC
+    //11= station door status, 12 = barrier door status, 13= TGD controll status
+    //14 = TGD sensor status 15=Arm drop status,16=barrier status,17=ticket status d DateTime
     CE_Time dt;
 	string str="";
 
-    for (int i= 0; i< Errsize; ++i){
+    for (int i = 0; i < Errsize; ++i)
+    {
         str += std::to_string(tPBSError[i].ErrNo) + ",";
     }
-	str+="0;0,"+dt.DateTimeNumberOnlyString()+",";
+
+    str += "0;0," + dt.DateTimeNumberOnlyString() + ",";
+
 	SendMsg2Server("00",str);
 	
 }
 
-void operation::FnSendMyStatusToMonitor()
+void operation::sendMyStatusToMonitor()
 {
     //EPS error index:  0=antenna,     1=printer,   2=DB, 3=Reader, 4=UPOS
     //5=Param error, 6=DIO,7=Loop A hang,8=CHU, 9=ups, 10= LCSC
@@ -1190,25 +3450,35 @@ void operation::FnSendMyStatusToMonitor()
     CE_Time dt;
 	string str="";
     //-----
-    for (int i= 0; i< Errsize; ++i){
+    for (int i = 0; i < Errsize; ++i)
+    {
         str += std::to_string(tPBSError[i].ErrNo) + ",";
     }
-	str+="0;0,"+dt.DateTimeNumberOnlyString()+",";
-	SendMsg2Monitor("300",str);
+
+    str += "0;0," + dt.DateTimeNumberOnlyString() + ",";
+
+    SendMsg2Monitor("300", str);
 }
 
-void operation::FnSyncCentralDBTime()
+void operation::syncCentralDBTime()
 {
-    m_db->synccentraltime();
+    db::getInstance()->synccentraltime();
 }
 
 void operation::FnSendDIOInputStatusToMonitor(int pinNum, int pinValue)
 {
-    std::string str = std::to_string(pinNum) + "," + std::to_string(pinValue);
-    SendMsg2Monitor("302", str);
+    postEvent(
+        [this, pinNum, pinValue]()
+        {
+            const std::string data =
+                std::to_string(pinNum) + "," +
+                std::to_string(pinValue);
+
+            SendMsg2Monitor("302", data);
+        });
 }
 
-void operation::FnSendDateTimeToMonitor()
+void operation::sendDateTimeToMonitor()
 {
     std::string str = Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmm();
     SendMsg2Monitor("304", str);
@@ -1216,23 +3486,54 @@ void operation::FnSendDateTimeToMonitor()
 
 void operation::FnSendLogMessageToMonitor(std::string msg)
 {
-    if (m_Monitorudp != nullptr)
-    {
-        if (m_Monitorudp->FnGetMonitorStatus())
+    postEvent(
+        [this, msg = std::move(msg)]()
         {
-            std::string str = "[" + gtStation.sPCName + "|" + std::to_string(gtStation.iSID) + "|" + "305" + "|" + msg + "|]";
-            m_Monitorudp->send(str);
-        }
-    }
+            if (monitorUdpClient_ == nullptr)
+            {
+                return;
+            }
+
+            if (!monitorUdpClient_->FnGetMonitorStatus())
+            {
+                return;
+            }
+
+            const std::string str =
+                "[" +
+                gtStation.sPCName + "|" +
+                std::to_string(gtStation.iSID) + "|" +
+                "305" + "|" +
+                msg + "|]";
+
+            monitorUdpClient_->send(str);
+        });
+}
+
+void operation::FnSendMsg2Server(std::string cmdCode, std::string data)
+{
+    postEvent(
+        [this,
+         cmdCode = std::move(cmdCode),
+         data = std::move(data)]() mutable
+        {
+            SendMsg2Server(std::move(cmdCode), std::move(data));
+        });
 }
 
 void operation::FnSendLEDMessageToMonitor(std::string line1TextMsg, std::string line2TextMsg)
 {
-    std::string str = line1TextMsg + "," + line2TextMsg;
-    SendMsg2Monitor("306", str);
+    postEvent(
+        [this,
+         line1TextMsg = std::move(line1TextMsg),
+         line2TextMsg = std::move(line2TextMsg)]()
+        {
+            const std::string str = line1TextMsg + "," + line2TextMsg;
+            SendMsg2Monitor("306", str);
+        });
 }
 
-void operation::FnSendCmdDownloadParamAckToMonitor(bool success)
+void operation::sendCmdDownloadParamAckToMonitor(bool success)
 {
     std::string str = "99";
 
@@ -1244,7 +3545,7 @@ void operation::FnSendCmdDownloadParamAckToMonitor(bool success)
     SendMsg2Monitor("310", str);
 }
 
-void operation::FnSendCmdDownloadIniAckToMonitor(bool success)
+void operation::sendCmdDownloadIniAckToMonitor(bool success)
 {
     std::string str = "99";
 
@@ -1256,7 +3557,7 @@ void operation::FnSendCmdDownloadIniAckToMonitor(bool success)
     SendMsg2Monitor("309", str);
 }
 
-void operation::FnSendCmdGetStationCurrLogToMonitor()
+void operation::sendCmdGetStationCurrLogToMonitor()
 {
     try
     {
@@ -1264,6 +3565,11 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
         auto today = std::chrono::system_clock::now();
         auto todayDate = std::chrono::system_clock::to_time_t(today);
         std::tm* localToday = std::localtime(&todayDate);
+
+        if (localToday == nullptr)
+        {
+            throw std::runtime_error("Failed to get local time.");
+        }
 
         std::string logFilePath = Logger::getInstance()->LOG_FILE_PATH;
 
@@ -1277,28 +3583,30 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
 
         // Iterate through the files in the log file path
         int foundNo_ = 0;
+
         for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
         {
             if ((entry.path().filename().string().find(todayDateStr) != std::string::npos) &&
                 (entry.path().extension() == ".log"))
             {
-                foundNo_ ++;
+                foundNo_++;
             }
         }
 
         bool copyFileFail = false;
         std::string details;
+
         if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
         {
             if (foundNo_ > 0)
             {
                 std::stringstream ss;
                 ss << "Found " << foundNo_ << " log files.";
-                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                writelog(ss.str(), "OPR");
 
                 // Create the mount poin directory if doesn't exist
                 std::string mountPoint = "/mnt/logbackup";
-                std::string sharedFolderPath = operation::getInstance()->tParas.gsLogBackFolder;
+                std::string sharedFolderPath = tParas.gsLogBackFolder;
                 std::replace(sharedFolderPath.begin(), sharedFolderPath.end(), '\\', '/');
                 std::string username = IniParser::getInstance()->FnGetCentralUsername();
                 std::string password = IniParser::getInstance()->FnGetCentralPassword();
@@ -1306,91 +3614,100 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
                 if (!std::filesystem::exists(mountPoint))
                 {
                     std::error_code ec;
+
                     if (!std::filesystem::create_directories(mountPoint, ec))
                     {
-                        Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), "", "OPR");
-                        throw std::runtime_error(("Failed to create " + mountPoint + " directory : " + ec.message()));
+                        writelog(("Failed to create " + mountPoint + " directory : " + ec.message()), "OPR");
+                        SendMsg2Monitor("314", "98");
+                        return;
                     }
                     else
                     {
-                        Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), "", "OPR");
+                        writelog(("Successfully to create " + mountPoint + " directory."), "OPR");
                     }
                 }
                 else
                 {
-                    Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), "", "OPR");
+                    writelog(("Mount point directory: " + mountPoint + " exists."), "OPR");
                 }
 
                 // Mount the shared folder
-                std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
-                                            " -o username=" + username + ",password=" + password;
-                int mountStatus = std::system(mountCommand.c_str());
-                if (mountStatus != 0)
                 {
-                    Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), "", "OPR");
-                    throw std::runtime_error("Failed to mount " + mountPoint);
-                }
-                else
-                {
-                    Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
-                }
+                    MountManager mountManager(
+                        sharedFolderPath,
+                        mountPoint,
+                        username,
+                        password,
+                        "",
+                        "OPR");
 
-                // Copy files to mount folder
-                for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
-                {
-                    if ((entry.path().filename().string().find(todayDateStr) != std::string::npos) &&
-                        (entry.path().extension() == ".log"))
+                    if (!mountManager.isMounted())
                     {
-                        std::error_code ec;
-                        std::filesystem::copy(entry.path(), mountPoint / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-                        
-                        if (!ec)
+                        writelog(("Failed to mount " + mountPoint), "OPR");
+                        SendMsg2Monitor("314", "98");
+                        return;
+                    }
+                    else
+                    {
+                        writelog(("Successfully to mount " + mountPoint), "OPR");
+                    }
+
+                    // Copy files to mount folder
+                    for (const auto& entry : std::filesystem::directory_iterator(logFilePath))
+                    {
+                        if ((entry.path().filename().string().find(todayDateStr) != std::string::npos) &&
+                            (entry.path().extension() == ".log"))
                         {
-                            std::stringstream ss;
-                            ss << "Copy file : " << entry.path() << " successfully.";
-                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                        }
-                        else
-                        {
-                            std::stringstream ss;
-                            ss << "Failed to copy log file : " << entry.path();
-                            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
-                            copyFileFail = true;
-                            break;
+                            std::error_code ec;
+
+                            std::filesystem::copy(
+                                entry.path(),
+                                std::filesystem::path(mountPoint) / entry.path().filename(),
+                                std::filesystem::copy_options::overwrite_existing,
+                                ec);
+
+                            if (!ec)
+                            {
+                                std::stringstream ss;
+                                ss << "Copy file : " << entry.path() << " successfully.";
+                                writelog(ss.str(), "OPR");
+                            }
+                            else
+                            {
+                                std::stringstream ss;
+                                ss << "Failed to copy log file : " << entry.path();
+                                writelog(ss.str(), "OPR");
+
+                                copyFileFail = true;
+                                break;
+                            }
                         }
                     }
+
+                    // Unmount the shared folder
+                    // MountManager will release the mount automatically.
+                    // Unmount failure is logged by MountManager and does not
+                    // change the log upload result.
                 }
 
-                // Unmount the shared folder
-                std::string unmountCommand = "sudo umount " + mountPoint;
-                int unmountStatus = std::system(unmountCommand.c_str());
-                if (unmountStatus != 0)
+                if (copyFileFail)
                 {
-                    Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
-                    throw std::runtime_error("Failed to unmount " + mountPoint);
+                    SendMsg2Monitor("314", "98");
                 }
                 else
                 {
-                    Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
+                    SendMsg2Monitor("314", "99");
                 }
             }
             else
             {
-                Logger::getInstance()->FnLog("No Log files to upload.", "", "OPR");
-                throw std::runtime_error("No Log files to upload.");
+                writelog("No Log files to upload.", "OPR");
+                SendMsg2Monitor("314", "98");
             }
         }
         else
         {
-            Logger::getInstance()->FnLog("Log files failed to upload due to ping failed.", "", "OPR");
-        }
-
-        if (!copyFileFail)
-        {
-            SendMsg2Monitor("314", "99");
-        }
-        else
-        {
+            writelog("Log files failed to upload due to ping failed.", "OPR");
             SendMsg2Monitor("314", "98");
         }
     }
@@ -1398,217 +3715,268 @@ void operation::FnSendCmdGetStationCurrLogToMonitor()
     {
         std::stringstream ss;
         ss << __func__ << " Exception: " << e.what();
-        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+        writelog(ss.str(), "OPR");
         SendMsg2Monitor("314", "98");
     }
     catch (...)
     {
         std::stringstream ss;
         ss << __func__ << " Unknown Exception.";
-        Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+        writelog(ss.str(), "OPR");
         SendMsg2Monitor("314", "98");
     }
 }
 
-bool operation::copyFiles(const std::string& mountPoint, const std::string& sharedFolderPath, 
-                        const std::string& username, const std::string& password, const std::string& outputFolderPath)
+bool operation::copyFiles(
+    const std::string& mountPoint,
+    const std::string& sharedFolderPath,
+    const std::string& username,
+    const std::string& password,
+    const std::string& outputFolderPath)
 {
     // Create the mount poin directory if doesn't exist
     if (!std::filesystem::exists(mountPoint))
     {
         std::error_code ec;
+
         if (!std::filesystem::create_directories(mountPoint, ec))
         {
-            Logger::getInstance()->FnLog(("Failed to create " + mountPoint + " directory : " + ec.message()), "", "OPR");
+            writelog(("Failed to create " + mountPoint + " directory : " + ec.message()), "OPR");
             return false;
         }
         else
         {
-            Logger::getInstance()->FnLog(("Successfully to create " + mountPoint + " directory."), "", "OPR");
+            writelog(("Successfully to create " + mountPoint + " directory."), "OPR");
         }
     }
     else
     {
-        Logger::getInstance()->FnLog(("Mount point directory: " + mountPoint + " exists."), "", "OPR");
+        writelog(("Mount point directory: " + mountPoint + " exists."), "OPR");
     }
 
     // Mount the shared folder
-    std::string mountCommand = "sudo mount -t cifs " + sharedFolderPath + " " + mountPoint +
-                                " -o username=" + username + ",password=" + password;
-    int mountStatus = std::system(mountCommand.c_str());
-    if (mountStatus != 0)
+    MountManager mountManager(
+        sharedFolderPath,
+        mountPoint,
+        username,
+        password,
+        "",
+        "OPR");
+
+    if (!mountManager.isMounted())
     {
-        Logger::getInstance()->FnLog(("Failed to mount " + mountPoint), "", "OPR");
+        writelog(("Failed to mount " + mountPoint), "OPR");
         return false;
     }
     else
     {
-        Logger::getInstance()->FnLog(("Successfully to mount " + mountPoint), "", "OPR");
+        writelog(("Successfully to mount " + mountPoint), "OPR");
     }
 
     // Create the output folder if it doesn't exist
     if (!std::filesystem::exists(outputFolderPath))
     {
         std::error_code ec;
+
         if (!std::filesystem::create_directories(outputFolderPath, ec))
         {
-            Logger::getInstance()->FnLog(("Failed to create " + outputFolderPath + " directory : " + ec.message()), "", "OPR");
-            umount(mountPoint.c_str()); // Unmount if folder creation fails
+            writelog(("Failed to create " + outputFolderPath + " directory : " + ec.message()), "OPR");
             return false;
         }
         else
         {
-            Logger::getInstance()->FnLog(("Successfully to create " + outputFolderPath + " directory."), "", "OPR");
+            writelog(("Successfully to create " + outputFolderPath + " directory."), "OPR");
         }
     }
     else
     {
-        Logger::getInstance()->FnLog(("Output folder directory : " + outputFolderPath + " exists."), "", "OPR");
+        writelog(("Output folder directory : " + outputFolderPath + " exists."), "OPR");
     }
 
     // Copy files to mount point
     bool foundIni = false;
-    std::filesystem::path folder(mountPoint);
-    if (std::filesystem::exists(folder) && std::filesystem::is_directory(folder))
+
+    const std::filesystem::path folder(mountPoint);
+
+    if (std::filesystem::exists(folder) &&
+        std::filesystem::is_directory(folder))
     {
         for (const auto& entry : std::filesystem::directory_iterator(folder))
         {
-            std::string filename = entry.path().filename().string();
+            const std::string filename =
+                entry.path().filename().string();
 
             if (std::filesystem::is_regular_file(entry)
                 && (filename.size() >= 4) && (filename == "LinuxPBS.ini"))
             {
                 foundIni = true;
-                std::filesystem::path dest_file = outputFolderPath / entry.path().filename();
-                std::filesystem::copy(entry.path(), dest_file, std::filesystem::copy_options::overwrite_existing);
+
+                const std::filesystem::path dest_file =
+                    std::filesystem::path(outputFolderPath) /
+                    entry.path().filename();
+
+                std::filesystem::copy(
+                    entry.path(),
+                    dest_file,
+                    std::filesystem::copy_options::overwrite_existing);
 
                 std::stringstream ss;
                 ss << "Copy " << entry.path() << " to " << dest_file << " successfully";
-                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                writelog(ss.str(), "OPR");
             }
         }
     }
     else
     {
-        Logger::getInstance()->FnLog("Folder doesn't exist or is not a directory.", "", "OPR");
-        umount(mountPoint.c_str());
+        writelog("Folder doesn't exist or is not a directory.", "OPR");
         return false;
     }
 
     // Unmount the shared folder
-    std::string unmountCommand = "sudo umount " + mountPoint;
-    int unmountStatus = std::system(unmountCommand.c_str());
-    if (unmountStatus != 0)
-    {
-        Logger::getInstance()->FnLog(("Failed to unmount " + mountPoint), "", "OPR");
-        return false;
-    }
-    else
-    {
-        Logger::getInstance()->FnLog(("Successfully to unmount " + mountPoint), "", "OPR");
-    }
+    // MountManager will release the mount automatically when leaving this function.
 
     if (!foundIni)
     {
-        Logger::getInstance()->FnLog("Ini file not found.", "", "OPR");
+        writelog("Ini file not found.", "OPR");
         return false;
     }
 
     return true;
 }
 
-bool operation::CopyIniFile(const std::string& serverIpAddress, const std::string& stationID)
+bool operation::CopyIniFile(
+    const std::string& serverIpAddress,
+    const std::string& stationID)
 {
     if ((!serverIpAddress.empty()) && (!stationID.empty()))
     {
         std::string details;
+
         if (PingWithTimeOut(serverIpAddress, 1, details) == true)
         {
-            std::string sharedFilePath = "//" + serverIpAddress + "/carpark/LinuxPBS/Ini/Stn" + stationID;
+            std::string sharedFilePath =
+                "//" +
+                serverIpAddress +
+                "/carpark/LinuxPBS/Ini/Stn" +
+                stationID;
 
             std::stringstream ss;
             ss << "Ini Shared File Path : " << sharedFilePath;
-            Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+            writelog(ss.str(), "OPR");
 
-            return copyFiles("/mnt/ini", sharedFilePath, IniParser::getInstance()->FnGetCentralUsername(), IniParser::getInstance()->FnGetCentralPassword(), "/home/root/carpark/Ini");
+            return copyFiles(
+                "/mnt/ini",
+                sharedFilePath,
+                IniParser::getInstance()->FnGetCentralUsername(),
+                IniParser::getInstance()->FnGetCentralPassword(),
+                "/home/root/carpark/Ini");
         }
         else
         {
-            Logger::getInstance()->FnLog("Failed to ping to Server IP address.", "", "OPR");
+            writelog("Failed to ping to Server IP address.", "OPR");
             return false;
         }
     }
     else
     {
-        Logger::getInstance()->FnLog("Server IP address or station ID empty.", "", "OPR");
+        writelog("Server IP address or station ID empty.", "OPR");
         return false;
     }
 }
 
-void operation::SendMsg2Monitor(string cmdcode,string dstr)
+void operation::SendMsg2Monitor(const std::string& cmdcode, const std::string& dstr)
 {
-    if (m_Monitorudp != nullptr)
+    if (monitorUdpClient_ == nullptr)
     {
-        if (m_Monitorudp->FnGetMonitorStatus())
-        {
-            string str="["+ gtStation.sPCName +"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
-            str+=dstr+"|]";
-            m_Monitorudp->send(str);
-            //----
-            writelog ("Message to Monitor: " + str,"OPR");
-        }
+        return;
     }
+
+    if (!monitorUdpClient_->FnGetMonitorStatus())
+    {
+        return;
+    }
+
+    std::string str =
+        "[" +
+        gtStation.sPCName +
+        "|" +
+        std::to_string(gtStation.iSID) +
+        "|" +
+        cmdcode +
+        "|" +
+        dstr +
+        "|]";
+
+    monitorUdpClient_->send(str);
+
+    //----
+    writelog("Message to Monitor: " + str,"OPR");
 }
 
-void operation::SendMsg2Server(string cmdcode,string dstr)
+void operation::SendMsg2Server(const std::string& cmdcode, const std::string& dstr)
 {
-	string str="["+ gtStation.sName+"|"+to_string(gtStation.iSID)+"|"+cmdcode+"|";
-	str+=dstr+"|]";
-    if (m_udp != nullptr)
+    std::string str =
+        "[" +
+        gtStation.sName +
+        "|" +
+        std::to_string(gtStation.iSID) +
+        "|" +
+        cmdcode +
+        "|" +
+        dstr +
+        "|]";
+
+    if (pmsUdpClient_ == nullptr)
     {
-        m_udp->send(str);
-        //----
-        writelog ("Message to PMS: " + str,"OPR");
+        return;
     }
+
+    pmsUdpClient_->send(str);
+
+    //----
+    writelog ("Message to PMS: " + str,"OPR");
 }
 
-int operation::CheckSeason(string sIU,int iInOut)
+int operation::CheckSeason(const std::string& sIU, int iInOut)
 {
-   int iRet;
-   string sMsg;
-   string sLCD;
-   iRet = db::getInstance()->isvalidseason(sIU,iInOut,gtStation.iZoneID);
-   //showLED message
-   if (iRet != 8 ) {
+    std::string sMsg;
+    std::string sLCD;
+
+    const int iRet = db::getInstance()->isvalidseason(sIU, iInOut, gtStation.iZoneID);
+
+    //showLED message
+    if (iRet != 8)
+    {
         FormatSeasonMsg(iRet, sIU, sMsg, sLCD);
-   } 
-   return iRet;
+    }
+
+    return iRet;
 }
 
-void operation::writelog(string sMsg, string soption)
+void operation::writelog(const std::string& sMsg, const std::string& soption)
 {
-    std::stringstream dbss;
-	dbss << sMsg;
-    Logger::getInstance()->FnLog(dbss.str(), "", soption);
-
+    Logger::getInstance()->FnLog(sMsg, "", soption);
 }
 
 void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
 {
+    std::string sErrMsg;
+    std::string sCmd;
 
-    string sErrMsg = "";
-    string sCmd = "";
-    
-    switch(iEPSErr){
+    switch (iEPSErr)
+    {
         case ParamOk:
         {
-            if (tPBSError[iParam].ErrNo < 0) {
+            if (tPBSError[iParam].ErrNo < 0)
+            {
                 sCmd = "200";
                 sErrMsg = "Parameter OK";
             }
+
             tPBSError[iParam].ErrNo = 0;
             break;
         }
+
         case ParamError:
         {
             tPBSError[iParam].ErrNo = -1;
@@ -1617,15 +3985,19 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = tPBSError[iParam].ErrMsg;
             break;
         }
+
         case AntennaNoError:
         {
-            if (tPBSError[iAntenna].ErrNo < 0) {
+            if (tPBSError[iAntenna].ErrNo < 0)
+            {
                 sCmd = "03";
                 sErrMsg = "Antenna OK";
             }
+
             tPBSError[iAntenna].ErrNo = 0;
             break;
         }
+
         case AntennaError:
         {
             tPBSError[iAntenna].ErrNo = -1;
@@ -1635,32 +4007,39 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sCmd = "03";
             break;
         }
+
         case AntennaPowerOnOff:
         {
-            if (iErrCode == 1) {
+            if (iErrCode == 1)
+            {
                 tPBSError[iAntenna].ErrNo = 0;
                 tPBSError[iAntenna].ErrCode = 1;
                 tPBSError[iAntenna].ErrMsg = "Antenna: Power ON";
             }
-            else{
+            else
+            {
                 tPBSError[iAntenna].ErrNo = -2;
                 tPBSError[iAntenna].ErrCode = 0;
                 tPBSError[iAntenna].ErrMsg = "Antenna Error: Power OFF";
-            
             }
+
             sErrMsg = tPBSError[iAntenna].ErrMsg;
             sCmd = "03";
             break;
         }
+
         case PrinterNoError:
-        {   
-            if (tPBSError[1].ErrNo < 0){
+        {
+            if (tPBSError[1].ErrNo < 0)
+            {
                 sCmd = "04";
                 sErrMsg = "Printer OK";
             }
+
             tPBSError[1].ErrNo = 0;
             break;
         }
+
         case PrinterError:
         {
             tPBSError[1].ErrNo = -1;
@@ -1669,6 +4048,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = tPBSError[1].ErrMsg;
             break;
         }
+
         case PrinterNoPaper:
         {
             tPBSError[1].ErrNo = -2;
@@ -1677,6 +4057,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = tPBSError[1].ErrMsg;
             break;
         }
+
         case DBNoError:
         {
             tPBSError[2].ErrNo = 0;
@@ -1686,6 +4067,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             Sendmystatus();
             break;
         }
+
         case DBFailed:
         {
             tPBSError[2].ErrNo = -1;
@@ -1695,6 +4077,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             Sendmystatus();
             break;
         }
+
         case DBUpdateFail:
         {
             tPBSError[2].ErrNo = -2;
@@ -1704,15 +4087,19 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             Sendmystatus();
             break;
         }
+
         case UPOSNoError:
         {
-            if (tPBSError[4].ErrNo < 0){
+            if (tPBSError[4].ErrNo < 0)
+            {
                 sCmd = "06";
                 sErrMsg = "UPOS OK";
             }
+
             tPBSError[4].ErrNo = 0;
             break;
         }
+
         case UPOSError:
         {
             tPBSError[4].ErrNo = -1;
@@ -1721,20 +4108,23 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = tPBSError[4].ErrMsg;
             break;
         }
+
         case TariffError:
         {
-            tPBSError[5].ErrNo = -1;     
+            tPBSError[5].ErrNo = -1;
             sCmd = "08";
             sErrMsg = "5Tariff Error";
             break;
         }
+
         case TariffOk:
         {
-            tPBSError[5].ErrNo = 0 ;    
+            tPBSError[5].ErrNo = 0;
             sCmd = "08";
             sErrMsg = "5Tariff OK";
             break;
         }
+
         case HolidayError:
         {
             tPBSError[5].ErrNo = -2;
@@ -1742,13 +4132,15 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = "5No Holiday Set";
             break;
         }
+
         case HolidayOk:
         {
-            tPBSError[5].ErrNo = 0;    
+            tPBSError[5].ErrNo = 0;
             sCmd = "08";
             sErrMsg = "5Holiday OK";
             break;
         }
+
         case DIOError:
         {
             tPBSError[6].ErrNo = -1;
@@ -1756,6 +4148,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = "6DIO Error";
             break;
         }
+
         case DIOOk:
         {
             tPBSError[6].ErrNo = 0;
@@ -1763,6 +4156,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = "6DIO OK";
             break;
         }
+
         case LoopAHang:
         {
             tPBSError[7].ErrNo = -1;
@@ -1770,6 +4164,7 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = "7Loop A Hang";
             break;
         }
+
         case LoopAOk:
         {
             tPBSError[7].ErrNo = 0;
@@ -1777,15 +4172,19 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = "7Loop A OK";
             break;
         }
+
         case LCSCNoError:
         {
-            if (tPBSError[10].ErrNo < 0){
+            if (tPBSError[10].ErrNo < 0)
+            {
                 sCmd = "70";
                 sErrMsg = "LCSC OK";
             }
+
             tPBSError[10].ErrNo = 0;
             break;
         }
+
         case LCSCError:
         {
             tPBSError[10].ErrNo = -1;
@@ -1794,14 +4193,16 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = tPBSError[10].ErrMsg;
             break;
         }
+
         case SDoorError:
         {
             tPBSError[11].ErrNo = -1;
-            tPBSError[11].ErrMsg= "Station door open";
+            tPBSError[11].ErrMsg = "Station door open";
             sCmd = "71";
             sErrMsg = tPBSError[11].ErrMsg;
             break;
         }
+
         case SDoorNoError:
         {
             tPBSError[11].ErrNo = 0;
@@ -1809,40 +4210,46 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
             sErrMsg = "Station door close";
             break;
         }
+
         case BDoorError:
         {
             tPBSError[12].ErrNo = -1;
-            tPBSError[12].ErrMsg= "barrier door open";
+            tPBSError[12].ErrMsg = "barrier door open";
             sCmd = "72";
             sErrMsg = tPBSError[12].ErrMsg;
             break;
         }
+
         case BDoorNoError:
         {
             tPBSError[12].ErrNo = 0;
-            tPBSError[12].ErrMsg= "barrier door close";
+            tPBSError[12].ErrMsg = "barrier door close";
             sCmd = "72";
             sErrMsg = tPBSError[12].ErrMsg;
             break;
         }
+
         case ReaderNoError:
         {
             tPBSError[iReader].ErrNo = 0;
-            sCmd= "05";
-            tPBSError[iReader].ErrMsg= "Card Reader OK";
+            sCmd = "05";
+            tPBSError[iReader].ErrMsg = "Card Reader OK";
             break;
         }
+
         case ReaderError:
         {
             tPBSError[iReader].ErrNo = -1;
             sCmd = "05";
-            tPBSError[iReader].ErrMsg= "Card Reader Error";
+            tPBSError[iReader].ErrMsg = "Card Reader Error";
             break;
         }
+
         case BarrierStatus:
         {
             tPBSError[iBarrierStatus].ErrNo = iErrCode;
             sCmd = "08";
+
             switch (iErrCode)
             {
                 case 0:
@@ -1851,18 +4258,21 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
                     sErrMsg = "9Barrier Status: Closed";
                     break;
                 }
+
                 case 1:
                 {
                     tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Open";
                     sErrMsg = "9Barrier Status: Open";
                     break;
                 }
+
                 case 2:
                 {
                     tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Open Too Long";
                     sErrMsg = "9Barrier Status: Open Too Long";
                     break;
                 }
+
                 case 3:
                 {
                     tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Arm Drop Down";
@@ -1870,18 +4280,21 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
                     SendMsg2Server("90", ",,,,,barrierarmdrop");
                     break;
                 }
+
                 case 4:
                 {
                     tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Fail To Open";
                     sErrMsg = "9Barrier Status: Fail To Open";
                     break;
                 }
+
                 case 5:
                 {
                     tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Fail To Close";
                     sErrMsg = "9Barrier Status: Fail To Close";
                     break;
                 }
+
                 default:
                 {
                     tPBSError[iBarrierStatus].ErrMsg = "Barrier Status: Unknown";
@@ -1889,18 +4302,21 @@ void operation::HandlePBSError(EPSError iEPSErr, int iErrCode)
                     break;
                 }
             }
+
+            break;
         }
+
         default:
             break;
     }
-    
-    if (sErrMsg != "" ){
-        writelog (sErrMsg, "OPR");
-        SendMsg2Server(sCmd, sErrMsg); 
-        //-------
-        Sendmystatus();   
-    }
 
+    if (!sErrMsg.empty())
+    {
+        writelog (sErrMsg, "OPR");
+        SendMsg2Server(sCmd, sErrMsg);
+        //-------
+        Sendmystatus();
+    }
 }
 
 int operation::GetVTypeFromLoop()
@@ -1941,8 +4357,8 @@ void operation::SaveEntry()
     //----
     if (iRet == iDBSuccess)
     {
-        tProcess.setLastIUNo(tEntry.sIUTKNo);
-        tProcess.setLastIUEntryTime(std::chrono::steady_clock::now());
+        tProcess.gsLastIUNo = tEntry.sIUTKNo;
+        tProcess.lastIUEntryTime = std::chrono::steady_clock::now();
     }
     //-------
     tPBSError[iDB].ErrNo = (iRet == iDBSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
@@ -1969,43 +4385,63 @@ void operation::SaveEntry()
     tProcess.gbsavedtrans = true;
 }
 
-void operation::ShowTotalLots(std::string totallots, std::string LEDId)
+void operation::ShowTotalLots(const std::string& totallots, const std::string& LEDId)
 {
-    if (LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401))) != nullptr)
+    auto* led = LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401)));
+
+    if (led != nullptr)
     {
         writelog ("Total Lot:"+ totallots,"OPR");
-       
-        LEDManager::getInstance()->getLED(getSerialPort(std::to_string(tParas.giCommportLED401)))->FnLEDSendLEDMsg(LEDId, totallots, LED::Alignment::RIGHT);
+
+        led->FnLEDSendLEDMsg(LEDId, totallots, LED::Alignment::RIGHT);
     }
-    if(tParas.giEPS == 3) 
+
+    if (tParas.giEPS == 3) 
     {
         EEPClient::getInstance()->FnSendSetCarparkAvailabilityReq(totallots, std::to_string(gtStation.iZoneLots));
     }
 }
 
-void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLCD, int iExpires)
- {
-    
-    std::string sExp;
-    int i;
-    int giSeasonTransType;
+void operation::FormatSeasonMsg(
+    int iReturn,
+    const std::string& sNo,
+    std::string sMsg,
+    std::string sLCD,
+    int iExpires)
+{
     std::string sMsgPartialSeason;
 
-    if (gtStation.iType == tientry){
-         tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType,std::stoi(tSeason.rate_type), tEntry.iTransType);
-         giSeasonTransType = tEntry.iTransType;
-    } 
-    else {
-         tExit.iTransType = GetSeasonTransType(tExit.iVehicleType,std::stoi(tSeason.rate_type), tExit.iTransType);
-        giSeasonTransType = tExit.iTransType;
+    const int seasonRateType = std::stoi(tSeason.rate_type);
+
+    if (gtStation.iType == tientry)
+    {
+        tEntry.iTransType = GetSeasonTransType(tEntry.iVehicleType, seasonRateType, tEntry.iTransType);
+        const int giSeasonTransType = tEntry.iTransType;
+
+        if (giSeasonTransType > 49)
+        {
+            sMsgPartialSeason = db::getInstance()->GetPartialSeasonMsg(giSeasonTransType);
+
+            writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(giSeasonTransType), "OPR");
+        }
     }
+    else
+    {
+        tExit.iTransType = GetSeasonTransType(tExit.iVehicleType, seasonRateType, tExit.iTransType);
+        const int giSeasonTransType = tExit.iTransType;
+
+        if (giSeasonTransType > 49)
+        {
+            sMsgPartialSeason = db::getInstance()->GetPartialSeasonMsg(giSeasonTransType);
+
+            writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(giSeasonTransType), "OPR");
+        }
+    }
+
     tProcess.giShowType = 0;
 
-    if (giSeasonTransType > 49) {
-        sMsgPartialSeason = db::getInstance()->GetPartialSeasonMsg(giSeasonTransType);
-        writelog("partial season msg:" + sMsgPartialSeason + ", trans type: " + std::to_string(giSeasonTransType),"OPR");
-    }
-    if (sMsgPartialSeason.empty()) {
+    if (sMsgPartialSeason.empty())
+    {
         sMsgPartialSeason = "Season";
     }
 
@@ -2016,6 +4452,7 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
             writelog("DB error when Check season", "OPR");
             break;
         }
+
         case 0:
         {
             if (gtStation.iType == tientry)
@@ -2030,6 +4467,7 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
             }
             break;
         }
+
         case 1:
         {
             if (gtStation.iType == tientry)
@@ -2044,6 +4482,7 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
             }
             break;
         }
+
         case 2:
         {
             if (gtStation.iType == tientry)
@@ -2056,9 +4495,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_SeasonExpired[0];
                 sLCD = tExitMsg.MsgExit_SeasonExpired[1];
             }
+
             writelog("Season Expired", "OPR");
             break;
         }
+
         case 3:
         {
             if (gtStation.iType == tientry)
@@ -2071,9 +4512,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_SeasonTerminated[0];
                 sLCD = tExitMsg.MsgExit_SeasonTerminated[1];
             }
-            writelog ("Season terminated", "OPR");
+
+            writelog("Season terminated", "OPR");
             break;
         }
+
         case 4:
         {
             if (gtStation.iType == tientry)
@@ -2086,9 +4529,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_SeasonBlocked[0];
                 sLCD = tExitMsg.MsgExit_SeasonBlocked[1];
             }
-            writelog ("Season Blocked", "OPR");
+
+            writelog("Season Blocked", "OPR");
             break;
         }
+
         case 5:
         {
             if (gtStation.iType == tientry)
@@ -2101,9 +4546,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_SeasonInvalid[0];
                 sLCD = tExitMsg.MsgExit_SeasonInvalid[1];
             }
-            writelog ("Season Lost", "OPR");
+
+            writelog("Season Lost", "OPR");
             break;
         }
+
         case 6:
         {
             if (gtStation.iType == tientry)
@@ -2116,9 +4563,11 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_SeasonBlocked[0];
                 sLCD = tExitMsg.MsgExit_SeasonBlocked[1];
             }
-            writelog ("Season Passback", "OPR");
+
+            writelog("Season Passback", "OPR");
             break;
         }
+
         case 7:
         {
             if (gtStation.iType == tientry)
@@ -2131,30 +4580,35 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_SeasonNotStart[0];
                 sLCD = tExitMsg.MsgExit_SeasonNotStart[1];
             }
-            writelog ("Season Not Start", "OPR");
+
+            writelog("Season Not Start", "OPR");
             break;
         }
+
         case 8:
         {
             sMsg = "Wrong Season Type";
             sLCD = "Wrong Season Type";
-            writelog ("Wrong Season Type", "OPR");
+            writelog("Wrong Season Type", "OPR");
             break;
         }
+
         case 9:
         {
             sMsg = "Complimentary";
             sLCD = "Complimentary";
-            writelog ("Complimentary!", "OPR");
+            writelog("Complimentary!", "OPR");
             break;
         }
+
         case 10:
         {
             sMsg = tMsg.Msg_SeasonAsHourly[0];
             sLCD = tMsg.Msg_SeasonAsHourly[1];
-            writelog ("Season As Hourly", "OPR");
+            writelog("Season As Hourly", "OPR");
             break;
         }
+
         case 11:
         {
             if (gtStation.iType == tientry)
@@ -2167,66 +4621,110 @@ void operation::FormatSeasonMsg(int iReturn, string sNo, string sMsg, string sLC
                 sMsg = tExitMsg.MsgExit_XSeasonWithinAllowance[0];
                 sLCD = tExitMsg.MsgExit_XSeasonWithinAllowance[1];
             }
-            writelog ("Season within allowance", "OPR");
+
+            writelog("Season within allowance", "OPR");
             break;
         }
+
         case 12:
         {
             sMsg = tExitMsg.MsgExit_MasterSeason[0];
             sLCD = tExitMsg.MsgExit_MasterSeason[1];
-            writelog ("Master Season", "OPR");
+            writelog("Master Season", "OPR");
             break;
         }
+
         case 13:
         {
             sMsg = tMsg.Msg_WholeDayParking[0];
             sLCD = tMsg.Msg_WholeDayParking[1];
-            writelog ("Whole Day Season", "OPR");
+            writelog("Whole Day Season", "OPR");
             break;
         }
+
         default:
             break;
     }
 
     size_t pos = sMsg.find("Season");
-    if (pos != std::string::npos) sMsg.replace(pos, 6, sMsgPartialSeason);
-    pos=sLCD.find("Season");
-    if (pos != std::string::npos) sLCD.replace(pos, 6, sMsgPartialSeason);
-    
-    if (iReturn = 1 && std::stoi(tSeason.rate_type) != 0) {
+
+    if (pos != std::string::npos)
+    {
+        sMsg.replace(pos, 6, sMsgPartialSeason);
+    }
+
+    pos = sLCD.find("Season");
+
+    if (pos != std::string::npos)
+    {
+        sLCD.replace(pos, 6, sMsgPartialSeason);
+    }
+
+    if (iReturn == 1 && seasonRateType != 0)
+    {
         sMsg = sMsgPartialSeason;
         sLCD = sMsgPartialSeason;
     }
-    
-    ShowLEDMsg(sMsg,sLCD);
-    
-    if (iReturn != 1 || std::stoi(tSeason.rate_type) != 0) std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
+    ShowLEDMsg(sMsg, sLCD);
+
+    if (iReturn != 1 || seasonRateType != 0)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
 }
 
 void operation::ManualOpenBarrier(bool bPMS)
 {
-    if (bPMS == true) writelog ("Manual open barrier by PMS", "OPR");
-    else writelog ("Manual open barrier by operator", "OPR");
-    //------------
-    if (gtStation.iType == tientry){
-    tEntry.sEntryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-    tEntry.iStatus = 4;
-    //---------
-    m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tEntry.sIUTKNo);
-    SaveEntry();
-    Openbarrier();
-    }else{
-    if (tExit.sExitTime == "") tExit.sExitTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
-    m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual open barrier","Auto save for IU:"+tExit.sIUNo);
-    CloseExitOperation(Manualopen);
+    auto* common = Common::getInstance();
+    auto* database = db::getInstance();
+
+    if (bPMS)
+    {
+        writelog ("Manual open barrier by PMS", "OPR");
     }
+    else
+    {
+        writelog ("Manual open barrier by operator", "OPR");
+    }
+
+    //------------
+    if (gtStation.iType == tientry
+        && !tEntry.sIUTKNo.empty()
+        && tProcess.gbLoopApresent)
+    {
+        tEntry.sEntryTime = common->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+        tEntry.iStatus = 4;
+
+        //---------
+        database->AddRemoteControl(std::to_string(gtStation.iSID), "Manual open barrier", "Auto save for IU:" + tEntry.sIUTKNo);
+
+        SaveEntry();
+        Openbarrier();
+        return;
+    }
+    else
+    {
+        if (!tEntry.sIUTKNo.empty() && tProcess.gbLoopApresent)
+        {
+            if (tExit.sExitTime.empty())
+            {
+                tExit.sExitTime = common->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss();
+            }
+
+            database->AddRemoteControl(std::to_string(gtStation.iSID), "Manual open barrier", "Auto save for IU:" + tExit.sIUNo);
+
+            CloseExitOperation(Manualopen);
+            return;
+        }
+    }
+    Openbarrier();
 }
 
 void operation::ManualCloseBarrier()
 {
     writelog ("Manual Close barrier.", "OPR");
-    m_db->AddRemoteControl(std::to_string(gtStation.iSID),"Manual close barrier","");
+    db::getInstance()->AddRemoteControl(std::to_string(gtStation.iSID), "Manual close barrier", "");
     
     closeBarrier();
 }
@@ -2373,151 +4871,222 @@ int operation:: GetSeasonTransType(int VehicleType, int SeasonType, int TransTyp
     return TransType + 1; // Whole day season
 }
 
-void operation:: EnableCashcard(bool bEnable)
+void operation::EnableCashcard(bool bEnable)
 {
-    
-    if  (bEnable == tProcess.sEnableReader) return;
+    if (bEnable == tProcess.sEnableReader)
+    {
+        return;
+    }
+
     tProcess.sEnableReader = bEnable;
+
     //------ added on 18/08/2026
-     if (tProcess.gsTransID != "" && (gtStation.iType == tientry || tExit.sIUNo == "")) {
-        string sLPN;
-        string sIU;
-        if (gtStation.iType == tientry) sLPN = tEntry.sLPN[0];
-        else sLPN = tExit.sLPN[0];
-        if (sLPN != "" && sLPN != "0000000000") sIU = db::getInstance()->GetIUByLPN(sLPN);
-        if (sIU != "" && sIU.length() == 10) {
+    if (!tProcess.gsTransID.empty() &&
+        (gtStation.iType == tientry || tExit.sIUNo.empty()))
+    {
+        std::string sLPN;
+        std::string sIU;
+
+        if (gtStation.iType == tientry)
+        {
+            sLPN = tEntry.sLPN[0];
+        }
+        else
+        {
+            sLPN = tExit.sLPN[0];
+        }
+
+        if (!sLPN.empty() && sLPN != "0000000000")
+        {
+            sIU = db::getInstance()->GetIUByLPN(sLPN);
+        }
+
+        if (!sIU.empty() && sIU.length() == 10)
+        {
             writelog ("Get IU from DB : " + sIU + " based on LPR: " + sLPN, "OPR");
+
             VehicleCome(sIU);
             return;
-        }  
+        }
     }
+
     //------------
-    if (tExit.bPayByAXS == false and tExit.bPayByEZPay == false) {
-        EnableLCSC (bEnable);
+    if (!tExit.bPayByAXS &&
+        !tExit.bPayByEZPay)
+    {
+        EnableLCSC(bEnable);
         EnableKDE(bEnable);
         EnableUPOS(bEnable);
-     }
-    if (bEnable == true)
+    }
+
+    if (bEnable)
     {
         BARCODE_READER::getInstance()->FnBarcodeStartRead();
     }
-    else 
+    else
     {
-        BARCODE_READER::getInstance()->FnBarcodeStopRead();   
-    } 
-
+        BARCODE_READER::getInstance()->FnBarcodeStopRead();
+    }
 }
 
-void operation:: CheckReader()
+void operation::CheckReader()
 {
+    auto* ksmReader = KSM_Reader::getInstance();
+    auto* lcscReader = LCSCReader::getInstance();
+    auto* upt = Upt::getInstance();
+
     if (tPBSError[iReader].ErrNo == -1)
     {
         writelog("Check KDE Status ...", "OPR");
-        KSM_Reader::getInstance()->FnKSMReaderSendInit();
+        ksmReader->FnKSMReaderSendInit();
     }
 
-    if (tParas.giCommPortLCSC > 0 && tPBSError[iLCSC].ErrNo != -4)
+    if (tParas.giCommPortLCSC > 0 &&
+        tPBSError[iLCSC].ErrNo != -4)
     {
         writelog("Check LCSC Status...", "OPR");
-        LCSCReader::getInstance()->FnSendGetStatusCmd();
+
+        lcscReader->FnSendGetStatusCmd();
+
         if (tPBSError[iLCSC].ErrNo == -1)
         {
             tPBSError[iLCSC].ErrNo = 0;
         }
-        LCSCReader::getInstance()->FnSendSetTime();
+
+        lcscReader->FnSendSetTime();
     }
 
-    if (tParas.giCommPortUPOS && tProcess.gbUPOSStatus != Init)
+    if (tParas.giCommPortUPOS &&
+        tProcess.gbUPOSStatus != Init)
     {
         writelog("Check UPOS Status...", "OPR");
-        Upt::getInstance()->FnUptSendDeviceStatusRequest();
+
+        upt->FnUptSendDeviceStatusRequest();
+
         if (tPBSError[iUPOS].ErrNo == -1)
         {
             tPBSError[iUPOS].ErrNo = 0;
         }
-       
     }
 }
 
-void operation:: EnableLCSC(bool bEnable)
+void operation::EnableLCSC(bool bEnable)
 {
-    int iRet;
-    
-    if (tParas.giCommPortLCSC == 0)  return;
+    auto* lcscReader = LCSCReader::getInstance();
+
+    if (tParas.giCommPortLCSC == 0)
+    {
+        return;
+    }
+
     //------ added on 15/07/2026
-    LCSCReader::getInstance()->LCSCCard_In = 0;
+    lcscReader->LCSCCard_In = 0;
     //-----
+
     if (tPBSError[iLCSC].ErrNo != 0)
     {
         return;
     }
 
-    if (bEnable) 
+    if (bEnable)
     {
-        LCSCReader::getInstance()->FnSendGetCardIDCmd();
+        lcscReader->FnSendGetCardIDCmd();
         writelog("Start LCSC to read...", "OPR");
     }
-    else 
+    else
     {
-        LCSCReader::getInstance()->FnLCSCReaderStopRead();
+        lcscReader->FnLCSCReaderStopRead();
         writelog("Stop LCSC to Read...", "OPR");
     }
 }
 
 void operation::EnableKDE(bool bEnable)
 {
-    if (tParas.giCommPortKDEReader == 0) return;
+    auto* ksmReader = KSM_Reader::getInstance();
 
-    if (tPBSError[iReader].ErrNo != 0) return;
-    //-----
-    if (bEnable == false)
+    if (tParas.giCommPortKDEReader == 0)
     {
-            //------
-        if (tProcess.giCardIsIn == 1 )
+        return;
+    }
+
+    if (tPBSError[iReader].ErrNo != 0)
+    {
+        return;
+    }
+
+    //-----
+    if (!bEnable)
+    {
+        //------
+        if (tProcess.giCardIsIn == 1)
         {
-            KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+            ksmReader->FnKSMReaderSendEjectToFront();
         }
         else
         {
             writelog ("Disable KDE Reader", "OPR");
-            KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
+            ksmReader->FnKSMReaderEnable(bEnable);
         }
     }
     else
     {
         writelog ("Enable KDE Reader", "OPR");
-        KSM_Reader::getInstance()->FnKSMReaderEnable(bEnable);
+        ksmReader->FnKSMReaderEnable(bEnable);
     }
 }
 
 void operation::EnableUPOS(bool bEnable)
 {
-    if (tParas.giCommPortUPOS == 0) return;
+    auto* upt = Upt::getInstance();
 
-    if (tProcess.gbUPOSStatus == Init) {
+    if (tParas.giCommPortUPOS == 0)
+    {
+        return;
+    }
+
+    if (tProcess.gbUPOSStatus == Init)
+    {
         writelog("Wating for UPOS log on", "OPR");
         return;
     }
-    //-------- 
-    if (bEnable == true) {
-        if (tProcess.gbUPOSStatus == Enable) return;
-        if (tProcess.gbUPOSStatus != ReadCardTimeout) writelog("Send Card Detect Request to UPOS", "OPR");
-        Upt::getInstance()->FnUptSendCardDetectRequest();
+
+    //--------
+    if (bEnable)
+    {
+        if (tProcess.gbUPOSStatus == Enable)
+        {
+            return;
+        }
+
+        if (tProcess.gbUPOSStatus != ReadCardTimeout)
+        {
+            writelog("Send Card Detect Request to UPOS", "OPR");
+        }
+
+        upt->FnUptSendCardDetectRequest();
+
         tProcess.gbUPOSStatus = Enable;
-        Upt::getInstance()->UOPSCard_In = 0;
-    }else{
-        if (tProcess.gbUPOSStatus == Disable) return;
+        upt->UOPSCard_In = 0;
+    }
+    else
+    {
+        if (tProcess.gbUPOSStatus == Disable)
+        {
+            return;
+        }
+
         writelog ("Disable UPOS Reader", "OPR");
-        Upt::getInstance()->FnUptSendDeviceCancelCommandRequest();
+
+        upt->FnUptSendDeviceCancelCommandRequest();
+
         tProcess.gbUPOSStatus = Disable;
     }
-
 }
 
 void operation::ProcessBarcodeData(string sBarcodedata)
 {
     ticketScan(sBarcodedata);
-    FnSetLastActionTimeAfterLoopA();
+    setLastActionTimeAfterLoopA();
 }
 
 void operation::ProcessLCSC(const std::string& eventData)
@@ -2598,7 +5167,7 @@ void operation::ProcessLCSC(const std::string& eventData)
 
             writelog ("event LCSC got card ID.","OPR");
             HandlePBSError (LCSCNoError);
-            FnSetLastActionTimeAfterLoopA();
+            setLastActionTimeAfterLoopA();
 
             std::string sCardNo = "";
             
@@ -2651,7 +5220,7 @@ void operation::ProcessLCSC(const std::string& eventData)
 
             writelog ("event LCSC got ID and balance.","OPR");
             HandlePBSError (LCSCNoError);
-            FnSetLastActionTimeAfterLoopA();
+            setLastActionTimeAfterLoopA();
 
             std::string card_serial_num = "";
             std::string sCardNo = "";
@@ -2718,7 +5287,7 @@ void operation::ProcessLCSC(const std::string& eventData)
 
             writelog ("event LCSC get deduction success.","OPR");
             HandlePBSError (LCSCNoError);
-            FnSetLastActionTimeAfterLoopA();
+            setLastActionTimeAfterLoopA();
 
             std::string seed = "";
             std::string card_serial_num = "";
@@ -2766,7 +5335,7 @@ void operation::ProcessLCSC(const std::string& eventData)
             oss << "LCSC deduct successfully: Card No: " << sCardNo << ", Balance After Deduction: $" << Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans);
             writelog(oss.str(), "OPR");
             //-------
-            operation::getInstance()->DebitOK("", sCardNo, "", Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans), 1, "", LCSC, "");
+            DebitOK("", sCardNo, "", Common::getInstance()->FnFormatToFloatString(sBalanceAfterTrans), 1, "", LCSC, "");
             break;
         }
         case LCSCReader::mCSCEvents::sGetCardRecord:
@@ -2880,7 +5449,7 @@ void operation::ProcessLCSC(const std::string& eventData)
             ShowLEDMsg("Card Expired!", "Card Expired!");
             SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Expired");
             EnableCashcard(true);
-            FnSetLastActionTimeAfterLoopA();
+            setLastActionTimeAfterLoopA();
             break;
         }
         default:
@@ -2892,43 +5461,63 @@ void operation::ProcessLCSC(const std::string& eventData)
     }
 }
 
-void operation:: RetryLCSCLastCommand()
+void operation::RetryLCSCLastCommand()
 {
-    string sMsg;
-    if (tProcess.gbLoopApresent.load() == true)
+    std::string sMsg;
+
+    if (tProcess.gbLoopApresent)
     {
-        if (tExit.giDeductionStatus == Doingdeduction) sMsg = "Deduction Error";
-        else sMsg = "Reading Card^Error";
+        if (tExit.giDeductionStatus == Doingdeduction)
+        {
+            sMsg = "Deduction Error";
+        }
+        else
+        {
+            sMsg = "Reading Card^Error";
+        }
+
         ShowLEDMsg(sMsg, sMsg);
-        SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,," + sMsg);
+        SendMsg2Server("90", tProcess.gsLastCardNo + ",,,,," + sMsg);
+
         //--------
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         //-------
         tExit.giDeductionStatus = WaitingCard;
         //---
-         if (sMsg == "Deduction Error") showFee2User();
+        if (sMsg == "Deduction Error")
+        {
+            showFee2User();
+        }
 
         EnableCashcard(true);
-        if (tParas.giEPS == 3) EEPInq(3);
-        else if (tParas.giEPS == 2) CHUInq(3);
+
+        if (tParas.giEPS == 3)
+        {
+            EEPInq(3);
+        }
+        else if (tParas.giEPS == 2)
+        {
+            CHUInq(3);
+        }
         //-----------
-       
     }
     else
     {
         EnableCashcard(false);
     }
-
 }
 
-void operation:: KSM_CardIn()
+void operation::KSM_CardIn()
 {
-    int iRet;
     //--------
     ShowLEDMsg ("Card In^Please Wait ...", "Card In^Please Wait ...");
-    FnSetLastActionTimeAfterLoopA();
+    setLastActionTimeAfterLoopA();
+
     //--------
-    if (tPBSError[iReader].ErrNo != 0) {HandlePBSError(ReaderNoError);}
+    if (tPBSError[iReader].ErrNo != 0)
+    {
+        HandlePBSError(ReaderNoError);
+    }
     //---------
     tProcess.giCardIsIn = 1;
     KSM_Reader::getInstance()->FnKSMReaderReadCardInfo();
@@ -2948,103 +5537,131 @@ void operation::handleKSM_CardReadError()
 {
     writelog (__func__, "OPR");
 
-    ShowLEDMsg (tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
-    SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
+    ShowLEDMsg(tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
+    SendMsg2Server("90", ",,,,,Wrong Card Insertion");
     KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
 }
 
-void operation::KSM_CardInfo(string sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired)
- {  
-    
+void operation::KSM_CardInfo(const std::string& sKSMCardNo, long sKSMCardBal, bool sKSMCardExpired)
+{
     writelog ("Cashcard: " + sKSMCardNo, "OPR");
-    FnSetLastActionTimeAfterLoopA();
+    setLastActionTimeAfterLoopA();
     //------
     tPBSError[iReader].ErrNo = 0;
-    if (sKSMCardNo == "" || sKSMCardNo.length()!= 16 || sKSMCardNo.substr(5,4) == "0005") {
+
+    if (sKSMCardNo.empty() ||
+        sKSMCardNo.length() != 16 ||
+        sKSMCardNo.substr(5, 4) == "0005")
+    {
         ShowLEDMsg (tMsg.Msg_CardReadingError[0], tMsg.Msg_CardReadingError[1]);
         SendMsg2Server ("90", ",,,,,Wrong Card Insertion");
         KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
-        return;
     }
-    else { 
-        if (tEntry.sIUTKNo == "") VehicleCome(sKSMCardNo);
-        else  KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+    else
+    {
+        if (tEntry.sIUTKNo.empty())
+        {
+            VehicleCome(sKSMCardNo);
+        }
+        else
+        {
+            KSM_Reader::getInstance()->FnKSMReaderSendEjectToFront();
+        }
     }
- }
+}
 
- void operation:: KSM_CardTakeAway()
+void operation::KSM_CardTakeAway()
 {
     writelog ("Card Take Away ", "OPR");
-    FnSetLastActionTimeAfterLoopA();
+    setLastActionTimeAfterLoopA();
     tProcess.giCardIsIn = 2;
 
-    if (tEntry.gbEntryOK == true)
+    if (tEntry.gbEntryOK)
     {
         ShowLEDMsg(tMsg.Msg_CardTaken[0],tMsg.Msg_CardTaken[1]);
     }
     else
     {
-        if (tProcess.gbcarparkfull.load() == true && tEntry.sIUTKNo != "" ) return;
-        ShowLEDMsg(tMsg.Msg_InsertCashcard[0], tMsg.Msg_InsertCashcard[1]);   
-    }                    
-    //--------
-    if (gtStation.iType == tientry)
-    {
-        if (tEntry.gbEntryOK == true)
+        if (tProcess.gbcarparkfull &&
+            !tEntry.sIUTKNo.empty())
         {
-            Openbarrier();
-            EnableCashcard(false);
+            return;
         }
+
+        ShowLEDMsg(tMsg.Msg_InsertCashcard[0], tMsg.Msg_InsertCashcard[1]);
+    }
+
+    //--------
+    if (gtStation.iType == tientry &&
+        tEntry.gbEntryOK)
+    {
+        Openbarrier();
+        EnableCashcard(false);
     }
 }
 
-bool operation::AntennaOK() {
-    
-    if (tParas.giEPS == 0 or tParas.giEPS == 3) {
+bool operation::AntennaOK()
+{
+    if (tParas.giEPS == 0 || tParas.giEPS == 3)
+    {
         writelog ("Antenna: Non-EPS", "OPR");
         return false;
-    } else {
-        if (tParas.giCommPortAntenna == 0) {
-            writelog("Antenna: Commport Not Set", "OPR");
-            return false;
-        } else {
-            if (tPBSError[iAntenna].ErrNo == 0) {
-                writelog("Antenna: OK", "OPR");
-                return true;
-            } else {
-                writelog("Antenna: Error=" + tPBSError[iAntenna].ErrMsg, "OPR");
-                return true;
-            }
-        }
     }
+
+    if (tParas.giCommPortAntenna == 0)
+    {
+        writelog("Antenna: Commport Not Set", "OPR");
+        return false;
+    }
+
+    if (tPBSError[iAntenna].ErrNo == 0)
+    {
+        writelog("Antenna: OK", "OPR");
+        return true;
+    }
+
+    writelog("Antenna: Error=" + tPBSError[iAntenna].ErrMsg, "OPR");
+    return true;
 }
 
-void operation::ReceivedLPR(Lpr::CType CType,string LPN, string sTransid, string sImageLocation)
+void operation::ReceivedLPR(
+    Lpr::CType CType,
+    const std::string& LPN,
+    const std::string& sTransid,
+    const std::string& sImageLocation)
 {
     writelog ("Received Trans ID: "+sTransid + " LPN: "+ LPN ,"OPR");
     writelog ("Send Trans ID: "+ tProcess.gsTransID, "OPR");
 
-    int i = static_cast<int>(CType);
-
-    if (tProcess.gsTransID == sTransid && tProcess.gbLoopApresent.load() == true && tProcess.gbsavedtrans == false)
+    if (tProcess.gsTransID == sTransid &&
+        tProcess.gbLoopApresent &&
+        !tProcess.gbsavedtrans)
     {
-       if (gtStation.iType == tientry) {
+        if (gtStation.iType == tientry)
+        {
             // For EdgeBox
-            tEntry.sLPN[0]=LPN;
-            tEntry.sLPN[1]=LPN;
-       }else {
-             tExit.sLPN[0]=LPN;
-             tExit.sLPN[1]=LPN;
-       }
-
+            tEntry.sLPN[0] = LPN;
+            tEntry.sLPN[1] = LPN;
+        }
+        else
+        {
+            tExit.sLPN[0] = LPN;
+            tExit.sLPN[1] = LPN;
+        }
     }
     else
     {
-        if (gtStation.iType == tientry) db::getInstance()->updateEntryTrans(LPN,sTransid);
-        else db::getInstance()->updateExitTrans(LPN,sTransid);
+        if (gtStation.iType == tientry)
+        {
+            db::getInstance()->updateEntryTrans(LPN,sTransid);
+        }
+        else
+        {
+            db::getInstance()->updateExitTrans(LPN,sTransid);
+        }
     }
 
-    if (tEntry.sIUTKNo != "")
+    if (!tEntry.sIUTKNo.empty())
     {
         SendMsg2Server("90",tEntry.sIUTKNo+",,,"+LPN+ ",,Entry OK");
     }
@@ -3418,7 +6035,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         Antenna::getInstance()->FnAntennaStopRead();
                         tExit.iCardStatus = 0;
                         CheckIUorCardStatus(card_can,UPOS,card_can,std::stoi(card_type) + 6, std::round(card_balance)/100);
-                        FnSetLastActionTimeAfterLoopA();
+                        setLastActionTimeAfterLoopA();
 
                     }
                     catch (const std::exception& ex)
@@ -3431,7 +6048,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                 {
                     //Handle the cmd = 00000002 request response timeout
                    // writelog("UPOS Reader read card timeout.", "OPR");
-                    if (tProcess.gbLoopApresent.load() == true && tExit.gbPaid == false){
+                    if (tProcess.gbLoopApresent && tExit.gbPaid == false){
                         tProcess.gbUPOSStatus = ReadCardTimeout;
                         EnableUPOS(true);
                     }
@@ -3440,9 +6057,9 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                 {
                     //Handle the cmd = 40000000 request response timeout
                     writelog("Received Response code = 40000000", "OPR");
-                    if (tProcess.gbLoopApresent.load() == true && tExit.gbPaid == false && tExit.sPaidAmt > 0 && tExit.giDeductionStatus == WaitingCard){
+                    if (tProcess.gbLoopApresent && tExit.gbPaid == false && tExit.sPaidAmt > 0 && tExit.giDeductionStatus == WaitingCard){
                         debitfromReader("", tExit.sPaidAmt , UPOS);
-                        FnSetLastActionTimeAfterLoopA();
+                        setLastActionTimeAfterLoopA();
                     }
                 }
                 else
@@ -3525,8 +6142,8 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         }
                         oss << " | card type : " << card_type << " | card can : " << card_can << " | card fee : " << std::fixed << std::setprecision(2) << (card_fee / 100.0) << " | card balance : " << std::fixed << std::setprecision(2) << (card_balance / 100.0) << " | card reference no : " << card_reference_no << " | card batch no : " << card_batch_no;
                         writelog(oss.str(), "OPR");
-                        operation::getInstance()->DebitOK("", card_can, Common::getInstance()->SetFeeFormat(card_fee / 100.0), Common::getInstance()->SetFeeFormat(card_balance / 100.0), std::stoi(card_type) + 6, "", UPOS, "");
-                        FnSetLastActionTimeAfterLoopA();
+                        DebitOK("", card_can, Common::getInstance()->SetFeeFormat(card_fee / 100.0), Common::getInstance()->SetFeeFormat(card_balance / 100.0), std::stoi(card_type) + 6, "", UPOS, "");
+                        setLastActionTimeAfterLoopA();
                     }
                     catch (const std::exception& ex)
                     {
@@ -3538,7 +6155,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                 {
                     //Handle the cmd = 00000002 request response timeout
                     writelog("UPOS deduction timeout.", "OPR");
-                    if (tProcess.gbLoopApresent.load() == true && (tExit.gbPaid == false || tExit.giDeductionStatus == Doingdeduction))
+                    if (tProcess.gbLoopApresent && (tExit.gbPaid == false || tExit.giDeductionStatus == Doingdeduction))
                     {
                        
                         tExit.giDeductionStatus = WaitingCard;
@@ -3554,7 +6171,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                     ShowLEDMsg("Card Expired!", "Card Expired!");
                     SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Expired");
                     EnableCashcard(true);
-                    FnSetLastActionTimeAfterLoopA();
+                    setLastActionTimeAfterLoopA();
                     break;
                     
                 }
@@ -3566,7 +6183,7 @@ void operation::processUPT(Upt::UPT_CMD cmd, const std::string& eventData)
                         ShowLEDMsg("Card Fault!", "Card Fault!");
                         SendMsg2Server ("90", tProcess.gsLastCardNo + ",,,,,Card Fault");
                         EnableCashcard(true);
-                        FnSetLastActionTimeAfterLoopA();
+                        setLastActionTimeAfterLoopA();
                         break;
                 }
                 else {
@@ -3717,34 +6334,34 @@ void operation::PrintTR(bool bForSeason)
     std::string rebatedate = "";
     std::string gstamt = "";
 
-    std::vector<std::string> gsTR(operation::getInstance()->tTR.size());
-    for (std::size_t i = 0; i < operation::getInstance()->tTR.size(); i++)
+    std::vector<std::string> gsTR(tTR.size());
+    for (std::size_t i = 0; i < tTR.size(); i++)
     {
-        std::string gsTR_lowercase = operation::getInstance()->tTR[i].gsTR1.empty() ? "" : boost::algorithm::to_lower_copy(operation::getInstance()->tTR[i].gsTR1);
+        std::string gsTR_lowercase = tTR[i].gsTR1.empty() ? "" : boost::algorithm::to_lower_copy(tTR[i].gsTR1);
 
         if (gsTR_lowercase == "site")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsSite;
+            gsTR[i] = tTR[i].gsTR0 + gsSite;
         }
         else if (gsTR_lowercase == "comp")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsCompany;
+            gsTR[i] = tTR[i].gsTR0 + gsCompany;
         }
         else if (gsTR_lowercase == "addr")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsAddress;
+            gsTR[i] = tTR[i].gsTR0 + gsAddress;
         }
         else if (gsTR_lowercase == "zip")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsZIP;
+            gsTR[i] = tTR[i].gsTR0 + gsZIP;
         }
         else if (gsTR_lowercase == "gstno")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsGSTNo;
+            gsTR[i] = tTR[i].gsTR0 + gsGSTNo;
         }
         else if (gsTR_lowercase == "gsTel")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + gsTel;
+            gsTR[i] = tTR[i].gsTR0 + gsTel;
         }
         else if (gsTR_lowercase == "rno")
         {
@@ -3756,11 +6373,11 @@ void operation::PrintTR(bool bForSeason)
             {
                 exitReceiptNo = tExit.sReceiptNo;
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + exitReceiptNo;
+            gsTR[i] = tTR[i].gsTR0 + " " + exitReceiptNo;
         }
         else if (gsTR_lowercase == "tno")
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + entrySerialNo;
+            gsTR[i] = tTR[i].gsTR0 + " " + entrySerialNo;
         }
         else if (gsTR_lowercase == "vtype")
         {
@@ -3772,7 +6389,7 @@ void operation::PrintTR(bool bForSeason)
             {
                 vehicleType = GetVTypeStr(tExit.iTransType);
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + vehicleType;
+            gsTR[i] = tTR[i].gsTR0 + " " + vehicleType;
         }
         else if (gsTR_lowercase == "itno")
         {
@@ -3785,7 +6402,7 @@ void operation::PrintTR(bool bForSeason)
                 iuNo = tExit.sIUNo;
                 
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + iuNo;
+            gsTR[i] = tTR[i].gsTR0 + " " + iuNo;
         }
         else if (gsTR_lowercase == "card")
         {
@@ -3803,7 +6420,7 @@ void operation::PrintTR(bool bForSeason)
                         cardNo = tExit.sCardNo;
                     }
                 }
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + cardNo;
+                gsTR[i] = tTR[i].gsTR0 + " " + cardNo;
             }
            
         }
@@ -3824,19 +6441,19 @@ void operation::PrintTR(bool bForSeason)
                     entryTime = Common::getInstance()->FnFormatDateTime(tExit.sEntryTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
                 }
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + entryTime;
+            gsTR[i] = tTR[i].gsTR0 + " " + entryTime;
         }
         else if (gsTR_lowercase == "pt")
         {
             exitTime = Common::getInstance()->FnFormatDateTime(tExit.sExitTime, "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S");
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + exitTime;
+            gsTR[i] = tTR[i].gsTR0 + " " + exitTime;
         }
         else if (gsTR_lowercase == "pkt")
         {
             if (tExit.lParkedTime > 0) {
                 parkTime = db::getInstance()->CalParkedTime(tExit.lParkedTime);
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + parkTime;
-            }else  gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + "N/A";
+                gsTR[i] = tTR[i].gsTR0 + " " + parkTime;
+            }else  gsTR[i] = tTR[i].gsTR0 + " " + "N/A";
         }
         else if (gsTR_lowercase == "amt")
         {
@@ -3880,13 +6497,13 @@ void operation::PrintTR(bool bForSeason)
             }
             catch (const std::exception& ex)
             {
-                Logger::getInstance()->FnLog(std::string("String to float exception error: ") + ex.what(), "", "OPR");
+                writelog(std::string("String to float exception error: ") + ex.what(), "OPR");
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + amt + payType;
+            gsTR[i] = tTR[i].gsTR0 + " $" + amt + payType;
         }
         else if (gsTR_lowercase == "ezlink"){
             gsTR[i] = "";
-            if (tExit.bPayByEZPay == true) gsTR[i] = operation::getInstance()->tTR[i].gsTR0 ;
+            if (tExit.bPayByEZPay == true) gsTR[i] = tTR[i].gsTR0 ;
         }
         else if (gsTR_lowercase == "bal")
         {
@@ -3897,13 +6514,13 @@ void operation::PrintTR(bool bForSeason)
                 {
                     std::stringstream ss;
                     ss << "card type: " << tExit.iCardType << ", fsCardBal: " << tProcess.gfLastCardBal;
-                    Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                    writelog(ss.str(), "OPR");
                         
                     std::ostringstream formattedCardBalStream;
                     formattedCardBalStream << std::fixed << std::setprecision(2) << tProcess.gfLastCardBal;
 
                     cardBal = formattedCardBalStream.str();
-                   gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + cardBal; 
+                   gsTR[i] = tTR[i].gsTR0 + " $" + cardBal; 
                 }
             }
         }
@@ -3920,7 +6537,7 @@ void operation::PrintTR(bool bForSeason)
                     // Temp: will do in futue - gsTR(i) = "(" & gtStations(gtStations(tExit.iEntryID).iVExitID).sZoneName & ") " & gsTR0(i) & " $" & Format(0, "0.00")
                 }
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + owefee;
+            gsTR[i] = tTR[i].gsTR0 + " $" + owefee;
         }
         else if (gsTR_lowercase == "fee")
         {
@@ -3928,7 +6545,7 @@ void operation::PrintTR(bool bForSeason)
             {
                 std::stringstream ss;
                 ss << "tExit.sFee: " << tExit.sFee << ", tExit.sPrePaid: " << tExit.sPrePaid; 
-                Logger::getInstance()->FnLog(ss.str(), "", "OPR");
+                writelog(ss.str(), "OPR");
 
                 if (gtStation.iSubType == iXwithVEPay)
                 {
@@ -3936,14 +6553,14 @@ void operation::PrintTR(bool bForSeason)
                     std::ostringstream formattedSumFeeStream;
                     formattedSumFeeStream << std::fixed << std::setprecision(2) << sumFee;
                     fee = formattedSumFeeStream.str();
-                    gsTR[i] = "(" + gtStation.sZoneName + ")" + operation::getInstance()->tTR[i].gsTR0 + " $" + fee;
+                    gsTR[i] = "(" + gtStation.sZoneName + ")" + tTR[i].gsTR0 + " $" + fee;
                 }
                 else
                 {
                     std::ostringstream formattedFeeStream;
                     formattedFeeStream << std::fixed << std::setprecision(2) << tExit.sFee;
                     fee = formattedFeeStream.str();
-                    gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + fee;
+                    gsTR[i] = tTR[i].gsTR0 + " $" + fee;
                 }
             }
             else
@@ -3952,28 +6569,28 @@ void operation::PrintTR(bool bForSeason)
                 std::ostringstream formattedSumFeeStream;
                 formattedSumFeeStream << std::fixed << std::setprecision(2) << sumFee;
                 fee = formattedSumFeeStream.str();
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + fee;
+                gsTR[i] = tTR[i].gsTR0 + " $" + fee;
             }
         }
         else if (gsTR_lowercase == "pm")
         {
             // Temp: will do in futue - pm = tSeason.sPaidMth
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + pm;
+            gsTR[i] = tTR[i].gsTR0 + pm;
         }
         else if (gsTR_lowercase == "admin")
         {
             // Temp: will do in futue - admin = Format(tSeason.sAdminFee, "0.00")
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + admin;
+            gsTR[i] = tTR[i].gsTR0 + admin;
         }
         else if (gsTR_lowercase == "app")
         {
             // Temp: will do in futue - app = Format(tSeason.sAppFee, "0.00")
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + app;
+            gsTR[i] = tTR[i].gsTR0 + app;
         }
         else if (gsTR_lowercase == "tamt")
         {
             // Temp: will do in futue - tamt = Format(tSeason.sPaidAmt + tSeason.sAdminFee + tSeason.sAdminFee, "0.00")
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + tamt;
+            gsTR[i] = tTR[i].gsTR0 + tamt;
         }
         else if (gsTR_lowercase == "rdmamt")
         {
@@ -3982,11 +6599,11 @@ void operation::PrintTR(bool bForSeason)
                 std::ostringstream formattedRdmamtStream;
                 formattedRdmamtStream << std::fixed << std::setprecision(2) << tExit.sRedeemAmt;
                 rdmamt = formattedRdmamtStream.str();
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + rdmamt;
+                gsTR[i] = tTR[i].gsTR0 + " $" + rdmamt;
             }
             else
             {
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+                gsTR[i] = tTR[i].gsTR0 + " N/A";
             }
         }
         else if (gsTR_lowercase == "rebateamt")
@@ -3996,11 +6613,11 @@ void operation::PrintTR(bool bForSeason)
                 std::ostringstream formattedRebateAmtStream;
                 formattedRebateAmtStream << std::fixed << std::setprecision(2) << tExit.sRebateAmt;
                 rebateamt = formattedRebateAmtStream.str();
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + rebateamt;
+                gsTR[i] = tTR[i].gsTR0 + " $" + rebateamt;
             }
             else
             {
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+                gsTR[i] = tTR[i].gsTR0 + " N/A";
             }
         }
         else if (gsTR_lowercase == "rebatebal")
@@ -4010,11 +6627,11 @@ void operation::PrintTR(bool bForSeason)
                 std::ostringstream formattedRebateBalStream;
                 formattedRebateBalStream << std::fixed << std::setprecision(2) << tExit.sRebateAmt;
                 rebatebal = formattedRebateBalStream.str();
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " $" + rebatebal;
+                gsTR[i] = tTR[i].gsTR0 + " $" + rebatebal;
             }
             else
             {
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+                gsTR[i] = tTR[i].gsTR0 + " N/A";
             }
         }
         else if (gsTR_lowercase == "rebatedate")
@@ -4025,7 +6642,7 @@ void operation::PrintTR(bool bForSeason)
             }
             else
             {
-                gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " N/A";
+                gsTR[i] = tTR[i].gsTR0 + " N/A";
             }
         }
         else if (gsTR_lowercase == "gstamt")
@@ -4061,11 +6678,11 @@ void operation::PrintTR(bool bForSeason)
                 formattedGstAmtStream << std::fixed << std::setprecision(2) << tExit.sGSTAmt;
                 gstamt = formattedGstAmtStream.str();
             }
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0 + " " + std::to_string(tParas.gfGSTRate * 100) + "% GST $" + gstamt;
+            gsTR[i] = tTR[i].gsTR0 + " " + std::to_string(tParas.gfGSTRate * 100) + "% GST $" + gstamt;
         }
         else
         {
-            gsTR[i] = operation::getInstance()->tTR[i].gsTR0;
+            gsTR[i] = tTR[i].gsTR0;
         }
     }
 
@@ -4084,20 +6701,20 @@ void operation::PrintTR(bool bForSeason)
         else if (F == '*')
         {
             std::string barcode = gsTR[i].substr(1);
-            Printer::getInstance()->FnPrintBarCode(barcode, operation::getInstance()->tTR[i].giTRF, operation::getInstance()->tTR[i].giTRA, 20);
+            Printer::getInstance()->FnPrintBarCode(barcode, tTR[i].giTRF, tTR[i].giTRA, 20);
         }
         else
         {
             if (!gsTR[i].empty() && gsTR[i].find("N/A") == std::string::npos)
             {
-                Printer::getInstance()->FnPrintLine(gsTR[i], operation::getInstance()->tTR[i].giTRF, operation::getInstance()->tTR[i].giTRA);
+                Printer::getInstance()->FnPrintLine(gsTR[i], tTR[i].giTRF, tTR[i].giTRA);
             }
         }
     }
 
     Printer::getInstance()->FnFullCut();
     //---- update receipt No
-    m_db->updateExitReceiptNo(sSerialNo,std::to_string(gtStation.iSID)); 
+    db::getInstance()->updateExitReceiptNo(sSerialNo,std::to_string(gtStation.iSID)); 
 }
 
 void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo, 
@@ -4114,7 +6731,7 @@ void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo,
     if (sTopupAmt != "") tExit.sTopupAmt = GfeeFormat(std::stof(sTopupAmt));
     //--------
     tProcess.gsLastPaidTrans = tExit.sIUNo;
-    tProcess.gbLastPaidStatus.store(true);
+    tProcess.gbLastPaidStatus = true;
     tProcess.gsLastCardNo = sCardNo;
     if (sBal != "") tProcess.gfLastCardBal= GfeeFormat(std::stof(sBal));
     else tProcess.gfLastCardBal = 0;
@@ -4134,30 +6751,27 @@ void operation::DebitOK(const std::string& sIUNO, const std::string& sCardNo,
 
 std::string operation::GetVTypeStr(int iVType)
 {
-    std::string sVType = "";
-
-    if ((iVType < 3) || (iVType == 20))
+    if (iVType < 3 || iVType == 20)
     {
-        sVType = "Car";
-    }
-    else if ((iVType < 6) || (iVType == 21))
-    {
-        sVType = "Lorry";
-    }
-    else if ((iVType < 9) || (iVType == 22))
-    {
-        sVType = "M/Cycle";
-    }
-    else if (iVType == 33)
-    {
-        sVType = "Container";
-    }
-    else
-    {
-        sVType = "Undefined Vehicle Type";
+        return "Car";
     }
 
-    return sVType;
+    if (iVType < 6 || iVType == 21)
+    {
+        return "Lorry";
+    }
+
+    if (iVType < 9 || iVType == 22)
+    {
+        return "M/Cycle";
+    }
+
+    if (iVType == 33)
+    {
+        return "Container";
+    }
+
+    return "Undefined Vehicle Type";
 }
 
  void operation::CheckIUorCardStatus(string sCheckNo, DeviceType iDevicetype,string sCardNo, int sCardType, float sCardBal)
@@ -4193,7 +6807,7 @@ std::string operation::GetVTypeStr(int iVType)
         return;
     }
     //--------check balance
-    if (sCardNo != "" && GfeeFormat(sCardBal) != GfeeFormat(tProcess.gfLastCardBal) && sCardNo == tProcess.gsLastCardNo && tProcess.gbLastPaidStatus.load()  == false ) {
+    if (sCardNo != "" && GfeeFormat(sCardBal) != GfeeFormat(tProcess.gfLastCardBal) && sCardNo == tProcess.gsLastCardNo && tProcess.gbLastPaidStatus == false ) {
         tProcess.gfLastCardBal= GfeeFormat(sCardBal);
         EnableCashcard(false);
         writelog ("balance change case.","OPR");
@@ -4220,7 +6834,7 @@ std::string operation::GetVTypeStr(int iVType)
     {
         //CheckCardOK 
         writelog ("check card OK!", "OPR");
-        iRet = m_db->CheckCardOK(sCardNo);
+        iRet = db::getInstance()->CheckCardOK(sCardNo);
         if (iRet > 0) {
             if (iRet == 5) {
                 tExit.iTransType = 2;
@@ -4278,11 +6892,11 @@ std::string operation::GetVTypeStr(int iVType)
     }
     else {
         gsCompareNo = tProcess.gsLastPaidTrans;
-        auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - operation::getInstance()->tProcess.getLastTransTime());
+        auto sameAsLastIUDuration = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - tProcess.lastTransTime);
         if (sCheckNo == gsCompareNo && sameAsLastIUDuration.count() <= tParas.giMaxTransInterval) {
             writelog("last trans No: " + gsCompareNo, "OPR");
-            writelog("Same as last IU, duration :" + std::to_string(sameAsLastIUDuration.count()) + " less than Maximum interval: " + std::to_string(operation::getInstance()->tParas.giMaxTransInterval), "OPR");
-            if (tProcess.gbLastPaidStatus.load()  == true) {
+            writelog("Same as last IU, duration :" + std::to_string(sameAsLastIUDuration.count()) + " less than Maximum interval: " + std::to_string(tParas.giMaxTransInterval), "OPR");
+            if (tProcess.gbLastPaidStatus == true) {
                 if (iDevicetype == Ant) sMsg = "Same as last^Paid IU" ;
                 else sMsg = "Same as last^Paid Card";
                 //--------
@@ -4350,7 +6964,7 @@ std::string operation::GetVTypeStr(int iVType)
     tExit.sIUNo = sIU;
 
     //check blacklist
-    iRet = m_db->IsBlackListIU(sIU);
+    iRet = db::getInstance()->IsBlackListIU(sIU);
     if (iRet >= 0){
         ShowLEDMsg(tExitMsg.MsgExit_BlackList[0], tExitMsg.MsgExit_BlackList[1]);
         SendMsg2Server("90",sIU+",,,,,Blacklist IU");
@@ -4367,7 +6981,7 @@ std::string operation::GetVTypeStr(int iVType)
     }
     //---Get Entry time
     if (tExit.bNoEntryRecord == -1) {
-        iRet = m_db->FetchEntryinfo(sIU);
+        iRet = db::getInstance()->FetchEntryinfo(sIU);
         if (tExit.sEntryTime == "") {
              tExit.bNoEntryRecord = 1;
              tExit.lParkedTime = -1;
@@ -4423,7 +7037,7 @@ std::string operation::GetVTypeStr(int iVType)
         int iAutoDebit;
 		float sAmt;
         writelog("No Entry, Check Auto Debit.", "OPR");
-		m_db->GetXTariff(iAutoDebit, sAmt, 0);
+		db::getInstance()->GetXTariff(iAutoDebit, sAmt, 0);
 		writelog("Autocharge:"+std::to_string(iAutoDebit), "OPR");
 		writelog("ChargeAmt:"+ Common::getInstance()->SetFeeFormat(sAmt), "OPR");
         if (iAutoDebit > 0) {
@@ -4537,7 +7151,8 @@ std::string operation::GetVTypeStr(int iVType)
                     ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
                     CloseExitOperation(EZPayParking);
                 }
-               return;
+                Openbarrier();
+                return;
             }
             if (db::getInstance()->HasAXS(tExit.sIUNo) == 1) {
                 if (tExit.sPaidAmt > 500) {
@@ -4553,11 +7168,11 @@ std::string operation::GetVTypeStr(int iVType)
                     //-------
                     ShowLEDMsg("Fee Paid.^OR Scan Ticket","Fee Paid.^OR Scan Ticket");
                     EnableCashcard(true);
-                    return;
                 }else {
                     ShowLEDMsg("Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt), "Redeemed: $"+ Common::getInstance()->SetFeeFormat(tExit.sRedeemAmt) + "^ Fee: $"+ Common::getInstance()->SetFeeFormat(tExit.sPaidAmt));
                     CloseExitOperation(AXSParking);
                 }
+                Openbarrier();
                 return;
             }
         } 
@@ -4624,7 +7239,7 @@ void operation::debitfromReader(string CardNo, float sFee,DeviceType iDevicetype
     }
     //---------
     tExit.giDeductionStatus = Doingdeduction;
-    tProcess.gbLastPaidStatus.store(false);
+    tProcess.gbLastPaidStatus = false;
     tProcess.gsLastCardNo = CardNo;
     tProcess.gfLastCardBal= GfeeFormat(sCardBal);
     tExit.sCardNo = CardNo;
@@ -4658,20 +7273,20 @@ float operation::CalFeeRAM(string eTime, string payTime,int iTransType, bool bNo
     
     float parkingfee;
     
-    parkingfee = m_db->CalFeeRAM2G(eTime,payTime,iTransType);
+    parkingfee = db::getInstance()->CalFeeRAM2G(eTime,payTime,iTransType);
     //----- added on 29/07/2026
     if (parkingfee >= 0.01 and tExit.sRedeemAmt == 0 and tExit.iRedeemTime == 0)
     {
         int iRet;
         if (tExit.sIUNo.length() == 10) {
             writelog ("check valid ticket for IU No: " + tExit.sIUNo, "OPR");
-            iRet = m_db->HasValidTicket(tExit.sIUNo, "");
+            iRet = db::getInstance()->HasValidTicket(tExit.sIUNo, "");
             if (iRet == 0) {
                 tExit.iUsedTicketBy = 2;
             } else{
                 if (tExit.sLPN[0] != "" && tExit.sLPN[0] != "0000000000")
                 {
-                    iRet = m_db->HasValidTicket("",tExit.sLPN[0]);
+                    iRet = db::getInstance()->HasValidTicket("",tExit.sLPN[0]);
                     if (iRet == 0) tExit.iUsedTicketBy = 3;
                 }
             }    
@@ -4718,9 +7333,9 @@ void operation::SaveExit()
     //----
     if (iRet == iCentralSuccess or iRet == iLocalSuccess)
     {
-        tProcess.setLastIUNo(tExit.sIUNo);
-        tProcess.setLastPaidTrans(tExit.sIUNo);
-        tProcess.setLastTransTime(std::chrono::steady_clock::now());
+        tProcess.gsLastIUNo = tExit.sIUNo;
+        tProcess.gsLastPaidTrans = tExit.sIUNo;
+        tProcess.lastTransTime = std::chrono::steady_clock::now();
     }
     //-------
     tPBSError[iDB].ErrNo = (iRet == iCentralSuccess or iRet == iLocalSuccess) ? 0 : (iRet == iCentralFail) ? -1 : -2;
@@ -4748,7 +7363,7 @@ void operation::SaveExit()
     tExit.gbPaid = true;
     if (tExit.sPaidAmt == 0) {
         tProcess.gsLastCardNo = tExit.sCardNo;
-        tProcess.gbLastPaidStatus.store(true);
+        tProcess.gbLastPaidStatus = true;
     }
     //-------
     PrintReceipt();
@@ -4775,7 +7390,7 @@ void operation::PrintReceipt()
 }
 
 float operation::GfeeFormat(float value) {
-    return std::round(value * 100.0) / 100.0;
+    return std::round(value * 100.0f) / 100.0f;
 }
 
 void operation::CloseExitOperation(TransType iStatus)
@@ -4865,7 +7480,7 @@ void operation::CloseExitOperation(TransType iStatus)
 
     writelog ("Enter close Exit for: " + tExit.sIUNo, "OPR");
     SaveExit();
-    if (iStatus != UpdateCHUTrans) Openbarrier();
+    if (iStatus != UpdateCHUTrans && iStatus != EZPayParking && iStatus != AXSParking) Openbarrier();
 }
 
 void operation::RedeemTime2Amt() 
@@ -5254,7 +7869,8 @@ Exit_Sub:
 void operation::ticketOK()
 {
     tExit.sPaidAmt = 0;
-    if (tExit.sRedeemAmt == 0 && tExit.sRedeemNo != "") {
+    if (tExit.sRedeemAmt == 0 && !tExit.sRedeemNo.empty())
+    {
         tExit.iTransType = 10;
         tExit.sCardNo = tExit.sRedeemNo;
     }
@@ -5444,7 +8060,7 @@ void operation::processEEP(const std::string& eventData)
                 
                     if (NotifLog.notificationType == 0x00){
                         sEvent = getFieldDescription(NotifLog.errorCode, errorCodeMap);
-                        m_db->AddSysEvent(sEvent,NotifLog.errorCode, sEventTime);
+                        db::getInstance()->AddSysEvent(sEvent,NotifLog.errorCode, sEventTime);
                         if (NotifLog.errorCode == 0x01 || NotifLog.errorCode == 0x20 || NotifLog.errorCode == 0x22 || NotifLog.errorCode == 0x23 || NotifLog.errorCode == 0x24)
                         {
                             if (tPBSError[0].ErrNo == 0 ) {
@@ -5457,9 +8073,9 @@ void operation::processEEP(const std::string& eventData)
                     }
                     else
                     {
-                        m_db->UpdateSysEvent(sEvent,NotifLog.errorCode, sEventTime);
+                        db::getInstance()->UpdateSysEvent(sEvent,NotifLog.errorCode, sEventTime);
                        
-                        if (m_db->HasAlertNotification() == false)
+                        if (db::getInstance()->HasAlertNotification() == false)
                         {
                            if ( tPBSError[0].ErrNo == -1 ) {
                                 tPBSError[0].ErrNo = 0;
@@ -5496,7 +8112,7 @@ void operation::processEEP(const std::string& eventData)
                     EEPClient::obuInformationNotification obuInfoNotif;
                     parsePayload(obuInfoNotif, eventParsed.payload, "OBU_INFORMATION_NOTIFICATION");
                     //----- added on 02/03/2026
-                    if (tProcess.gbLoopApresent.load() == true && tProcess.gsTailgateOBU == "")
+                    if (tProcess.gbLoopApresent == true && tProcess.gsTailgateOBU == "")
                     {
                         tProcess.gsTailgateOBU = Common::getInstance()->longToHex(obuInfoNotif.obulabel);
                         writelog ("Set Tailgate OBU: " + tProcess.gsTailgateOBU, "OPR");
@@ -5720,7 +8336,7 @@ void operation::processEEP(const std::string& eventData)
                             //----- added on 01/12/2025
                             EnableCashcard(false);
                             if (tProcess.fiLastEEPCmd == EEPClient::CommandType::GET_OBU_INFO_REQ_CMD) tProcess.fiLastEEPCmd = EEPClient:: CommandType::EEP_idle;
-                            if (tProcess.gbLoopApresent.load() == true) ProcessOUBInformation(OBUInfoNotif);
+                            if (tProcess.gbLoopApresent == true) ProcessOUBInformation(OBUInfoNotif);
                             break;
                         }
                         case EEPClient::MESSAGE_CODE::ACK:
@@ -5748,7 +8364,7 @@ void operation::processEEP(const std::string& eventData)
                     writelog("EEP Request Cmd: GET_OBU_INFO_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
                     //------ added on 19/12/2025 ?? need check with KC??
                    // if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::RSP_TIMEOUT)){
-                         if (tProcess.gbLoopApresent.load() == true)
+                         if (tProcess.gbLoopApresent == true)
                          {
                             writelog ("No OBU detected!", "OPR");
                             SendMsg2Server("90",",,,,,No OBU Detected");
@@ -5834,7 +8450,7 @@ void operation::processEEP(const std::string& eventData)
                     writelog("EEP Request Cmd: DEDUCT_REQ_CMD, " + toString(eventParsed.messageStatus), "OPR");
                     //------ added on 19/12/2025
                     if (eventParsed.messageStatus == static_cast<uint32_t>(EEPClient::MSG_STATUS::RSP_TIMEOUT)){
-                        if (tProcess.gbLoopApresent.load() == true && (tExit.gbPaid == false || tExit.giDeductionStatus == Doingdeduction))
+                        if (tProcess.gbLoopApresent == true && (tExit.gbPaid == false || tExit.giDeductionStatus == Doingdeduction))
                         {
                             writelog ("unable to make a deduction via OBU", "OPR");
                             ShowLEDMsg("Insert/Tap Card", "Insert/Tap Card");
@@ -6234,7 +8850,7 @@ void operation::EEPInq(int delay)
     //---- added on 03/07/2026
     BARCODE_READER::getInstance()->Ticket_In = 0;
     //---------
-    if (tProcess.gbLoopApresent.load() == false) 
+    if (tProcess.gbLoopApresent == false) 
     {
         writelog ("No Loop A while OBU Inq", "OPR");
         return;
@@ -6268,7 +8884,7 @@ void operation::EEPInq(int delay)
 
 void operation::EEPDebit(string OBU, float lFee, string entryTime, string exitTime)
 {
-    if (tProcess.gbLoopApresent.load() == false)
+    if (tProcess.gbLoopApresent == false)
     {
         writelog ("No loop A while send Deduction", "OPR");
         return;
@@ -6280,7 +8896,7 @@ void operation::EEPDebit(string OBU, float lFee, string entryTime, string exitTi
     EnableCashcard(false);
     //-------
     tExit.giDeductionStatus = Doingdeduction;
-    tProcess.gbLastPaidStatus.store(false);
+    tProcess.gbLastPaidStatus = false;
     //--------
     if (entryTime == "")  entryTime = Common::getInstance()->FnGetDateTimeFormat_yyyy_mm_dd_hh_mm_ss(); 
     //-------
@@ -6398,7 +9014,7 @@ void operation::processEEPTransData(EEPClient::transactionData transData)
     //-----------
     if (transData.resultDeduction == 1 || transData.resultDeduction == 2 ||transData.resultDeduction == 8)
     {
-        if (sObuLabel == tExit.sIUNo && tProcess.gbLoopApresent.load() == true)
+        if (sObuLabel == tExit.sIUNo && tProcess.gbLoopApresent == true)
         {
             writelog ("Deduction successful", "OPR");
             if (sCan != "0000000000000000" ) {
@@ -6437,7 +9053,7 @@ void operation::processEEPTransData(EEPClient::transactionData transData)
         {
            // updateEEPtrans
           writelog ("Update Successful deduction trans", "OPR");
-          m_db->UpdateEEPExitTrans(sObuLabel, std::to_string(transData.deductCommandSerialNum),sCan,float(transData.paymentFee) / 100.0f,float(transData.autoLoadAmount) / 100.0f,transData.transactionRoute,transData.resultDeduction); 
+          db::getInstance()->UpdateEEPExitTrans(sObuLabel, std::to_string(transData.deductCommandSerialNum),sCan,float(transData.paymentFee) / 100.0f,float(transData.autoLoadAmount) / 100.0f,transData.transactionRoute,transData.resultDeduction); 
         }
         return;
     }
@@ -6667,7 +9283,7 @@ void operation::CHUDebit(string OBU, float lFee, string sCardNo,float sCardBal)
     
     tExit.giDeductionStatus = Doingdeduction;
     tExit.sCardNo = sCardNo;
-    tProcess.gbLastPaidStatus.store(false);
+    tProcess.gbLastPaidStatus = false;
     tProcess.gsLastCardNo = sCardNo;
     tProcess.gfLastCardBal= GfeeFormat(sCardBal);
 
@@ -6681,7 +9297,7 @@ void operation::SendMsg2CHU(eCHUCmd sCmd, string sData)
 {
     std::string sMsg;
 
-    if (tProcess.gbLoopApresent.load() == false) 
+    if (tProcess.gbLoopApresent == false) 
     {
         writelog ("No Loop A while send Msg to CHU", "OPR");
         return;
@@ -6906,8 +9522,112 @@ void operation::UpdateExit()
     return;
 }
 
+void operation::shutdownOnIoThread()
+{
+    boost::system::error_code ec;
+
+    if (pLCDIdleTimer_)
+    {
+        pLCDIdleTimer_->cancel(ec);
+    }
+
+    ec.clear();
+
+    if (pLoopATimer_)
+    {
+        pLoopATimer_->cancel(ec);
+    }
+
+    ec.clear();
+
+    if (pDailyProcessTimer_)
+    {
+        pDailyProcessTimer_->cancel(ec);
+    }
+
+    // udpclient::close() is asynchronous and bound to this same io_context.
+    // Keep the work guard alive until these close requests have been issued,
+    // then let queued cancellation/close completions drain naturally.
+    if (pmsUdpClient_ != nullptr)
+    {
+        pmsUdpClient_->close();
+    }
+
+    if (monitorUdpClient_ != nullptr)
+    {
+        monitorUdpClient_->close();
+    }
+
+    writelog("OPERATION: [SHUTDOWN] Daily/LCD/LoopA timers and transports close requested", "OPR");
+}
+
 void operation::FnClose()
 {
-    m_udp->close();
-    m_Monitorudp->close();
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+
+    if (ioContext_.get_executor().running_in_this_thread())
+    {
+        writelog("OPERATION: [SHUTDOWN] Rejected | Reason=Called from OP_IO", "OPR");
+        return;
+    }
+
+    if (!ioContextThread_.joinable())
+    {
+        stopping_.store(true);
+        workGuard_.reset();
+
+        pLCDIdleTimer_.reset();
+        pLoopATimer_.reset();
+        pDailyProcessTimer_.reset();
+        monitorUdpClient_.reset();
+        pmsUdpClient_.reset();
+
+        isOperationInitialized_.store(false);
+        running_.store(false);
+        stopping_.store(false);
+        return;
+    }
+
+    if (stopping_.exchange(true))
+    {
+        return;
+    }
+
+    writelog("OPERATION: [SHUTDOWN] Begin", "OPR");
+
+    auto shutdownPromise = std::make_shared<std::promise<void>>();
+    auto shutdownFuture = shutdownPromise->get_future();
+
+    boost::asio::post(
+        ioContext_,
+        [this, shutdownPromise]()
+        {
+            shutdownOnIoThread();
+            shutdownPromise->set_value();
+        });
+
+    shutdownFuture.wait();
+
+    // Cancellation/close has now been issued on OP_IO. Releasing the guard
+    // allows run() to return once already-queued completions have drained.
+    workGuard_.reset();
+
+    if (ioContextThread_.joinable())
+    {
+        ioContextThread_.join();
+    }
+
+    // No handler can touch these objects after OP_IO has joined.
+    pLCDIdleTimer_.reset();
+    pLoopATimer_.reset();
+    pDailyProcessTimer_.reset();
+
+    monitorUdpClient_.reset();
+    pmsUdpClient_.reset();
+
+    isOperationInitialized_.store(false);
+    running_.store(false);
+    stopping_.store(false);
+
+    writelog("OPERATION: [SHUTDOWN] Completed", "OPR");
 }

@@ -1983,7 +1983,11 @@ public:
     };
 
     static EEPClient* getInstance();
-    void FnEEPClientInit(const std::string& serverIP, unsigned short serverPort, const std::string& stationID);
+    void FnEEPClientInit(const std::string& serverIP,
+                         unsigned short serverPort,
+                         const std::string& stationID,
+                         const std::string& cpoID,
+                         const std::string& carparkID);
     void FnSendAck(uint16_t seqNo_, uint8_t reqDataTypeCode_);
     void FnSendNak(uint16_t seqNo_, uint8_t reqDataTypeCode_, uint8_t reasonCode_);
     void FnSendHealthStatusReq();
@@ -2059,6 +2063,8 @@ private:
     int iStationID_{0};
     std::string serverIP_;
     unsigned short serverPort_{0};
+    std::string cpoId_;
+    std::string carparkId_;
     int eepSourceId_{0};
     int eepDestinationId_{0};
     int eepCarparkID_{0};

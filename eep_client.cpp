@@ -86,7 +86,12 @@ EEPClient* EEPClient::getInstance()
     return &instance;
 }
 
-void EEPClient::FnEEPClientInit(const std::string& serverIP, unsigned short serverPort, const std::string& stationID)
+void EEPClient::FnEEPClientInit(
+    const std::string& serverIP,
+    unsigned short serverPort,
+    const std::string& stationID,
+    const std::string& cpoID,
+    const std::string& carparkID)
 {
 std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
 
@@ -125,6 +130,8 @@ std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     iStationID_ = stationId;
     serverIP_ = serverIP;
     serverPort_ = serverPort;
+    cpoId_ = cpoID;
+    carparkId_ = carparkID;
     eepSourceId_ = 96 + iStationID_;
     eepDestinationId_ = 32 + iStationID_;
 
@@ -5027,8 +5034,8 @@ void EEPClient::processDSRCFeTx(const MessageHeader& header, const transactionDa
     */
     if (filePool_)
     {
-        const std::string cpoId = operation::getInstance()->tParas.gsCPOID;
-        const std::string carparkId = operation::getInstance()->tParas.gsCPID;
+        const std::string cpoId = cpoId_;
+        const std::string carparkId = carparkId_;
 
         boost::asio::post(
             *filePool_,
@@ -5215,8 +5222,8 @@ void EEPClient::processDSRCBeTx(const MessageHeader& header, const transactionDa
     */
     if (filePool_)
     {
-        const std::string cpoId = operation::getInstance()->tParas.gsCPOID;
-        const std::string carparkId = operation::getInstance()->tParas.gsCPID;
+        const std::string cpoId = cpoId_;
+        const std::string carparkId = carparkId_;
 
         boost::asio::post(
             *filePool_,

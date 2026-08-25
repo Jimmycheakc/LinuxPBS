@@ -76,6 +76,11 @@ SystemInfo* SystemInfo::getInstance()
     return &instance;
 }
 
+void SystemInfo::FnSetExecutablePath(const std::string& executablePath)
+{
+    executablePath_ = executablePath;
+}
+
 void SystemInfo::FnLogSysInfo() const
 {
     const SystemIdentity identity = getSystemIdentity();
@@ -112,6 +117,10 @@ void SystemInfo::FnLogSysInfo() const
         };
 
     logStream << "*** Start display system information ***\n";
+
+    appendInfo("Application Program", executablePath_);
+    appendInfo("Software Version", SW_VERSION);
+    appendInfo("Build Timestamp", BUILD_TIMESTAMP);
 
     if (identity.valid)
     {

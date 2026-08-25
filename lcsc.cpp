@@ -283,7 +283,16 @@ LCSCReader* LCSCReader::getInstance()
     return &instance;
 }
 
-int LCSCReader::FnLCSCReaderInit(unsigned int baudRate, const std::string& comPortName)
+int LCSCReader::FnLCSCReaderInit(
+                    unsigned int baudRate,
+                    const std::string& comPortName,
+                    int commPortLCSC,
+                    int stationId,
+                    const std::string& cpoId,
+                    const std::string& carparkId,
+                    int eps,
+                    const std::string& cscrCdackFolder,
+                    const std::string& cscrCdfFolder)
 {
     std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
 
@@ -302,6 +311,14 @@ int LCSCReader::FnLCSCReaderInit(unsigned int baudRate, const std::string& comPo
 
     try
     {
+        commPortLCSC_ = commPortLCSC;
+        stationId_ = stationId;
+        cpoId_ = cpoId;
+        carparkId_ = carparkId;
+        eps_ = eps;
+        cscrCdackFolder_ = cscrCdackFolder;
+        cscrCdfFolder_ = cscrCdfFolder;
+
         // File/network filesystem jobs must not block the single LCSC I/O
         // thread. Two workers are enough for settlement writes plus the CD
         // file workflow without creating a large thread footprint.
@@ -4115,14 +4132,14 @@ int LCSCReader::FnSendUploadBLFile(const std::string& path)
 
 bool LCSCReader::FnMoveCDAckFile()
 {
-    std::string folderPath = operation::getInstance()->tParas.gsCSCRcdackFolder;
+    std::string folderPath = cscrCdackFolder_;
     std::replace(folderPath.begin(), folderPath.end(), '\\', '/');
 
     std::string mountPoint = "/mnt/cdack";
     std::string sharedFolderPath = folderPath;
     std::string username = IniParser::getInstance()->FnGetCentralUsername();
     std::string password = IniParser::getInstance()->FnGetCentralPassword();
-    std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
+    std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;
 
     std::string details;
     if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
@@ -4225,7 +4242,7 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
                             const std::string& bl2Ver, const std::string& bl3Ver, const std::string& cil1Ver,
                             const std::string& cil2Ver, const std::string& cil3Ver, const std::string& cfgVer)
 {
-    std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
+    std::string cdAckFilePath = LOCAL_LCSC_FOLDER_PATH;
 
     // Create cd ack file path
     if (!std::filesystem::exists(cdAckFilePath))
@@ -4269,14 +4286,14 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
     }
 
     std::string ackFileName = "";
-    if (operation::getInstance()->tParas.giEPS == 3)
+    if (eps_ == 3)
     {
-        ackFileName = boost::algorithm::trim_copy(operation::getInstance()->tParas.gsCPOID) + "_" + operation::getInstance()->tParas.gsCPID + "_CSCR"
+        ackFileName = boost::algorithm::trim_copy(cpoId_) + "_" + carparkId_ + "_CSCR"
                     + "0" + terminalID + "_" + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd_hhmmss() + ".cdack";
     }
     else
     {
-        ackFileName = boost::algorithm::trim_copy(operation::getInstance()->tParas.gsCPOID) + "_" + operation::getInstance()->tParas.gsCPID + "_CR"
+        ackFileName = boost::algorithm::trim_copy(cpoId_) + "_" + carparkId_ + "_CR"
                     + "0" + terminalID + "_" + Common::getInstance()->FnGetDateTimeFormat_yyyymmdd_hhmmss() + ".cdack";
     }
     std::string sAckFile = cdAckFilePath + "/" + ackFileName;
@@ -4286,7 +4303,7 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
     std::string sData;
     std::string sDataO;
 
-    if (operation::getInstance()->tParas.giEPS == 3)
+    if (eps_ == 3)
     {
         sHeader = "H" + Common::getInstance()->FnPadRightSpace(58, ackFileName) + Common::getInstance()->FnGetDateTimeFormat_yyyymmddhhmmss() + fwVer;
     }
@@ -4394,14 +4411,14 @@ bool LCSCReader::FnGenerateCDAckFile(const std::string& serialNum, const std::st
 
 bool LCSCReader::FnDownloadCDFiles()
 {
-    std::string folderPath = operation::getInstance()->tParas.gsCSCRcdfFolder;
+    std::string folderPath = cscrCdfFolder_;
     std::replace(folderPath.begin(), folderPath.end(), '\\', '/');
 
     std::string mountPoint = "/mnt/cd";
     std::string sharedFolderPath = folderPath;
     std::string username = IniParser::getInstance()->FnGetCentralUsername();
     std::string password = IniParser::getInstance()->FnGetCentralPassword();
-    std::string outputFolderPath = LOCAL_LCSC_FOLDER_PATH;//operation::getInstance()->tParas.gsLocalLCSC;
+    std::string outputFolderPath = LOCAL_LCSC_FOLDER_PATH;
 
     std::string details;
     if (PingWithTimeOut(IniParser::getInstance()->FnGetCentralDBServer(), 1, details) == true)
@@ -5117,8 +5134,7 @@ void LCSCReader::handleUploadLcscIdleState(LCSCReader::UPLOAD_LCSC_FILES_EVENT e
 {
     if (event == UPLOAD_LCSC_FILES_EVENT::CHECK_CONDITION)
     {
-        if ((operation::getInstance()->tParas.giCommPortLCSC > 0) &&
-            !operation::getInstance()->tProcess.gbLoopApresent.load() &&
+        if ((commPortLCSC_ > 0) &&
             (Common::getInstance()->FnGetCurrentHour() < 20))
         {
             if (!HasCDFileToUpload_ &&
@@ -5475,7 +5491,7 @@ void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
     lastCreditTransTRP = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(138, 32));
     balanceBeforeTrans = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(171, 24));
     badDebtCounter = Common::getInstance()->FnConvertBinaryStringToString(transRecord1.substr(195, 8));
-    if (operation::getInstance()->tParas.giEPS == 3)
+    if (eps_ == 3)
     {
         MAC1 = std::string(4, '\0');
     }
@@ -5569,12 +5585,9 @@ void LCSCReader::processTrans(const std::vector<uint8_t>& payload)
 
 void LCSCReader::writeLCSCTrans(const std::string& data)
 {
-    // This function is called from the LCSC I/O thread. Build/snapshot the
-    // filename and header here, then move only blocking file access to the
-    // worker pool. Do not read mutable module/FSM state from a pool thread.
-    const std::string cpoId = operation::getInstance()->tParas.gsCPOID;
-    const std::string cpId = operation::getInstance()->tParas.gsCPID;
-    const int stationId = operation::getInstance()->gtStation.iSID;
+    const std::string cpoId = cpoId_;
+    const std::string cpId = carparkId_;
+    const int stationId = stationId_;
 
     const std::string fileName =
         cpoId + "_" + cpId + "_" +

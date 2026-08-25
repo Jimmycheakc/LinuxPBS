@@ -111,7 +111,12 @@ public:
 
     // Starts Antenna's OWN io_context and dedicated worker thread.
     // All serial/timer/coroutine work is executed by that one thread.
-    void FnAntennaInit(unsigned int baudRate, const std::string& comPortName);
+    void FnAntennaInit(
+            unsigned int baudRate,
+            const std::string& comPortName,
+            int antennaId,
+            int antennaInqTO,
+            int antennaMinOkTimes);
 
     // Gracefully cancels outstanding Antenna work and joins the worker thread.
     void FnAntennaShutdown();
@@ -159,6 +164,7 @@ private:
     bool iuLoopRunning_;
     bool initializationCompleted_;
 
+    int antennaId_;
     int antennaCmdTimeoutInMillisec_;
     int antennaCmdMaxRetry_;
     int antennaIUCmdMinOKtimes_;
