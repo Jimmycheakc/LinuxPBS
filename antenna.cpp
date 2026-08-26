@@ -1259,9 +1259,9 @@ boost::asio::awaitable<void> Antenna::readIULoopAsync()
 
     while (continueReadFlag_.load() && !stopping_.load())
     {
-        // Same behaviour as your original 10 ms periodic timer, but expressed
+        // Same behaviour as your original 200 ms periodic timer, but expressed
         // as a linear coroutine instead of callback recursion.
-        periodicSendReadIUCmdTimer_->expires_after(std::chrono::milliseconds(10));
+        periodicSendReadIUCmdTimer_->expires_after(std::chrono::milliseconds(200));
 
         boost::system::error_code timerEc;
         co_await periodicSendReadIUCmdTimer_->async_wait(
@@ -1302,7 +1302,7 @@ boost::asio::awaitable<void> Antenna::readIULoopAsync()
             break;
         }
 
-        if (count > 20)
+        if (count > 10)
         {
             std::stringstream countStream;
             countStream << "antIUCmdSendCount_: " << count;

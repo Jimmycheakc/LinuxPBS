@@ -2425,7 +2425,11 @@ void operation::loopATimeoutHandler()
     writelog("Loop A Operation Timeout handler.", "OPR");
     Antenna::getInstance()->FnAntennaStopRead();
     EnableCashcard(false);
-    LoopACome();
+
+    if (tProcess.gbLoopApresent)
+    {
+        LoopACome();
+    }
 }
 
 void operation::handleLoopAPeriodicTimerTimeout(const boost::system::error_code &ec)
@@ -7659,10 +7663,14 @@ void operation::ticketScan(std::string skeyedNo)
     // Ret : 0 = Expired, 1 = Valid, 2 = Used, 6 = Not Started, -1 = DB Error, 4 = Not Found
    iRet = db::getInstance()->isValidBarCodeTicket(isRedemptionTicket, skeyedNo, dtExpireTime, gbRedeemAmt, giRedeemTime);
 
-    if (iRet != 1 && tParas.giEPS == 3) {
-        if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket", "Pls Present","Valid Payment","","");
-        else SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket","","","","");
-        sMsg = "Invalid Ticket^ Pls Present Valid Payment";
+    if (iRet != 1)
+    {
+        if (tParas.giEPS == 3) {
+            if (tExit.iOBUType == 0) SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket", "Pls Present","Valid Payment","","");
+            else SendMsg2OBU(tExit.sIUNo,0,"Invalid Ticket","","","",""); 
+        }
+        //--------
+        sMsg = "Invalid Ticket";
         ShowLEDMsg(sMsg, sMsg);
     }
     switch (iRet)
