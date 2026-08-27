@@ -198,7 +198,21 @@ public:
     // FnGetSharedData() returns a snapshot copy; no internal reference escapes.
     // FnUpdateSharedData() applies only populated field-level patches on OP_IO.
     std::optional<OperationSharedData> FnGetSharedData();
-    bool FnUpdateSharedData(OperationSharedDataUpdate update);
+
+    bool FnGetLoopAPresent() const;
+    void FnSetLoopAPresent(bool present);
+
+    bool FnUpdateStation(std::function<void(tstation_struct&)> modifier);
+    bool FnUpdateEntry(std::function<void(tEntryTrans_Struct&)> modifier);
+    bool FnUpdateExit(std::function<void(tExitTrans_Struct&)> modifier);
+    bool FnUpdateExit1(std::function<void(tExitTrans_Struct&)> modifier);
+    bool FnUpdateProcess(std::function<void(tProcess_Struct&)> modifier);
+    bool FnUpdateParas(std::function<void(tParas_Struct&)> modifier);
+    bool FnUpdateMessage(std::function<void(tMsg_Struct&)> modifier);
+    bool FnUpdateExitMessage(std::function<void(tExitMsg_struct&)> modifier);
+    bool FnUpdateSeason(std::function<void(tseason_struct&)> modifier);
+    bool FnUpdateVehicleTypes(std::function<void(std::vector<tVType_Struct>&)> modifier);
+    bool FnUpdateTR(std::function<void(std::vector<tTR_struc>&)> modifier);
 
     // =========================================================
     // Thread-safe EventHandler entry point.
@@ -294,6 +308,7 @@ private:
     // Event dispatch helper. Executes inline only when already on OP_IO;
     // otherwise posts to Operation's io_context.
     bool postEvent(std::function<void()> handler);
+    bool dispatchSharedDataUpdate(std::function<void()> handler);
 
 
     enum class KsmFailureAction
@@ -312,7 +327,6 @@ private:
 
     // Shared-state helpers. OP_IO only.
     OperationSharedData makeSharedDataSnapshotOnIo() const;
-    void applySharedDataUpdateOnIo(OperationSharedDataUpdate update);
 
     // Event business handlers. OP_IO only.
     void handleAntennaFailOnIo(int errorCode);

@@ -615,7 +615,7 @@ void LCSCReader::resetRuntimeState()
 
     continueReadFlag_.store(false);
     LCSCCard_In.store(0);
-    lastSerialReadTime_ = std::chrono::steady_clock::now();
+    lastSerialReadTime_ = std::chrono::steady_clock::time_point{};
 }
 
 void LCSCReader::setCurrentCmd(LCSCReader::LCSC_CMD cmd)
@@ -2139,8 +2139,6 @@ void LCSCReader::startRead()
 
 void LCSCReader::readEnd(const boost::system::error_code& error, std::size_t bytesTransferred)
 {
-    lastSerialReadTime_ = std::chrono::steady_clock::now();
-
     if (stopping_.load())
     {
         return;
@@ -2148,6 +2146,11 @@ void LCSCReader::readEnd(const boost::system::error_code& error, std::size_t byt
 
     if (!error)
     {
+        if (bytesTransferred > 0)
+        {
+            lastSerialReadTime_ = std::chrono::steady_clock::now();
+        }
+
         const std::vector<uint8_t> data(readBuffer_.begin(), readBuffer_.begin() + static_cast<std::ptrdiff_t>(bytesTransferred));
 
         if (isRxResponseComplete(data))
@@ -2329,6 +2332,47 @@ void LCSCReader::startWrite()
 
         processEvent(EVENT::WRITE_FAILED);
         return;
+    }
+
+    constexpr auto minimumRxToTxGap = std::chrono::milliseconds(200);
+    const auto noRxTime = std::chrono::steady_clock::time_point{};
+
+    if (lastSerialReadTime_ != noRxTime)
+    {
+        const auto elapsedSinceRx = std::chrono::steady_clock::now() - lastSerialReadTime_;
+
+        if (elapsedSinceRx < minimumRxToTxGap)
+        {
+            serialWriteDelayTimer_.expires_after(minimumRxToTxGap - elapsedSinceRx);
+
+            serialWriteDelayTimer_.async_wait(
+                [this](const boost::system::error_code& error)
+                {
+                    if (error == boost::asio::error::operation_aborted ||
+                        stopping_.load())
+                    {
+                        return;
+                    }
+
+                    if (error)
+                    {
+                        Logger::getInstance()->FnLog(
+                            "LCSC: [TX] Delay timer error | Cmd=" +
+                                getCommandString(getCurrentCmd()) +
+                                " | Error=" +
+                                error.message(),
+                            logFileName_,
+                            "LCSC");
+
+                        processEvent(EVENT::WRITE_FAILED);
+                        return;
+                    }
+
+                    startWrite();
+                });
+
+            return;
+        }
     }
 
     writeInProgress_ = true;

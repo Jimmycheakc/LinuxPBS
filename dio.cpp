@@ -505,18 +505,21 @@ void DIO::processDIOChanges(const InputSnapshot& current)
     if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
         && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
     {
+        operation::getInstance()->FnSetLoopAPresent(true);
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
     }
     // Case : Loop B on, Loop A no change
     else if ((loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW) 
             && (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_LOW))
     {
+        operation::getInstance()->FnSetLoopAPresent(true);
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
     }
     // Case : Loop A on, Loop B on
     else if ((loop_a_curr_val == GPIOManager::GPIO_HIGH && loop_a_di_last_val_ == GPIOManager::GPIO_LOW)
             && (loop_b_curr_val == GPIOManager::GPIO_HIGH && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
     {
+        operation::getInstance()->FnSetLoopAPresent(true);
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_ON_EVENT));
     }
 
@@ -524,18 +527,21 @@ void DIO::processDIOChanges(const InputSnapshot& current)
     if ((loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
         && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_LOW))
     {
+        operation::getInstance()->FnSetLoopAPresent(false);
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
     }
     // Case : Loop B off, Loop A no change
     else if ((loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH)
             && (loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_LOW))
     {
+        operation::getInstance()->FnSetLoopAPresent(false);
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
     }
     // Case : Loop A off, Loop B off
     else if ((loop_a_curr_val == GPIOManager::GPIO_LOW && loop_a_di_last_val_ == GPIOManager::GPIO_HIGH)
         && (loop_b_curr_val == GPIOManager::GPIO_LOW && loop_b_di_last_val_ == GPIOManager::GPIO_HIGH))
     {
+        operation::getInstance()->FnSetLoopAPresent(false);
         EventManager::getInstance()->FnEnqueueEvent<int>("Evt_handleDIOEvent", static_cast<int>(DIO_EVENT::LOOP_A_OFF_EVENT));
     }
 

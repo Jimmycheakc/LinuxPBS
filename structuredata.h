@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include "ce_time.h"
 #include "eep_client.h"
@@ -404,6 +405,62 @@ struct tExitTrans_Struct
 };
 
 
+class CopyableAtomicBool
+{
+public:
+    CopyableAtomicBool(bool value = false) noexcept
+        : value_(value)
+    {
+    }
+
+    CopyableAtomicBool(const CopyableAtomicBool& other) noexcept
+        : value_(other.load())
+    {
+    }
+
+    CopyableAtomicBool(CopyableAtomicBool&& other) noexcept
+        : value_(other.load())
+    {
+    }
+
+    CopyableAtomicBool& operator=(const CopyableAtomicBool& other) noexcept
+    {
+        store(other.load());
+        return *this;
+    }
+
+    CopyableAtomicBool& operator=(CopyableAtomicBool&& other) noexcept
+    {
+        store(other.load());
+        return *this;
+    }
+
+    CopyableAtomicBool& operator=(bool value) noexcept
+    {
+        store(value);
+        return *this;
+    }
+
+    operator bool() const noexcept
+    {
+        return load();
+    }
+
+    bool load() const noexcept
+    {
+        return value_.load();
+    }
+
+    void store(bool value) noexcept
+    {
+        value_.store(value);
+    }
+
+private:
+    std::atomic<bool> value_;
+};
+
+
 struct tProcess_Struct
 {
     bool gbsavedtrans;
@@ -427,7 +484,7 @@ struct tProcess_Struct
     int giShowType;
     string gsDefaultIU; 
     string gsBroadCastIP;
-    bool gbLoopApresent;
+    CopyableAtomicBool gbLoopApresent{false};
     string gsTransID;
     bool gbLoopAIsOn;
     bool gbLoopBIsOn;

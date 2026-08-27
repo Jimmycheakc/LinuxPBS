@@ -23,6 +23,7 @@
 #include <optional>
 #include <string_view>
 #include <vector>
+#include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 
 #if defined(__linux__)
@@ -260,6 +261,28 @@ bool operation::postEvent(std::function<void()> handler)
     return true;
 }
 
+bool operation::dispatchSharedDataUpdate(std::function<void()> handler)
+{
+    if (!handler || stopping_.load() || !running_.load())
+    {
+        return false;
+    }
+
+    boost::asio::dispatch(
+        ioContext_,
+        [this, handler = std::move(handler)]() mutable
+        {
+            if (stopping_.load())
+            {
+                return;
+            }
+
+            handler();
+        });
+
+    return true;
+}
+
 std::optional<OperationSharedData> operation::FnGetSharedData()
 {
     // Never wait for OP_IO from OP_IO itself.
@@ -286,7 +309,7 @@ std::optional<OperationSharedData> operation::FnGetSharedData()
 
     auto snapshotFuture = snapshotTask->get_future();
 
-    boost::asio::post(
+    boost::asio::dispatch(
         ioContext_,
         [snapshotTask]() mutable
         {
@@ -309,12 +332,167 @@ std::optional<OperationSharedData> operation::FnGetSharedData()
     return std::nullopt;
 }
 
-bool operation::FnUpdateSharedData(OperationSharedDataUpdate update)
+bool operation::FnGetLoopAPresent() const
 {
-    return postEvent(
-        [this, update = std::move(update)]() mutable
+    return tProcess.gbLoopApresent.load();
+}
+
+void operation::FnSetLoopAPresent(bool present)
+{
+    tProcess.gbLoopApresent.store(present);
+}
+
+bool operation::FnUpdateStation(std::function<void(tstation_struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
         {
-            applySharedDataUpdateOnIo(std::move(update));
+            modifier(gtStation);
+        });
+}
+
+bool operation::FnUpdateEntry(std::function<void(tEntryTrans_Struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tEntry);
+        });
+}
+
+bool operation::FnUpdateExit(std::function<void(tExitTrans_Struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tExit);
+        });
+}
+
+bool operation::FnUpdateExit1(std::function<void(tExitTrans_Struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tExit1);
+        });
+}
+
+bool operation::FnUpdateProcess(std::function<void(tProcess_Struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tProcess);
+        });
+}
+
+bool operation::FnUpdateParas(std::function<void(tParas_Struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tParas);
+        });
+}
+
+bool operation::FnUpdateMessage(std::function<void(tMsg_Struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tMsg);
+        });
+}
+
+bool operation::FnUpdateExitMessage(std::function<void(tExitMsg_struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tExitMsg);
+        });
+}
+
+bool operation::FnUpdateSeason(std::function<void(tseason_struct&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tSeason);
+        });
+}
+
+bool operation::FnUpdateVehicleTypes(std::function<void(std::vector<tVType_Struct>&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tVType);
+        });
+}
+
+bool operation::FnUpdateTR(std::function<void(std::vector<tTR_struc>&)> modifier)
+{
+    if (!modifier)
+    {
+        return false;
+    }
+
+    return dispatchSharedDataUpdate(
+        [this, modifier = std::move(modifier)]() mutable
+        {
+            modifier(tTR);
         });
 }
 
@@ -341,72 +519,6 @@ OperationSharedData operation::makeSharedDataSnapshotOnIo() const
     }
 
     return data;
-}
-
-void operation::applySharedDataUpdateOnIo(OperationSharedDataUpdate update)
-{
-    if (update.gtStation)
-    {
-        gtStation = std::move(*update.gtStation);
-    }
-
-    if (update.tEntry)
-    {
-        tEntry = std::move(*update.tEntry);
-    }
-
-    if (update.tExit)
-    {
-        tExit = std::move(*update.tExit);
-    }
-
-    if (update.tExit1)
-    {
-        tExit1 = std::move(*update.tExit1);
-    }
-
-    if (update.tProcess)
-    {
-        tProcess = std::move(*update.tProcess);
-    }
-
-    if (update.tParas)
-    {
-        tParas = std::move(*update.tParas);
-    }
-
-    if (update.tMsg)
-    {
-        tMsg = std::move(*update.tMsg);
-    }
-
-    if (update.tExitMsg)
-    {
-        tExitMsg = std::move(*update.tExitMsg);
-    }
-
-    if (update.tPBSError)
-    {
-        for (std::size_t i = 0; i < update.tPBSError->size(); ++i)
-        {
-            tPBSError[i] = std::move((*update.tPBSError)[i]);
-        }
-    }
-
-    if (update.tSeason)
-    {
-        tSeason = std::move(*update.tSeason);
-    }
-
-    if (update.tVType)
-    {
-        tVType = std::move(*update.tVType);
-    }
-
-    if (update.tTR)
-    {
-        tTR = std::move(*update.tTR);
-    }
 }
 
 bool operation::FnOnEvent(OperationEvent event)
@@ -459,6 +571,7 @@ void operation::handleEventOnIo(OperationEvent event)
         case OperationEventType::LcscReaderGetCardBalance:
         case OperationEventType::LcscReaderGetCardDeduct:
         case OperationEventType::LcscReaderGetCardRecord:
+        case OperationEventType::LcscReaderGetCardFlush:
         {
             const auto* value = getOperationEventData<std::string>(event);
             if (value == nullptr) { logInvalidOperationEventData(event.type); break; }
@@ -468,7 +581,6 @@ void operation::handleEventOnIo(OperationEvent event)
 
         case OperationEventType::LcscReaderLogin:
         case OperationEventType::LcscReaderLogout:
-        case OperationEventType::LcscReaderGetCardFlush:
         case OperationEventType::LcscReaderGetTime:
         case OperationEventType::LcscReaderSetTime:
         case OperationEventType::LcscReaderUploadCFGFile:
@@ -1663,12 +1775,10 @@ void operation::handleDioEventOnIo(int eventValue)
     switch (dioEvent)
     {
         case DIO::DIO_EVENT::LOOP_A_ON_EVENT:
-            tProcess.gbLoopApresent = true;
             LoopACome();
             break;
 
         case DIO::DIO_EVENT::LOOP_A_OFF_EVENT:
-            tProcess.gbLoopApresent = false;
             LoopAGone();
             break;
 

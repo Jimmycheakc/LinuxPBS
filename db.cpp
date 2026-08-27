@@ -41,68 +41,6 @@ void disconnectAndReset(std::unique_ptr<odbc>& connection)
 }
 
 
-template <typename Modifier>
-bool updateOperationProcess(Modifier&& modifier)
-{
-    auto* op = operation::getInstance();
-    const auto data = op->FnGetSharedData();
-
-    if (!data)
-    {
-        return false;
-    }
-
-    auto process = data->tProcess;
-    std::forward<Modifier>(modifier)(process);
-
-    OperationSharedDataUpdate update;
-    update.tProcess = std::move(process);
-
-    return op->FnUpdateSharedData(std::move(update));
-}
-
-template <typename Modifier>
-bool updateOperationSeason(Modifier&& modifier)
-{
-    auto* op = operation::getInstance();
-    const auto data = op->FnGetSharedData();
-
-    if (!data)
-    {
-        return false;
-    }
-
-    auto season = data->tSeason;
-    std::forward<Modifier>(modifier)(season);
-
-    OperationSharedDataUpdate update;
-    update.tSeason = std::move(season);
-
-    return op->FnUpdateSharedData(std::move(update));
-}
-
-template <typename Modifier>
-bool updateOperationEntry(Modifier&& modifier)
-{
-    auto* op = operation::getInstance();
-
-    const auto data = op->FnGetSharedData();
-
-    if (!data)
-    {
-        return false;
-    }
-
-    auto entry = data->tEntry;
-
-    std::forward<Modifier>(modifier)(entry);
-
-    OperationSharedDataUpdate update;
-    update.tEntry = std::move(entry);
-
-    return op->FnUpdateSharedData(std::move(update));
-}
-
 } // namespace
 
 db::db() = default;
@@ -154,7 +92,7 @@ int db::connectcentraldb(string connectStr,string connectIP,int CentralSQLTimeOu
     {
         logDbMessage("Central DB is connected!");
 
-        if (!updateOperationProcess(
+        if (!operation::getInstance()->FnUpdateProcess(
                 [](tProcess_Struct& process)
                 {
                     process.giSystemOnline = 0;
@@ -294,7 +232,7 @@ int db::local_isvalidseason(
 
         const auto& row = result.front();
 
-        if (!updateOperationSeason(
+        if (!operation::getInstance()->FnUpdateSeason(
                 [&](tseason_struct& season)
                 {
                     season.SeasonType = row.GetDataItem(0);
@@ -366,7 +304,7 @@ int db::isvalidseason(const std::string& seasonNo, BYTE inOut, unsigned int zone
 
             logDbMessage("ValidTo = " + validTo, "DB");
 
-            if (!updateOperationSeason(
+            if (!operation::getInstance()->FnUpdateSeason(
                     [&](tseason_struct& season)
                     {
                         season.date_from = validFrom;
@@ -490,7 +428,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
     }
 
     // Keep Operation-owned tEntry synchronized.
-    if (!updateOperationEntry(
+    if (!operation::getInstance()->FnUpdateEntry(
             [&](tEntryTrans_Struct& entry)
             {
                 entry.sEntryTime = tEntry.sEntryTime;
@@ -529,7 +467,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
         {
             logDbMessage("Insert Entry_Trans to Central: fail1", "DB");
 
-            if (!updateOperationProcess(
+            if (!operation::getInstance()->FnUpdateProcess(
                     [](tProcess_Struct& process)
                     {
                         process.giSystemOnline = 1;
@@ -542,7 +480,7 @@ DBError db::insertentrytrans(tEntryTrans_Struct& tEntry)
         }
     }
 
-    if (!updateOperationProcess(
+    if (!operation::getInstance()->FnUpdateProcess(
             [](tProcess_Struct& process)
             {
                 process.giSystemOnline = 0;
@@ -693,7 +631,7 @@ processLocal:
 
     logDbMessage("Insert Entry_Trans to Local: success", "DB");
 
-    if (!updateOperationProcess(
+    if (!operation::getInstance()->FnUpdateProcess(
             [](tProcess_Struct& process)
             {
                 ++process.glNoofOfflineData;
@@ -4042,14 +3980,11 @@ DBError db::loadZoneEntriesfromLocal()
     // =========================================================
     // Update Operation shared data
     // =========================================================
-    auto paras = data->tParas;
-
-    paras.gsZoneEntries = zoneEntries;
-
-    OperationSharedDataUpdate update;
-    update.tParas = std::move(paras);
-
-    if (!op->FnUpdateSharedData(std::move(update)))
+    if (!op->FnUpdateParas(
+            [zoneEntries](tParas_Struct& paras)
+            {
+                paras.gsZoneEntries = zoneEntries;
+            }))
     {
         logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -4156,19 +4091,20 @@ DBError db::loadstationsetup()
         // =========================================================
         // Mark station setup as loaded
         // =========================================================
-        auto process = data->tProcess;
-
-        process.gbloadedStnSetup = true;
 
         // =========================================================
         // Update Operation shared data
         // =========================================================
-        OperationSharedDataUpdate update;
-
-        update.gtStation = std::move(station);
-        update.tProcess = std::move(process);
-
-        if (!op->FnUpdateSharedData(std::move(update)))
+        if (!op->FnUpdateStation(
+                [station = std::move(station)](tstation_struct& currentStation) mutable
+                {
+                    currentStation = std::move(station);
+                }) ||
+            !op->FnUpdateProcess(
+                [](tProcess_Struct& process)
+                {
+                    process.gbloadedStnSetup = true;
+                }))
         {
             logDbMessage( "Unable to update Operation shared data.", "DB");
 
@@ -4203,7 +4139,6 @@ DBError db::loadParam()
     }
 
     auto paras = data->tParas;
-    auto process = data->tProcess;
 
     // Preserve existing behavior
     paras.giTariffFeeMode = 0;
@@ -4614,17 +4549,19 @@ DBError db::loadParam()
     // =========================================================
     // Mark parameters as loaded
     // =========================================================
-    process.gbloadedParam = true;
-
     // =========================================================
     // Update Operation shared data
     // =========================================================
-    OperationSharedDataUpdate update;
-
-    update.tParas = std::move(paras);
-    update.tProcess = std::move(process);
-
-    if (!op->FnUpdateSharedData(std::move(update)))
+    if (!op->FnUpdateProcess(
+            [](tProcess_Struct& process)
+            {
+                process.gbloadedParam = true;
+            }) ||
+        !op->FnUpdateParas(
+            [paras = std::move(paras)](tParas_Struct& currentParas) mutable
+            {
+                currentParas = std::move(paras);
+            }))
     {
         logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -4684,10 +4621,12 @@ DBError db::loadparamfromCentral()
         logDbMessage("Load Group ID: " + std::to_string(paras.giGroupID), "DB");
         logDbMessage("Load Site ID: " + std::to_string(paras.giSite), "DB");
 
-        OperationSharedDataUpdate update;
-        update.tParas = paras;
-
-        if (!op->FnUpdateSharedData(std::move(update)))
+        if (!op->FnUpdateParas(
+                [groupId = paras.giGroupID, siteId = paras.giSite](tParas_Struct& currentParas)
+                {
+                    currentParas.giGroupID = groupId;
+                    currentParas.giSite = siteId;
+                }))
         {
             logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -4733,12 +4672,16 @@ DBError db::loadparamfromCentral()
         logDbMessage("Load zone for entry: " + paras.gsZoneEntries, "DB");
         logDbMessage("Load Zone Total lots: " + std::to_string(station.iZoneLots), "DB");
 
-        OperationSharedDataUpdate update;
-
-        update.gtStation = station;
-        update.tParas = paras;
-
-        if (!op->FnUpdateSharedData(std::move(update)))
+        if (!op->FnUpdateStation(
+                [zoneLots = station.iZoneLots](tstation_struct& currentStation)
+                {
+                    currentStation.iZoneLots = zoneLots;
+                }) ||
+            !op->FnUpdateParas(
+                [zoneEntries = paras.gsZoneEntries](tParas_Struct& currentParas)
+                {
+                    currentParas.gsZoneEntries = zoneEntries;
+                }))
         {
             logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -4803,7 +4746,7 @@ DBError db::loadparamfromCentral()
     {
         const long lastSerialNo = std::stol(serialNo);
 
-        if (!updateOperationProcess(
+        if (!operation::getInstance()->FnUpdateProcess(
                 [lastSerialNo](
                     tProcess_Struct& process)
                 {
@@ -4863,8 +4806,7 @@ DBError db::loadvehicletype()
         }
 
         auto vehicleTypes = data->tVType;
-        auto process = data->tProcess;
-
+    
         // =====================================================
         // Load vehicle types
         // =====================================================
@@ -4882,17 +4824,19 @@ DBError db::loadvehicletype()
                 });
         }
 
-        process.gbloadedVehtype = true;
-
         // =====================================================
         // Update Operation shared data
         // =====================================================
-        OperationSharedDataUpdate update;
-
-        update.tVType = std::move(vehicleTypes);
-        update.tProcess = std::move(process);
-
-        if (!op->FnUpdateSharedData(std::move(update)))
+        if (!op->FnUpdateProcess(
+                [](tProcess_Struct& currentProcess)
+                {
+                    currentProcess.gbloadedVehtype = true;
+                }) ||
+            !op->FnUpdateVehicleTypes(
+                [vehicleTypes = std::move(vehicleTypes)](std::vector<tVType_Struct>& currentVehicleTypes) mutable
+                {
+                    currentVehicleTypes = std::move(vehicleTypes);
+                }))
         {
             logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -4961,7 +4905,6 @@ DBError db::loadEntrymessage(const std::vector<ReaderItem>& selResult)
     }
 
     auto message = data->tMsg;
-    auto process = data->tProcess;
 
     // =========================================================
     // Message helpers
@@ -5583,17 +5526,19 @@ DBError db::loadEntrymessage(const std::vector<ReaderItem>& selResult)
     // =========================================================
     // Mark LED messages as loaded
     // =========================================================
-    process.gbloadedLEDMsg = true;
-
     // =========================================================
     // Update Operation shared data
     // =========================================================
-    OperationSharedDataUpdate update;
-
-    update.tMsg = std::move(message);
-    update.tProcess = std::move(process);
-
-    if (!op->FnUpdateSharedData(std::move(update)))
+    if (!op->FnUpdateProcess(
+            [](tProcess_Struct& currentProcess)
+            {
+                currentProcess.gbloadedLEDMsg = true;
+            }) ||
+        !op->FnUpdateMessage(
+            [message = std::move(message)](tMsg_Struct& currentMessage) mutable
+            {
+                currentMessage = std::move(message);
+            }))
     {
         logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -5673,7 +5618,6 @@ DBError db::loadExitLcdAndLedMessage(const std::vector<ReaderItem>& selResult)
     }
 
     auto exitMessage = data->tExitMsg;
-    auto process = data->tProcess;
 
     // Default message:
     // Set both LED [0] and LCD [1].
@@ -6346,17 +6290,19 @@ DBError db::loadExitLcdAndLedMessage(const std::vector<ReaderItem>& selResult)
     // =========================================================
     // Mark Exit messages as loaded
     // =========================================================
-    process.gbloadedLEDExitMsg = true;
-
     // =========================================================
     // Update Operation shared data
     // =========================================================
-    OperationSharedDataUpdate update;
-
-    update.tExitMsg = std::move(exitMessage);
-    update.tProcess = std::move(process);
-
-    if (!op->FnUpdateSharedData(std::move(update)))
+    if (!op->FnUpdateProcess(
+            [](tProcess_Struct& currentProcess)
+            {
+                currentProcess.gbloadedLEDExitMsg = true;
+            }) ||
+        !op->FnUpdateExitMessage(
+            [exitMessage = std::move(exitMessage)](tExitMsg_struct& currentExitMessage) mutable
+            {
+                currentExitMessage = std::move(exitMessage);
+            }))
     {
         logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -6505,11 +6451,11 @@ DBError db::loadTR(int iType)
     // =========================================================
     // Update Operation shared data
     // =========================================================
-    OperationSharedDataUpdate update;
-
-    update.tTR = std::move(trItems);
-
-    if (!op->FnUpdateSharedData(std::move(update)))
+    if (!op->FnUpdateTR(
+            [trItems = std::move(trItems)](std::vector<tTR_struc>& currentTR) mutable
+            {
+                currentTR = std::move(trItems);
+            }))
     {
         logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -6575,7 +6521,7 @@ void db::moveOfflineTransToCentral()
         // =====================================================
         // Reset offline status
         // =====================================================
-        if (!updateOperationProcess(
+        if (!operation::getInstance()->FnUpdateProcess(
                 [](tProcess_Struct& process)
                 {
                     process.offline_status = 0;
@@ -6630,7 +6576,7 @@ void db::moveOfflineTransToCentral()
                     : " Exit trans to be uploaded."),
             "DB");
 
-        if (!updateOperationProcess(
+        if (!operation::getInstance()->FnUpdateProcess(
                 [](tProcess_Struct& process)
                 {
                     process.offline_status = 1;
@@ -7795,7 +7741,7 @@ DBError db::insertexittrans(tExitTrans_Struct& exitTrans)
         {
             logDbMessage("Unable to connect to Central DB while inserting exit_trans table.", "DB");
 
-            if (!updateOperationProcess(
+            if (!operation::getInstance()->FnUpdateProcess(
                     [](tProcess_Struct& process)
                     {
                         process.giSystemOnline = 1;
@@ -7813,7 +7759,7 @@ DBError db::insertexittrans(tExitTrans_Struct& exitTrans)
     // =========================================================
     if (!useLocalDb)
     {
-        if (!updateOperationProcess(
+        if (!operation::getInstance()->FnUpdateProcess(
                 [](tProcess_Struct& process)
                 {
                     process.giSystemOnline = 0;
@@ -8061,7 +8007,7 @@ DBError db::insertexittrans(tExitTrans_Struct& exitTrans)
 
     logDbMessage("Insert Exit_Trans to Local: success.", "DB");
 
-    if (!updateOperationProcess(
+    if (!operation::getInstance()->FnUpdateProcess(
             [](tProcess_Struct& process)
             {
                 ++process.glNoofOfflineData;
@@ -9938,19 +9884,19 @@ int db::FetchEntryinfo(const std::string& iuNo)
 
             if (!centralResult.empty())
             {
-                auto exitData = data->tExit;
-
-                exitData.sEntryTime = centralResult.front().GetDataItem(0);
-                exitData.iTransType = std::stoi(centralResult.front().GetDataItem(1));
-                exitData.sOweAmt = std::stof(centralResult.front().GetDataItem(4));
-                exitData.iEntryID = std::stoi(centralResult.front().GetDataItem(5));
+                const std::string entryTime = centralResult.front().GetDataItem(0);
+                const int transType = std::stoi(centralResult.front().GetDataItem(1));
+                const float oweAmt = std::stof(centralResult.front().GetDataItem(4));
+                const int entryId = std::stoi(centralResult.front().GetDataItem(5));
                 
-                const std::string entryTime = exitData.sEntryTime;
-
-                OperationSharedDataUpdate update;
-                update.tExit = std::move(exitData);
-
-                if (!op->FnUpdateSharedData(std::move(update)))
+                if (!op->FnUpdateExit(
+                        [entryTime, transType, oweAmt, entryId](tExitTrans_Struct& exitData)
+                        {
+                            exitData.sEntryTime = entryTime;
+                            exitData.iTransType = transType;
+                            exitData.sOweAmt = oweAmt;
+                            exitData.iEntryID = entryId;
+                        }))
                 {
                     logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -10000,19 +9946,19 @@ int db::FetchEntryinfo(const std::string& iuNo)
             return 3;
         }
 
-        auto exitData = data->tExit;
+        const std::string entryTime = localResult.front().GetDataItem(0);
+        const int transType = std::stoi(localResult.front().GetDataItem(1));
+        const float oweAmt = std::stof(localResult.front().GetDataItem(3));
+        const int entryId = std::stoi(localResult.front().GetDataItem(4));
 
-        exitData.sEntryTime = localResult.front().GetDataItem(0);
-        exitData.iTransType = std::stoi(localResult.front().GetDataItem(1));
-        exitData.sOweAmt = std::stof(localResult.front().GetDataItem(3));
-        exitData.iEntryID = std::stoi(localResult.front().GetDataItem(4));
-
-        const std::string entryTime = exitData.sEntryTime;
-
-        OperationSharedDataUpdate update;
-        update.tExit = std::move(exitData);
-
-        if (!op->FnUpdateSharedData(std::move(update)))
+        if (!op->FnUpdateExit(
+                [entryTime, transType, oweAmt, entryId](tExitTrans_Struct& exitData)
+                {
+                    exitData.sEntryTime = entryTime;
+                    exitData.iTransType = transType;
+                    exitData.sOweAmt = oweAmt;
+                    exitData.iEntryID = entryId;
+                }))
         {
             logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -10978,16 +10924,13 @@ int db::HasValidTicket(const std::string& iuNo, const std::string& lpn)
         {
             const std::string complimentaryNo = complimentaryResult.front().GetDataItem(0);
 
-            auto exitData = data->tExit;
-
-            exitData.iTransType = 10;
-            exitData.sPaidAmt = 0;
-            exitData.sCardNo = complimentaryNo;
-
-            OperationSharedDataUpdate update;
-            update.tExit = std::move(exitData);
-
-            if (!op->FnUpdateSharedData(std::move(update)))
+            if (!op->FnUpdateExit(
+                    [complimentaryNo](tExitTrans_Struct& exitData)
+                    {
+                        exitData.iTransType = 10;
+                        exitData.sPaidAmt = 0;
+                        exitData.sCardNo = complimentaryNo;
+                    }))
             {
                 logDbMessage("Unable to update Operation shared data.", "DB");
 
@@ -11032,19 +10975,17 @@ int db::HasValidTicket(const std::string& iuNo, const std::string& lpn)
 
         const auto& row = redemptionResult.front();
 
-        auto exitData = data->tExit;
-        exitData.sRedeemNo = row.GetDataItem(0);
-        exitData.sRedeemAmt = std::stof(row.GetDataItem(1));
-        exitData.iRedeemTime = std::stoi(row.GetDataItem(2));
+        const std::string redeemNo = row.GetDataItem(0);
+        const float redeemAmount = std::stof(row.GetDataItem(1));
+        const int redeemTime = std::stoi(row.GetDataItem(2));
 
-        const std::string redeemNo = exitData.sRedeemNo;
-        const float redeemAmount = exitData.sRedeemAmt;
-        const int redeemTime = exitData.iRedeemTime;
-
-        OperationSharedDataUpdate update;
-        update.tExit = std::move(exitData);
-
-        if (!op->FnUpdateSharedData(std::move(update)))
+        if (!op->FnUpdateExit(
+                [redeemNo, redeemAmount, redeemTime](tExitTrans_Struct& exitData)
+                {
+                    exitData.sRedeemNo = redeemNo;
+                    exitData.sRedeemAmt = redeemAmount;
+                    exitData.iRedeemTime = redeemTime;
+                }))
         {
             logDbMessage("Unable to update Operation shared data.", "DB");
 
