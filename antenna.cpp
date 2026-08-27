@@ -72,8 +72,10 @@ void Antenna::FnAntennaInit(
     const std::string& comPortName,
     int antennaId,
     int antennaInqTO,
-    int antennaMinOkTimes)
+    int antennaMinOkTimes,
+    int eps)
 {
+    eps_ = eps;
     antennaId_ = antennaId;
     antennaCmdTimeoutInMillisec_ = antennaInqTO;
     antennaIUCmdMinOKtimes_ = antennaMinOkTimes;
@@ -252,16 +254,18 @@ boost::asio::awaitable<void> Antenna::antennaModuleInitAsync(unsigned int baudRa
         Logger::getInstance()->FnLog(ss.str(), logFileName_, "ANT");
 
         const int result = co_await antennaInitAsync();
-        initializationCompleted_ = (result == 1);
 
-        if (result == 1)
+        if (result == 1 ||
+            (eps_ == 2 && result == 0))
         {
+            initializationCompleted_ = true;
             EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", true);
             Logger::getInstance()->FnLog("Antenna initialization completed.");
             Logger::getInstance()->FnLog("Antenna initialization completed.", logFileName_, "ANT");
         }
         else
         {
+            initializationCompleted_ = false;
             EventManager::getInstance()->FnEnqueueEvent("Evt_AntennaPower", false);
             Logger::getInstance()->FnLog("Antenna initialization failed.");
             Logger::getInstance()->FnLog("Antenna initialization failed.", logFileName_, "ANT");
@@ -1259,9 +1263,9 @@ boost::asio::awaitable<void> Antenna::readIULoopAsync()
 
     while (continueReadFlag_.load() && !stopping_.load())
     {
-        // Same behaviour as your original 200 ms periodic timer, but expressed
+        // Same behaviour as your original 100 ms periodic timer, but expressed
         // as a linear coroutine instead of callback recursion.
-        periodicSendReadIUCmdTimer_->expires_after(std::chrono::milliseconds(200));
+        periodicSendReadIUCmdTimer_->expires_after(std::chrono::milliseconds(100));
 
         boost::system::error_code timerEc;
         co_await periodicSendReadIUCmdTimer_->async_wait(
@@ -1302,7 +1306,7 @@ boost::asio::awaitable<void> Antenna::readIULoopAsync()
             break;
         }
 
-        if (count > 10)
+        if (count >= 20)
         {
             std::stringstream countStream;
             countStream << "antIUCmdSendCount_: " << count;

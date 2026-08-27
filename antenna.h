@@ -116,7 +116,8 @@ public:
             const std::string& comPortName,
             int antennaId,
             int antennaInqTO,
-            int antennaMinOkTimes);
+            int antennaMinOkTimes,
+            int eps);
 
     // Gracefully cancels outstanding Antenna work and joins the worker thread.
     void FnAntennaShutdown();
@@ -164,6 +165,7 @@ private:
     bool iuLoopRunning_;
     bool initializationCompleted_;
 
+    int eps_;
     int antennaId_;
     int antennaCmdTimeoutInMillisec_;
     int antennaCmdMaxRetry_;

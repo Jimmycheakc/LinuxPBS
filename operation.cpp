@@ -1762,7 +1762,7 @@ void operation::handleDioEventOnIo(int eventValue)
            << dioEventToString(dioEvent)
            << "(" << eventValue << ")";
 
-        writelog(ss.str(), "OPR");
+       // writelog(ss.str(), "OPR");
     }
 
     auto updateBarrierStatus =
@@ -3059,7 +3059,8 @@ void operation::initDeviceOnIoThread()
                                     getSerialPort(std::to_string(tParas.giCommPortAntenna)),
                                     gtStation.iAntID,
                                     tParas.giAntInqTO,
-                                    tParas.giAntMinOKTimes);
+                                    tParas.giAntMinOKTimes,
+                                    tParas.giEPS);
     }
 
     if (tParas.giCommPortLCSC > 0)
@@ -5488,9 +5489,13 @@ void operation::ProcessLCSC(const std::string& eventData)
         }
         case LCSCReader::mCSCEvents::sCardFlushed:
         {
-            writelog("LCSC command CardFlushed.","OPR");
-            //--- handle no card
-            RetryLCSCLastCommand();
+            if (tProcess.gbBarrierOpened == false)
+            {
+                writelog("LCSC command CardFlushed.","OPR");
+                //--- handle no card
+                RetryLCSCLastCommand();
+            }
+           
             break;
         }
 
@@ -9433,6 +9438,8 @@ void operation::SendMsg2CHU(eCHUCmd sCmd, string sData)
 void operation::processCHU(const std::string& eventData)
 {
     writelog ("Received CHU Data:" + eventData, "OPR");
+    //--------
+    if (tProcess.gbBarrierOpened == true) return;
     //---------
     int rxcmd;
 	int n,i;
